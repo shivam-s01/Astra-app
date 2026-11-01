@@ -5,26 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/widgets/auto_sleep_guard_tile.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Settings → Player card for Auto Sleep Guard — a battery
-//   feature fully separate from the Sleep Timer. Available to every
-//   signed-in user (free or premium), gated on sign-in only.
-//
-//   Tapping the card opens a bottom sheet with two things: an Automatic /
-//   Off mode picker (radio-style, matching the Stream Quality picker
-//   elsewhere in Settings) and, only while Automatic, the inactivity
-//   window picker (3h or 5h, default 3h). Both choices apply instantly —
-//   no separate save step — and are saved permanently until changed
-//   again.
-//
-//   All state (enabled flag, duration, last-auto-pause record) lives
-//   natively in SharedPreferences via AutoSleepGuard.kt — this widget is
-//   a thin, stateful view over NativeAudioEngine.autoSleepGuardXxx()
-//   calls, not a second source of truth.
-// =============================================================================
-
 import 'package:flutter/material.dart';
 import '../providers/auth_provider.dart';
 import 'package:provider/provider.dart';
@@ -79,7 +59,7 @@ class _AutoSleepGuardTileState extends State<AutoSleepGuardTile> {
       ),
     );
 
-    if (result == null || !mounted) return; // dismissed, or tile gone
+    if (result == null || !mounted) return;
 
     if (result.enabled != _enabled) {
       setState(() => _enabled = result.enabled);
@@ -117,16 +97,6 @@ class _AutoSleepGuardTileState extends State<AutoSleepGuardTile> {
             color: AurumTheme.accentOf(context).withOpacity(0.1),
             borderRadius: BorderRadius.circular(10),
           ),
-          // FIX ("Auto Sleep Guard looks copy-pasted from Battery Saver"):
-          // this used to be Icons.battery_saver_rounded — the exact same
-          // icon Battery Saver Mode's own tile/sheet use (see
-          // battery_saver_mode_tile.dart). Auto Sleep Guard pauses
-          // playback after inactivity, a completely different concept
-          // from battery-driven behavior; sharing the battery icon made
-          // the two features visually indistinguishable at a glance, one
-          // of the two clearest "these were built from the same template
-          // and never differentiated" tells. bedtime_rounded (a moon/
-          // sleep glyph) matches what this feature actually represents.
           child: Icon(Icons.bedtime_rounded, color: AurumTheme.accentOf(context), size: 18),
         ),
         title: Text(
@@ -203,18 +173,6 @@ class _AutoSleepGuardResult {
   const _AutoSleepGuardResult(this.enabled, this.hours);
 }
 
-// =============================================================================
-// Mode + duration picker bottom sheet.
-//   - Mode row (Automatic / Off): radio-style, same visual language as the
-//     Stream Quality picker elsewhere in Settings, so it reads as a
-//     first-class choice rather than a bolted-on switch.
-//   - Duration row: only shown/enabled while Automatic is selected — Off
-//     has nothing to configure, so it fades out instead of leaving a
-//     picker that does nothing.
-//   - Every tap applies instantly (both mode and duration), confirmed by
-//     the same subtle gold "Saved" tick used elsewhere in this sheet —
-//     no separate save/apply step to feel bureaucratic about.
-// =============================================================================
 class _AutoSleepGuardSheet extends StatefulWidget {
   final bool initialEnabled;
   final int initialHours;
@@ -268,8 +226,6 @@ class _AutoSleepGuardSheetState extends State<_AutoSleepGuardSheet> {
                     gradient: AurumTheme.accentGradient,
                     borderRadius: BorderRadius.circular(11),
                   ),
-                  // See the tile leading-icon FIX comment above — same
-                  // battery-icon mixup, same fix, here in the sheet header.
                   child: const Icon(Icons.bedtime_rounded, color: Colors.black, size: 20),
                 ),
                 const SizedBox(width: 12),
@@ -302,9 +258,6 @@ class _AutoSleepGuardSheetState extends State<_AutoSleepGuardSheet> {
               style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 13, height: 1.4),
             ),
             const SizedBox(height: 8),
-            // Small premium-feel line — subtle gold accent, low-key
-            // reassurance copy, matching the app's existing "premium
-            // card" language elsewhere in Settings.
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -414,10 +367,6 @@ class _AutoSleepGuardSheetState extends State<_AutoSleepGuardSheet> {
   }
 }
 
-/// Radio-style mode row — visually matches the Stream Quality picker
-/// pattern used elsewhere in Settings (gold radio icon, gold-tinted fill
-/// when selected) so this reads as consistent with the rest of the app
-/// rather than a one-off control.
 class _ModeOption extends StatelessWidget {
   final bool selected;
   final String title;

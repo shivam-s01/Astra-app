@@ -5,20 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/config/region_catalog.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Shared country/genre catalog + region-aware helpers, used by
-//   BOTH the first-launch onboarding flow (onboarding_screen.dart) and the
-//   Settings > Region & Music Preferences screen (settings_region_screen.dart)
-//   so a user can change their country/genre/artist picks at any time after
-//   onboarding, not just once on first launch. Extracted out of
-//   onboarding_screen.dart into its own file specifically so both call sites
-//   share one source of truth for country data, genre-priority-by-country,
-//   and the artist search-seed builder — duplicating this data across two
-//   files would have let them drift out of sync over time.
-// =============================================================================
-
 import 'dart:io' show Platform;
 import 'dart:convert' show jsonDecode;
 
@@ -27,20 +13,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../services/api_service.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Genre data
-// ─────────────────────────────────────────────────────────────────────────────
-
 class OnboardingGenre {
-  final String key;   // matches SessionGenre enum name where possible;
-                       // international genres use new descriptive keys —
-                       // RecommendationEngine's genre-weight map takes any
-                       // string key, so these blend in safely alongside the
-                       // original India-centric set.
+  final String key;
   final String label;
   final IconData icon;
-  // One or two short, genre-representative search terms used to scope the
-  // live artist search for this genre (see _ArtistStep._loadArtists below).
   final String searchSeed;
   const OnboardingGenre(this.key, this.label, this.icon, this.searchSeed);
 }
@@ -68,14 +44,6 @@ const List<OnboardingGenre> kOnboardingGenres = [
   OnboardingGenre('other', 'Something Else', Icons.explore_rounded, 'popular'),
 ];
 
-/// Country-code -> ordered list of genre keys (from kOnboardingGenres)
-/// that are most locally relevant, first. Any genre key not present here
-/// simply falls to the end in its original catalog order — so this map
-/// only needs to cover the *priority* genres per region, not every genre.
-///
-/// Kept intentionally small and maintainable: a handful of major markets
-/// plus one sensible default. Add more country codes here any time —
-/// nothing else needs to change.
 const Map<String, List<String>> kCountryGenrePriority = {
   'IN': ['bollywood', 'punjabi', 'english', 'hiphop', 'indie', 'devotional', 'bhojpuri', 'lofi'],
   'US': ['english', 'hiphop', 'rnb', 'rock', 'country', 'edm', 'latin', 'indie'],
@@ -96,28 +64,14 @@ const Map<String, List<String>> kCountryGenrePriority = {
   'SA': ['english', 'hiphop', 'edm'],
 };
 
-/// Default priority used when the selected/detected country has no
-/// explicit entry above — mirrors the original catalog order.
 const List<String> kDefaultGenrePriority = [
   'bollywood', 'punjabi', 'hiphop', 'english', 'lofi', 'devotional', 'bhojpuri', 'other',
 ];
 
-/// Builds the live-search query fed into ApiService.searchArtists() for
-/// one genre + the onboarding-selected country. This is the fix for
-/// artist picks not actually matching the chosen country/genre: the old
-/// version always used the same generic template ("<genre> <country>
-/// artists"), which is a weak signal for a free-text search backend and
-/// often let globally-popular-but-unrelated artists leak in. This adds
-/// genre-native phrasing per major market (e.g. Bollywood -> "playback
-/// singers", K-Pop -> "idol groups") so the query itself is much more
-/// specific to what the user actually picked.
 String buildArtistSearchSeed({
   required String genreSeed,
   String? countryName,
 }) {
-  // Genre-native descriptor overrides, keyed by genre seed text — only
-  // added where a more specific regional phrase meaningfully narrows the
-  // search versus the generic "<genre> artists" template.
   const nativePhrase = <String, String>{
     'bollywood': 'bollywood playback singers',
     'punjabi': 'punjabi singers',
@@ -136,16 +90,9 @@ String buildArtistSearchSeed({
 
   if (countryName == null) return phrase;
 
-  // "top <phrase> from <country>" reads as a much stronger locality
-  // signal to a text-search backend than bolting "<country> artists" on
-  // the end, and avoids the country name being mis-parsed as part of an
-  // artist/song title.
   return 'top $phrase from $countryName';
 }
 
-/// Returns [kOnboardingGenres] re-ordered so the country's priority
-/// genres come first (in that priority order), followed by everything
-/// else in its original catalog order. Pure, cheap, no I/O.
 List<OnboardingGenre> genreOrderFor(String? countryCode) {
   final priority = kCountryGenrePriority[countryCode] ?? kDefaultGenrePriority;
   final byKey = {for (final g in kOnboardingGenres) g.key: g};
@@ -160,12 +107,6 @@ List<OnboardingGenre> genreOrderFor(String? countryCode) {
   }
   return ordered;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Country data — 195 countries, ISO 3166-1 alpha-2 code + name. Flag is
-// computed at runtime from the code via Unicode regional indicator symbols
-// (see Country.flag below) — no image assets or extra packages needed.
-// ─────────────────────────────────────────────────────────────────────────────
 
 class Country {
   final String code;
@@ -383,21 +324,11 @@ Country? countryByCode(String? code) {
   return null;
 }
 
-/// Detects the user's likely country from the device's system locale
-/// (e.g. "en_IN" -> IN, "ja_JP" -> JP) — NOT GPS/network location, so
-/// this is synchronous-fast (no permission prompt, no network round
-/// trip). This is now used ONLY as a last-resort fallback (see
-/// detectCountryReal below) because locale is frequently wrong: a lot
-/// of devices report a generic "en_GB"/"en_US" locale regardless of
-/// where the phone actually is (e.g. "English (UK)" chosen purely as a
-/// language preference, or OEM firmware defaults), which is exactly the
-/// "I'm in India but it shows UK" bug this file used to have when locale
-/// was the ONLY signal.
 Country? detectCountryFromLocale() {
   try {
     if (kIsWeb) return null;
-    final raw = Platform.localeName; // e.g. "en_IN", "ja_JP", "en_US.UTF-8"
-    final cleaned = raw.split('.').first; // strip encoding suffix if present
+    final raw = Platform.localeName;
+    final cleaned = raw.split('.').first;
     final parts = cleaned.split(RegExp(r'[_-]'));
     if (parts.length < 2) return null;
     final region = parts[1].toUpperCase();
@@ -407,19 +338,6 @@ Country? detectCountryFromLocale() {
   }
 }
 
-/// REAL country detection — the actual fix for the "I'm in India but it
-/// shows UK" bug. Locale-only detection was the root cause: it reflects
-/// the device's *language* setting, not where the SIM/network/user
-/// actually is, so a phone set to "English (UK)" as a language would
-/// misreport a country on the other side of the planet.
-///
-/// This resolves the real network-visible country the same way
-/// Spotify/YouTube Music do it — via IP geolocation — with a short race
-/// across a couple of free, no-key providers for reliability, and only
-/// falls back to locale if every network attempt fails (e.g. no
-/// internet yet during onboarding). Each provider is capped so a slow/
-/// dead endpoint can never hang the UI — worst case this resolves to
-/// locale (or null, showing the manual list) within ~3.2s.
 Future<Country?> detectCountryReal() async {
   final client = ApiService.httpClient;
 
@@ -444,24 +362,6 @@ Future<Country?> detectCountryReal() async {
     return countryByCode(code);
   }
 
-  // Race both network sources concurrently and take a majority vote when
-  // they agree, otherwise trust whichever one actually resolved — a
-  // network-IP signal is already far more reliable than locale on its
-  // own. NOTE: a raw-IP-based third source (e.g. Cloudflare's
-  // 1.1.1.1/cdn-cgi/trace) was deliberately left out here — this app's
-  // network_security_config.xml only whitelists traffic by *domain*, and
-  // a bare IP literal can't be expressed as a <domain-config> entry, so
-  // that call would be silently blocked exactly like the Worker/YouTube
-  // domains were before those got added. Two domain-based providers
-  // (both whitelisted below) keep this reliable without hitting that
-  // trap again.
-  // TUNED (2026-09-14, "ekdam natural 4 sec rahe"): outer cap raised
-  // 3.5s -> 4s, with each individual provider given 3.5s (was 3s) so a
-  // slightly slow-but-successful response isn't cut off right at the
-  // finish line — the extra ~500ms is slack for exactly that case, not
-  // wasted waiting. The onboarding screen already shows a loading state
-  // (_detecting) the whole time, so this reads as a calm, deliberate
-  // lookup rather than a rushed one, without ever feeling stuck.
   final attempts = <Future<Country?>>[
     viaIpApiCo().catchError((_) => null),
     viaIpwhois().catchError((_) => null),
@@ -473,8 +373,6 @@ Future<Country?> detectCountryReal() async {
     final codes = results.whereType<Country>().map((c) => c.code).toList();
     if (codes.isEmpty) return detectCountryFromLocale();
 
-    // Majority vote when both agree; otherwise just trust whichever one
-    // answered since either is already a real network signal.
     final counts = <String, int>{};
     for (final c in codes) {
       counts[c] = (counts[c] ?? 0) + 1;

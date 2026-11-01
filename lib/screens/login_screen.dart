@@ -5,23 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/login_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Sign-in screen — redesigned.
-//   • Soft accent glows (top-left / bottom-right) over the themed background
-//   • Big gradient app tile, large "Sign in" title, centered subtitle
-//   • Three benefit cards that reveal one after another
-//   • Full-width gradient "Continue with Google" pill (dark text — readable on
-//     every accent), Google "G" in a white badge, busy loader state
-//   • Inline error (no silent fail), friendly "sign-in is optional" footnote
-//   • One short entrance animation only (no looping effects) — light on
-//     low-end phones, and off entirely when animations are disabled
-//   • Fully theme-aware (Light / Dark / AMOLED / dynamic colour)
-//   • Behaviour unchanged: on success → sync cloud data → pop(true);
-//     back / cancel → pop(false)
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'package:aurum_music/widgets/aurum_loader.dart';
 import 'package:flutter/material.dart';
@@ -114,7 +97,7 @@ class _LoginScreenState extends State<LoginScreen>
 
     setState(() {
       _busy = false;
-      _error = auth.lastError; // null if the user just cancelled the picker
+      _error = auth.lastError;
     });
   }
 
@@ -144,7 +127,6 @@ class _LoginScreenState extends State<LoginScreen>
       backgroundColor: AurumTheme.bgOf(context),
       body: Stack(
         children: [
-          // Ambient glows — fade in once, then stay still.
           Positioned(
             top: -140,
             left: -110,
@@ -164,7 +146,6 @@ class _LoginScreenState extends State<LoginScreen>
           SafeArea(
             child: Column(
               children: [
-                // ── Back ──
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
                   child: Align(
@@ -183,7 +164,6 @@ class _LoginScreenState extends State<LoginScreen>
                   ),
                 ),
 
-                // ── Hero + benefits (scrolls on very small screens) ──
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, c) => SingleChildScrollView(
@@ -240,7 +220,6 @@ class _LoginScreenState extends State<LoginScreen>
                   ),
                 ),
 
-                // ── Action area ──
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
                   child: _reveal(
@@ -298,7 +277,6 @@ class _LoginScreenState extends State<LoginScreen>
   }
 }
 
-/// Soft radial accent glow.
 class _Glow extends StatelessWidget {
   final Color color;
   final double size;
@@ -322,7 +300,6 @@ class _Glow extends StatelessWidget {
   }
 }
 
-/// Rounded-square gradient tile with a soft glow — the screen's anchor.
 class _AppTile extends StatelessWidget {
   final Color accent;
   const _AppTile({required this.accent});
@@ -347,7 +324,6 @@ class _AppTile extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          // Subtle top sheen for depth.
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -412,7 +388,6 @@ class _BenefitCard extends StatelessWidget {
   }
 }
 
-/// "Continue with Google" — gradient pill, white G badge, busy loader.
 class _GoogleContinueButton extends StatelessWidget {
   final bool busy;
   final VoidCallback onTap;

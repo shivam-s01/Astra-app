@@ -5,16 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/album_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Shows the song list inside an album / single — same
-//   YT Music-style layout as the Mix screen: full-bleed sharp artwork that
-//   fades into the palette-tinted page, centered title / artists / year,
-//   floating glass pills (back, save, search, overflow), shuffle · Play ·
-//   download row, track count, compact rows, then the related shelves.
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'dart:async';
 import '../utils/aurum_transitions.dart';
@@ -65,24 +55,7 @@ class _AlbumScreenState extends State<AlbumScreen>
   List<Song> _songs = [];
   bool _loading = true;
   late String _artworkUrl = widget.artworkUrl;
-  // "Other versions" / "More by [artist]" — real InnerTube shelves parsed
-  // straight off the same album browse response _load() already fetches
-  // (see ApiService._parseAlbumRelatedShelves), never a separate call.
   List<AlbumRelatedShelf> _relatedShelves = const [];
-  // FIX ("2-3 sec mai aane wala artwork/glow akward lagta hai"): if this
-  // artwork was already seen anywhere else in the app (the search/album
-  // card the user just tapped, an artist page, etc — the overwhelmingly
-  // common case, since you always arrive here FROM some card already
-  // showing this same art), ArtworkPaletteCache.peek() resolves it
-  // synchronously, so the very first frame already paints the real glow
-  // — no flat placeholder flash while _extractGlow's async lookup catches
-  // up. Only a genuinely first-ever-seen album (fresh deep link, cold
-  // cache) still falls through to the dark neutral default below.
-  //
-  // FIX ("palette kuch sec baad snap/pop hoti hai — ekdam smooth chahiye"):
-  // `_glow` is now an animated getter (see below), not a plain field —
-  // any change to `_glowTarget` after this first frame plays as a fade
-  // via _glowController instead of the old hard color snap.
   late Color _glowTarget = _peekInitialGlow();
 
   late final AnimationController _glowController = AnimationController(
@@ -91,8 +64,6 @@ class _AlbumScreenState extends State<AlbumScreen>
   );
   late Animation<Color?> _glowAnimation = AlwaysStoppedAnimation(_glowTarget);
 
-  /// The value every widget in build() actually paints with — see
-  /// mix_screen.dart's identical getter for the full reasoning.
   Color get _glow => _glowAnimation.value ?? _glowTarget;
 
   void _setGlowTarget(Color next) {
@@ -108,16 +79,6 @@ class _AlbumScreenState extends State<AlbumScreen>
 
   Color _peekInitialGlow() {
     final cached = ArtworkPaletteCache.peek(widget.artworkUrl);
-    // FIX ("albums wala bhi problem" — light theme cache-hit color was
-    // off for a frame): `context` (needed for the real theme brightness)
-    // isn't available yet at field-initializer time, so this used to
-    // hardcode isLight: false — correct for dark theme, but wrong for a
-    // light-theme user on a cache hit, where the clamp target is
-    // different. This now returns the RAW cached tone unclamped instead
-    // of guessing a brightness, and didChangeDependencies (below, which
-    // does have `context`) applies the real, theme-correct clamp a
-    // moment later — same fix mix_screen.dart's _peekInitialGlow already
-    // uses, and that ~1-frame gap is invisible on a cache hit either way.
     return cached?.darkMuted ?? const Color(0xFF1A1630);
   }
 
@@ -127,10 +88,6 @@ class _AlbumScreenState extends State<AlbumScreen>
   void initState() {
     super.initState();
     AnalyticsService.instance.logScreen('Album');
-    // The glow fade is driven by _glowController and consumed only by small
-    // AnimatedBuilder wrappers in build() (page bg, header fade gradient).
-    // Deliberately NOT a setState listener: that rebuilt the whole screen,
-    // every SongTile included, on each frame of the fade.
     _load();
     _extractGlow(widget.artworkUrl);
   }
@@ -138,24 +95,12 @@ class _AlbumScreenState extends State<AlbumScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Applies the real, theme-aware contrast clamp to whatever
-    // _peekInitialGlow seeded with the raw (unclamped) cached tone — see
-    // that method's doc comment for why this couldn't happen at
-    // construction time. Guarded to run once; didChangeDependencies can
-    // re-fire on any dependency change (e.g. a theme toggle), not just
-    // the first frame.
     if (!_contrastSafeApplied) {
       _contrastSafeApplied = true;
       final safe = ensureContrastSafe(
         _glowTarget,
         isLight: Theme.of(context).brightness == Brightness.light,
       );
-      // Plain assign, not _setGlowTarget() — this runs before the very
-      // first build, so there's no "current" painted color on screen yet
-      // to fade FROM. Also re-seeds _glowAnimation itself (built in the
-      // field initializer from the pre-clamp _glowTarget, so it could
-      // otherwise briefly disagree with the now-clamped value) with an
-      // already-settled animation at the correct color.
       _glowTarget = safe;
       _glowAnimation = AlwaysStoppedAnimation(safe);
     }
@@ -169,18 +114,11 @@ class _AlbumScreenState extends State<AlbumScreen>
 
   Future<void> _extractGlow(String url) async {
     final c = await extractImmersiveColor(url);
-    // Same contrast-safety clamp as mix_screen.dart's matching fix.
     if (c != null && mounted) {
       final safe = ensureContrastSafe(
         c,
         isLight: Theme.of(context).brightness == Brightness.light,
       );
-      // Cache-hit: _peekInitialGlow + didChangeDependencies above already
-      // painted this exact color before the first frame ever showed —
-      // this is a genuine no-op, skip the setState entirely instead of a
-      // harmless-but-wasted rebuild. Only a real cold-cache resolution
-      // actually moves the target, and _setGlowTarget fades `_glow`
-      // smoothly to it rather than snapping.
       if (safe.value != _glowTarget.value) {
         _setGlowTarget(safe);
       }
@@ -188,16 +126,6 @@ class _AlbumScreenState extends State<AlbumScreen>
   }
 
   Future<void> _load() async {
-    // FIX ("YT se complete albums aaye ekdam top grade"): use the
-    // artwork+songs variant so a YT album can upgrade its header banner
-    // from the small search-card thumbnail (passed in via widget.artworkUrl)
-    // to the album's own dedicated high-res header image, same source the
-    // official YT Music album page uses. Saavn albums and any failure case
-    // both come back with an empty headerArtworkUrl, so the widget-provided
-    // artwork keeps working exactly as before for them.
-    // Network error / khaali jawab pe ek baar auto-retry; phir bhi fail ho to
-    // spinner nahi, "No songs" + Retry dikhta hai (pehle exception aane par
-    // loader hamesha ghoomta rehta tha).
     ({
       List<Song> songs,
       String headerArtworkUrl,
@@ -219,15 +147,6 @@ class _AlbumScreenState extends State<AlbumScreen>
     final result = fetched;
     final resolvedHeaderArt =
         result.headerArtworkUrl.isNotEmpty ? result.headerArtworkUrl : widget.artworkUrl;
-    // FIX ("full player kabhi bina thumbnail ke na rahe"): a per-song
-    // thumbnail can legitimately come back empty (many older Saavn album
-    // tracks have no individual art, and the Saavn branch of
-    // fetchAlbumSongsWithArtwork never stamps one the way the YT branch
-    // does). The song list itself is fine showing a plain note icon for
-    // those rows — but once tapped, the full player must never show blank
-    // art, so every song missing its own artworkUrl here is stamped with
-    // the album's cover (its real header art if resolved, else the
-    // thumbnail this screen was opened with) as a guaranteed fallback.
     final stampedSongs = resolvedHeaderArt.isEmpty
         ? result.songs
         : result.songs
@@ -244,10 +163,6 @@ class _AlbumScreenState extends State<AlbumScreen>
     if (result.headerArtworkUrl.isNotEmpty) _extractGlow(result.headerArtworkUrl);
   }
 
-  /// Derives up to 3 distinct artist names across the album's songs —
-  /// call sites don't pass artist/year separately, so we build the
-  /// "Artist A • Artist B • Artist C" credit line from the loaded songs,
-  /// same source SongTile already trusts for per-track artist text.
   List<String> get _creditedArtists {
     final seen = <String>{};
     final out = <String>[];
@@ -264,6 +179,17 @@ class _AlbumScreenState extends State<AlbumScreen>
     return out;
   }
 
+  String? _primaryArtistId(String name) {
+    final want = name.trim().toLowerCase();
+    for (final s in _songs) {
+      final ch = s.artistChannelId?.trim() ?? '';
+      if (ch.isEmpty) continue;
+      final first = s.artist.split(RegExp(r',|&|/')).first.trim().toLowerCase();
+      if (first == want) return 'yt_$ch';
+    }
+    return null;
+  }
+
   String? get _year {
     for (final s in _songs) {
       if (s.year != null && s.year!.trim().isNotEmpty) return s.year;
@@ -278,8 +204,6 @@ class _AlbumScreenState extends State<AlbumScreen>
     final artists = _creditedArtists;
     final year = _year;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // Resolved per animation frame by the AnimatedBuilders below, so a glow
-    // fade only repaints the background and never rebuilds the song list.
     Color bgNow(BuildContext c) => immersiveScaffoldBg(c, _glow);
     final screenW = MediaQuery.sizeOf(context).width;
     final topInset = MediaQuery.paddingOf(context).top;
@@ -293,19 +217,14 @@ class _AlbumScreenState extends State<AlbumScreen>
       animation: _glowController,
       builder: (ctx, child) => ColoredBox(color: bgNow(ctx), child: child),
       child: CustomScrollView(
-        // PERF: 1200px made ~30 rows (images + prewarm timers) build in the
-        // very first frame, right inside the route transition. 500px keeps
-        // flings smooth without that open-time burst.
         cacheExtent: 500,
           slivers: [
-            // ── Header (scrolls away 1:1 with the list) ───────────────────
             SliverToBoxAdapter(
               child: RepaintBoundary(child: SizedBox(
                 height: headerH,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    // Layer 0 — sharp full-bleed artwork.
                     Positioned.fill(
                       child: Hero(
                         tag: 'album_art_${widget.albumId}',
@@ -331,7 +250,6 @@ class _AlbumScreenState extends State<AlbumScreen>
                       ),
                     ),
 
-                    // Layer 1 — top scrim for status bar + floating pills.
                     Positioned(
                       top: 0,
                       left: 0,
@@ -351,7 +269,6 @@ class _AlbumScreenState extends State<AlbumScreen>
                       ),
                     ),
 
-                    // Layer 2 — bottom fade into the page background.
                     Positioned.fill(
                       child: AnimatedBuilder(
                         animation: _glowController,
@@ -377,8 +294,6 @@ class _AlbumScreenState extends State<AlbumScreen>
                       ),
                     ),
 
-                    // Title block — album name, credited artists (tap opens
-                    // the first artist), "Album • year".
                     Positioned(
                       left: 24,
                       right: 24,
@@ -404,7 +319,10 @@ class _AlbumScreenState extends State<AlbumScreen>
                               behavior: HitTestBehavior.opaque,
                               onTap: () => AurumDepthRoute.to(
                                 context,
-                                ArtistScreen(artistName: artists.first),
+                                ArtistScreen(
+                                  artistId: _primaryArtistId(artists.first),
+                                  artistName: artists.first,
+                                ),
                               ),
                               child: Text(
                                 artists.join(' • '),
@@ -433,7 +351,6 @@ class _AlbumScreenState extends State<AlbumScreen>
                       ),
                     ),
 
-                    // Floating glass toolbar.
                     SafeArea(
                       bottom: false,
                       child: Padding(
@@ -512,7 +429,6 @@ class _AlbumScreenState extends State<AlbumScreen>
               )),
             ),
 
-            // ── Action row: shuffle · Play · download ─────────────────────
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
@@ -617,15 +533,11 @@ class _AlbumScreenState extends State<AlbumScreen>
                     ytStyle: true,
                   ),
                   childCount: _songs.length,
-                  // PERF: SongTile owns its RepaintBoundary and has no
-                  // keep-alive state; skip the delegate's duplicates.
                   addRepaintBoundaries: false,
                   addAutomaticKeepAlives: false,
                 ),
               ),
 
-            // "Other versions" / "More by [artist]" shelves — real InnerTube
-            // shelves off this album's browse response; omitted when empty.
             if (!_loading)
               for (final shelf in _relatedShelves)
                 SliverToBoxAdapter(
@@ -641,13 +553,11 @@ class _AlbumScreenState extends State<AlbumScreen>
       child: body,
       builder: (ctx, child) => Scaffold(
         backgroundColor: bgNow(ctx),
-        // Persistent mini player.
         bottomNavigationBar: const MiniPlayerSlot(),
         body: child,
       ),
     );
 
-    // Dark mode: header artwork runs under the status bar → light icons.
     if (!isDark) return scaffold;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light.copyWith(
@@ -657,15 +567,11 @@ class _AlbumScreenState extends State<AlbumScreen>
     );
   }
 
-  // Shared, deduped toast handler — see aurum_snack.dart.
   void _snack(BuildContext context, String msg) {
     if (!mounted) return;
     AurumSnack.show(context, msg);
   }
 
-  /// Queues every song in the album for download (skipping ones already
-  /// downloaded/in-progress), then opens the real Downloads screen so the
-  /// progress is visible.
   Future<void> _downloadAlbum(
       BuildContext context, DownloadProvider downloads) async {
     final toQueue = _songs
@@ -684,11 +590,6 @@ class _AlbumScreenState extends State<AlbumScreen>
   }
 }
 
-/// One "Other versions" / "More by [artist]" shelf — a section title
-/// (whatever YT Music itself labeled it) followed by a horizontal-scroll
-/// row of album cards. Mirrors artist_all_albums_screen.dart's grid tile
-/// visually (same rounded artwork + title + year), just laid out as a
-/// horizontal strip instead of a grid, matching the reference screenshot.
 class _AlbumRelatedShelfSection extends StatelessWidget {
   final AlbumRelatedShelf shelf;
   const _AlbumRelatedShelfSection({required this.shelf});
@@ -716,9 +617,12 @@ class _AlbumRelatedShelfSection extends StatelessWidget {
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
+              physics: const BouncingScrollPhysics(),
+              cacheExtent: 500,
               itemCount: shelf.albums.length,
-              itemBuilder: (context, i) =>
-                  _RelatedAlbumCard(album: shelf.albums[i]),
+              itemBuilder: (context, i) => RepaintBoundary(
+                child: _RelatedAlbumCard(album: shelf.albums[i]),
+              ),
             ),
           ),
         ],
@@ -727,9 +631,6 @@ class _AlbumRelatedShelfSection extends StatelessWidget {
   }
 }
 
-/// Single card inside a related-shelf row — tapping opens that album's
-/// own AlbumScreen (real navigation, same as every other album card in
-/// the app), never a preview/inline expansion.
 class _RelatedAlbumCard extends StatelessWidget {
   final ArtistAlbum album;
   const _RelatedAlbumCard({required this.album});
@@ -784,22 +685,11 @@ class _RelatedAlbumCard extends StatelessWidget {
   }
 }
 
-/// Floating header pill — real Liquid Glass (the same shader-refraction
-/// surface the mini player and nav bar use via [AurumGlass]), not a flat
-/// BackdropFilter blur. Always the dark variant: it floats over the
-/// artwork where icons are white. Interactive: press swells, drag
-/// deforms and springs back, like iOS.
 class _GlassPill extends StatelessWidget {
   final Widget child;
   final double width;
   const _GlassPill({super.key, required this.child, required this.width});
 
-  // STABILITY FIX ("glass kabhi kabhi shape change kar raha hai"): the lens
-  // used to size itself from whatever its child measured, and the touch
-  // "swell/deform" mode (interactive) let a stray drag or a mid-layout
-  // measurement warp the pill into a leaf shape / clip the 3-dot button.
-  // Now: an exact, fixed 44dp-tall box with a known width (so the lens
-  // never re-measures), and interactive OFF (no deformation at all).
   static const double height = 44;
 
   @override
@@ -808,19 +698,15 @@ class _GlassPill extends StatelessWidget {
       width: width,
       height: height,
       child: AurumGlass(
-        // AurumGlass keeps the backdrop crisp (effective blur is a small
-        // fraction of this, floored at 3) — the look comes from refraction.
         sigma: 6,
         borderRadius: BorderRadius.circular(height / 2),
         isDark: true,
-        interactive: false,
         child: SizedBox(width: width, height: height, child: child),
       ),
     );
   }
 }
 
-/// Single tap target inside an [_GlassPill].
 class _GlassIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
@@ -847,7 +733,6 @@ class _GlassIconButton extends StatelessWidget {
   }
 }
 
-/// Round control flanking the Play pill (shuffle, download).
 class _RoundButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
@@ -891,7 +776,6 @@ class _RoundButton extends StatelessWidget {
   }
 }
 
-/// The wide Play pill between the round buttons.
 class _PlayPill extends StatelessWidget {
   final VoidCallback? onTap;
   const _PlayPill({super.key, required this.onTap});

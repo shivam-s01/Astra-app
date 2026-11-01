@@ -10,25 +10,6 @@ import '../theme/aurum_theme.dart';
 import 'aurum_artwork.dart';
 import 'aurum_equalizer_bars.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AurumStackedArtwork — the "depth stack" look behind a track/artist cover,
-// matched to Echo Nightly's item_shelf_media_cover.xml: two faint, offset
-// rounded rectangles sit behind the real artwork (like a deck of cards peeking
-// out), giving a flat square/circle image a sense of physical stacking instead
-// of floating flat against the row. Echo's exact recipe, ported 1:1:
-//   • back layer:  full width, -4dp/+4dp size delta, alpha 0.15
-//   • front layer: full width, -2.5dp size delta,    alpha 0.25
-//   • cover:       full size, alpha 1.0, on top
-// Echo uses square corners tinted to the foreground color for the stack
-// layers regardless of the cover's own shape — same here: the two backing
-// layers always use `stackColor` (defaults to the theme's foreground/muted
-// tone), while the cover itself can be circular (artist) or rounded-square
-// (song) via `circular`.
-//
-// When `showNowPlaying` is true, an Echo-style dark circular badge with the
-// live 3-bar equalizer wave is centered on top of the artwork — same visual
-// role as Echo's `isPlaying` SmallNowPlayingButton overlay.
-// ─────────────────────────────────────────────────────────────────────────────
 class AurumStackedArtwork extends StatelessWidget {
   final String url;
   final double size;
@@ -55,18 +36,11 @@ class AurumStackedArtwork extends StatelessWidget {
     final stackRadius = circular ? size / 2 : borderRadius;
 
     return SizedBox(
-      // Stack layers extend 4dp beyond the cover on each side (Echo's
-      // -4dp/+4dp margins), so the box needs headroom or siblings in a
-      // Row would clip the back layer's corners.
       width: size + 8,
       height: size + 8,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          // Backing "cards" only for circular (artist) covers. Song covers
-          // render plain: the two faint layers peeked out above the cover as
-          // a white line on dark theme. The box size is unchanged, so row
-          // layout/alignment stay exactly the same.
           if (circular) ...[
             Transform.translate(
               offset: const Offset(0, -4),
@@ -91,7 +65,6 @@ class AurumStackedArtwork extends StatelessWidget {
               ),
             ),
           ],
-          // Real cover, full opacity, on top.
           circular
               ? ClipOval(
                   child: AurumArtwork(url: url, size: size, borderRadius: 0),

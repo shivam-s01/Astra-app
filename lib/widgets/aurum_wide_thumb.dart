@@ -5,18 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/widgets/aurum_wide_thumb.dart
-// PROJECT: Astra Music
-// DESCRIPTION: 16:9-style cropped thumbnail used by the Mix screen's track
-//   rows and the compact track options sheet (YT Music-style wide covers).
-//
-//   Decodes the square cover at 1.4x the display width so the center crop
-//   stays sharp, then center-crops it to the requested box via FittedBox
-//   (cover) — no extra network request, same cached image every other
-//   AurumArtwork on the page already uses.
-// =============================================================================
-
 import 'package:flutter/material.dart';
 import 'aurum_artwork.dart';
 

@@ -5,68 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/services/sync_service.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Two-way sync between local Hive boxes and Supabase, keyed by
-//   the signed-in user's id. Strategy: last-write-wins via `updatedAt`.
-//
-//   Supabase tables expected (create via SQL editor):
-//
-//   create table playlists (
-//     id text not null,
-//     user_id uuid references auth.users not null,
-//     data jsonb not null,
-//     updated_at timestamptz not null default now(),
-//     primary key (id, user_id)
-//   );
-//   alter table playlists enable row level security;
-//   create policy "own playlists" on playlists
-//     for all using (auth.uid() = user_id);
-//
-//   create table followed_artists (
-//     artist_id text not null,
-//     user_id uuid references auth.users not null,
-//     data jsonb not null,
-//     primary key (artist_id, user_id)
-//   );
-//   alter table followed_artists enable row level security;
-//   create policy "own followed artists" on followed_artists
-//     for all using (auth.uid() = user_id);
-//
-//   create table followed_albums (
-//     album_id text not null,
-//     user_id uuid references auth.users not null,
-//     data jsonb not null,
-//     primary key (album_id, user_id)
-//   );
-//   alter table followed_albums enable row level security;
-//   create policy "own followed albums" on followed_albums
-//     for all using (auth.uid() = user_id);
-//
-//   create table favorites (
-//     song_id text not null,
-//     user_id uuid references auth.users not null,
-//     data jsonb not null,
-//     primary key (song_id, user_id)
-//   );
-//   alter table favorites enable row level security;
-//   create policy "own favorites" on favorites
-//     for all using (auth.uid() = user_id);
-//
-//   create table history (
-//     song_id text not null,
-//     user_id uuid references auth.users not null,
-//     data jsonb not null,
-//     played_at timestamptz not null default now(),
-//     primary key (song_id, user_id)
-//   );
-//   alter table history enable row level security;
-//   create policy "own history" on history
-//     for all using (auth.uid() = user_id);
-//   (see create_history_table.sql for the exact statements actually run)
-// =============================================================================
-
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/song.dart';
@@ -86,21 +24,7 @@ class SyncService {
   bool _isSyncing = false;
   bool get isSyncing => _isSyncing;
 
-  // Cloud sync is sign-in-gated only (every signed-in user gets it —
-  // payment/isPremium is ads-only and has nothing to do with sync).
   bool get _canSync => _uid != null;
-
-  // ── Incremental single-item pushes ──────────────────────────────────────
-  //
-  // These are meant to be called right after every local Hive write —
-  // fire-and-forget, never awaited by the caller, never thrown from. A
-  // playlist edit must always succeed locally regardless of network
-  // state; the cloud push is a best-effort mirror on top of that, not a
-  // condition for the local save to "count". If it fails here (offline,
-  // Supabase hiccup, whatever), the next full syncAll() — on next
-  // sign-in, or the app-resume/periodic sync wired in main.dart — will
-  // pick this row up again because its local updatedAt will still be
-  // newer than whatever's on the server.
 
   Future<void> pushPlaylist(AurumPlaylist pl) async {
     if (!_canSync) return;
@@ -211,9 +135,6 @@ class SyncService {
     }
   }
 
-  // History is upsert-only (never deleted individually) — clearing
-  // history is a full wipe, handled in _clearRemoteHistory() below, not
-  // a per-song delete.
   Future<void> pushHistoryEntry(Song song, int playedAtMs) async {
     if (!_canSync) return;
     try {
@@ -230,9 +151,6 @@ class SyncService {
     }
   }
 
-  /// Call on sign-out / "Clear history" so a wipe on one device doesn't
-  /// get silently un-done by the next syncAll() pulling the old rows
-  /// back down from another device's still-unsynced state.
   Future<void> clearRemoteHistory() async {
     if (!_canSync) return;
     final uid = _uid!;
@@ -243,8 +161,6 @@ class SyncService {
     }
   }
 
-  /// Call right after a successful sign-in. Pulls remote data down, then
-  /// pushes anything local-only up (merge, not overwrite).
   Future<void> syncAll({
     required PlaylistProvider playlists,
     required FollowedArtistsProvider followedArtists,
@@ -270,21 +186,12 @@ class SyncService {
     }
   }
 
-  // ── Playlists ────────────────────────────────────────────────────────────
-
   Future<void> _syncPlaylists(String uid, PlaylistProvider provider) async {
     final remoteRows =
         await _client.from('playlists').select().eq('user_id', uid);
 
     final localById = {for (final p in provider.playlists) p.id: p};
 
-    // The row's own `updated_at` column can't be trusted for comparison:
-    // older app versions sent a zone-less local time that Postgres read as
-    // UTC, so for users ahead of UTC (India +5:30 etc.) every server row
-    // looked hours "newer" and silently overwrote local changes (custom
-    // order, pins...) on every launch/resume — plus forced a full rebuild
-    // of every playlist each time. The playlist's own `data.updatedAt`
-    // is in the same clock as the local copy, so compare that instead.
     DateTime stampOf(Map<String, dynamic> row, Map<String, dynamic> data) {
       final inner = data['updatedAt'];
       if (inner is String) {
@@ -294,13 +201,9 @@ class SyncService {
       return DateTime.parse(row['updated_at'] as String);
     }
 
-    // Pull: remote newer or missing locally -> apply locally (one batch).
     final toPull = <AurumPlaylist>[];
     final remoteStamp = <String, DateTime>{};
     for (final row in remoteRows) {
-      // One corrupt/null row must never abort the whole sync. A skipped row
-      // has no remoteStamp, so the push loop below re-uploads the good
-      // local copy (self-heals the bad server row).
       try {
         final id = row['id'] as String;
         final data = Map<String, dynamic>.from(row['data'] as Map);
@@ -319,7 +222,6 @@ class SyncService {
     }
     final pulledIds = {for (final p in toPull) p.id};
 
-    // Push: local newer or missing remotely -> upload
     for (final local in provider.playlists) {
       if (pulledIds.contains(local.id)) continue;
       final remoteUpdatedAt = remoteStamp[local.id];
@@ -333,8 +235,6 @@ class SyncService {
       }
     }
   }
-
-  // ── Followed artists ─────────────────────────────────────────────────────
 
   Future<void> _syncFollowedArtists(
       String uid, FollowedArtistsProvider provider) async {
@@ -366,8 +266,6 @@ class SyncService {
     }
   }
 
-  // ── Followed albums ──────────────────────────────────────────────────────
-
   Future<void> _syncFollowedAlbums(
       String uid, FollowedAlbumsProvider provider) async {
     final remoteRows =
@@ -398,8 +296,6 @@ class SyncService {
     }
   }
 
-  // ── Favorites ────────────────────────────────────────────────────────────
-
   Future<void> _syncFavorites(String uid, FavoritesProvider provider) async {
     final remoteRows =
         await _client.from('favorites').select().eq('user_id', uid);
@@ -425,15 +321,6 @@ class SyncService {
     }
   }
 
-  // ── History ──────────────────────────────────────────────────────────────
-  //
-  // Same shape as playlists' updated_at merge: newest played_at wins per
-  // song, in both directions, so history survives sign-out, reinstall, or
-  // a brand-new device instead of living only in local Hive. Local-file
-  // entries are never pulled or pushed here — RecentlyPlayedProvider
-  // already skips pushing them (see addPlay()), and a remote row can
-  // never be a local-file entry in the first place since those are
-  // never uploaded.
   Future<void> _syncHistory(String uid, RecentlyPlayedProvider provider) async {
     final remoteRows =
         await _client.from('history').select().eq('user_id', uid);
@@ -442,7 +329,6 @@ class SyncService {
       for (final row in remoteRows) row['song_id'] as String: row,
     };
 
-    // Pull: remote newer or missing locally -> merge in.
     for (final row in remoteRows) {
       final data = Map<String, dynamic>.from(row['data'] as Map);
       final playedAt = DateTime.parse(row['played_at'] as String);
@@ -452,13 +338,9 @@ class SyncService {
       );
     }
 
-    // Push: local newer or missing remotely -> upload. Uses the
-    // provider's own tracked playedAt (playedAtById) rather than "now",
-    // so a push during sync doesn't fake a fresher timestamp than when
-    // the song actually played.
     for (final song in provider.history) {
       final localPlayedAt = provider.playedAtFor(song.id);
-      if (localPlayedAt == null) continue; // shouldn't happen, but be safe
+      if (localPlayedAt == null) continue;
       final remote = remoteById[song.id];
       final remotePlayedAt = remote != null
           ? DateTime.parse(remote['played_at'] as String).millisecondsSinceEpoch

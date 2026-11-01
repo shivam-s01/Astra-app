@@ -14,97 +14,19 @@ import '../models/artist.dart';
 import 'api_service.dart';
 import 'audio_prefs.dart';
 
-/// Cold-start home feed cache (Spotify-style "show what we last had
-/// instantly, refresh in the background").
-///
-/// WHY THIS EXISTS: previously HomeScreen's initState() called
-/// _loadOnline()/_loadArtists() with zero disk persistence anywhere —
-/// every single cold app start (and every hot-reload of HomeScreen's
-/// State) started from a completely empty `_onlineSections`/`_homeArtists`
-/// list and showed shimmer/loading placeholders for the entire home feed
-/// until the network round-trip (fetchHomeStreaming, up to a 25s timeout)
-/// resolved. On a slow connection, or the very common case of a user
-/// opening the app just to glance at something and closing it again
-/// moments later, that meant staring at a placeholder-only home screen for
-/// however long the network took — every single time, no matter how many
-/// times the app had already successfully loaded before.
-///
-/// FIX: after every successful `_loadOnline()`/`_loadArtists()` fetch, the
-/// resulting sections/artists are written here to SharedPreferences (small
-/// JSON blobs — song lists this size are a few KB, well within normal
-/// SharedPreferences usage elsewhere in this app, e.g. RecommendationEngine).
-/// On the NEXT cold start, HomeScreen reads this cache synchronously-fast
-/// (SharedPreferences.getInstance() resolves near-instantly, no network
-/// involved) and renders it immediately as the initial state — the user
-/// sees last session's home feed the instant the screen builds, with zero
-/// perceptible loading delay, while the real fetch continues in the
-/// background exactly as before and silently replaces the cached content
-/// the moment fresh data arrives. If the cache is empty (genuine first-ever
-/// launch) or unreadable, behavior falls back to exactly what it was
-/// before this fix — a normal loading state until the fetch resolves.
-///
-/// FRESHNESS: cold start reads this cache and paints it instantly
-/// (near-0ms, SharedPreferences, no network) instead of showing shimmer
-/// while a fresh fetch runs — [loadSections]/[loadArtists]/
-/// [loadPlaylistCards] never apply any age check themselves, so painting
-/// is always instant regardless of how old the saved cache is. Whether a
-/// background RE-FETCH also kicks off is a separate decision: [isFresh]/
-/// [isArtistsFresh]/[isPlaylistsFresh] gate that on a 6-hour age window
-/// (see `_maxFreshAge`'s doc comment on [HomeFeedCache]) — old enough to
-/// avoid a network fetch on every single cold start, young enough that
-/// RecommendationEngine's listening-based personalization actually gets
-/// to run again periodically instead of only once per install. A manual
-/// pull-to-refresh (home_screen.dart's RefreshIndicator) always forces a
-/// real fetch regardless of this cache either way.
-/// Runs on a background isolate via compute() — see loadSections() below
-/// for why this was pulled out of the main isolate for LARGE payloads.
-/// Must be a top-level function (not a closure/instance method) for
-/// compute() to send it across the isolate boundary.
 List<SongSection> _decodeSections(String raw) {
   final decoded = jsonDecode(raw) as List;
   return decoded
       .map((e) => SongSection.fromJson(e as Map<String, dynamic>))
-      // Defensive: a section that round-tripped with no songs (should be
-      // impossible given the save-side guard in saveSections, but a future
-      // format change or partial write shouldn't be able to put an empty
-      // shelf on screen either) is dropped rather than shown.
       .where((s) => s.songs.isNotEmpty)
       .toList();
 }
 
-// PERF: compute() itself isn't free — spinning up a background isolate has
-// its own fixed cost (isolate spawn + message-passing serialization), which
-// on a weak/2GB-RAM device can run 10-30ms+. For the common case (a modest
-// cache — a handful of home sections, maybe 60-150 songs total, well under
-// this threshold) that spawn cost is actually MORE overhead than just
-// decoding inline ever was — inline JSON decode of a small string is
-// microseconds, nowhere near enough to drop a frame. compute() is only
-// worth paying for once the payload is large enough that an inline decode
-// would itself risk blocking a frame during the splash/cold-start window.
-// 40 KB of JSON is comfortably past that point (multiple sections' worth
-// of full song metadata) while staying well under what a normal cache
-// actually reaches in practice — this keeps the common path as light and
-// fast as inline decode always was, and only pays the isolate cost on the
-// rarer large-cache case where it's actually a net win.
 const int _computeThresholdBytes = 40 * 1024;
 
-/// Top-level counterpart to _decodeSections — same compute()-eligibility
-/// reasoning applies to the write path (saveSections runs after every
-/// background feed refresh, which can land while the user is actively
-/// scrolling Home; a large jsonEncode inline right then is exactly the
-/// kind of single-frame jank that reads as "stutter while scrolling").
 String _encodeSections(List<Map<String, dynamic>> sectionsJson) =>
     jsonEncode(sectionsJson);
 
-/// Top-level decode for the artists cache — same compute()-eligibility
-/// reasoning as _decodeSections above. Previously loadArtists() ran this
-/// jsonDecode()+map() unconditionally inline, with none of the size-gated
-/// compute() dispatch _decodeSections/loadSections already had — so a
-/// large artists cache (a long "followed/home artists" list building up
-/// over many sessions) could still block the UI isolate during the exact
-/// splash-animation window loadSections() was already fixed for, and read
-/// as the same "splash skipped / frozen open" symptom via this second,
-/// previously-unguarded path.
 List<ArtistSimple> _decodeArtists(String raw) {
   final decoded = jsonDecode(raw) as List;
   return decoded
@@ -116,12 +38,6 @@ List<ArtistSimple> _decodeArtists(String raw) {
       .toList();
 }
 
-/// Which sections a given pull-to-refresh should actually hit the network
-/// for. Produced from [HomeFeedCache.bumpPullRefreshAndGetPosition]'s 1-10
-/// cycle position via [RefreshStage.forPosition] — see that constructor's
-/// doc comment for the round-robin rollout this implements ("har refresh
-/// pe thoda content refresh ho, sirf Quick Picks nahi, YouTube Music jaisa
-/// naturally, heavy load/MB spike na ho" — 2026-09-15, round-robin revision).
 class RefreshStage {
   final bool quickPicks;
   final bool shelves;
@@ -135,30 +51,6 @@ class RefreshStage {
     required this.similarSongRows,
   });
 
-  /// Maps a 1-10 cycle position to which sections are due a real fetch on
-  /// THIS pull.
-  ///
-  /// REVISED (2026-09-15): the original version was cumulative/clustered —
-  /// pulls 1-3 touched Quick Picks only, so three refreshes in a row felt
-  /// identical before Shelves ever joined in at pull 4. That read as "sirf
-  /// Quick Picks refresh ho rahe hai, sb kuch nahi" — technically a ramp,
-  /// but not one the user could feel on every single pull.
-  ///
-  /// This version is round-robin instead of cumulative: Quick Picks stays
-  /// on every pull (it's the free one — a zero-network pool reshuffle, see
-  /// _QuickPicksSection._rotateFromPool), and exactly ONE heavy section
-  /// rotates in on top of it each time, so every single pull visibly
-  /// brings *something* new without ever bundling multiple network-heavy
-  /// sections into the same pull (that bundling is exactly the MB/heat
-  /// spike this feature exists to avoid — same reasoning as before, just
-  /// spread as "one new thing per pull" instead of "nothing new for 3
-  /// pulls, then one more thing on top of the last"):
-  ///   position % 3 == 1  → Quick Picks + Shelves
-  ///   position % 3 == 2  → Quick Picks + Similar-Artist rows
-  ///   position % 3 == 0  → Quick Picks + Similar-Song rows
-  /// Position still cycles 1-10 (see [HomeFeedCache.fullRefreshEvery]) so
-  /// the saved cycle counter and its persistence/wraparound contract are
-  /// unchanged — only how a position maps to active sections changed.
   factory RefreshStage.forPosition(int position) {
     final slot = position % 3;
     return RefreshStage(
@@ -171,11 +63,6 @@ class RefreshStage {
 }
 
 class HomeFeedCache {
-  /// Country badalne pe purana region ka cached feed (Quick Picks, shelves,
-  /// similar rows, sections, artists) galat country ka dikhega — saare
-  /// timestamps hata do taaki agla load fresh (naye region ka) fetch kare.
-  /// Data delete nahi hota (instant paint ka fallback rahe), bas "stale" ho
-  /// jaata hai.
   static Future<void> invalidateForRegionChange() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -200,90 +87,21 @@ class HomeFeedCache {
   }
 
   static const _sectionsKey = 'home_feed_cache_sections_v1';
-  // BUMPED v1 -> v2 ("home page pe artist ke real images nahi aate" —
-  // stale-cache root cause, 2026-09-06): devices that had already cached
-  // artist entries from BEFORE fetchHomeArtistsStreaming's real-InnerTube-
-  // only rewrite (old entries could carry a movie-poster/mix-cover image
-  // sourced from the removed Saavn-merge leg — see fetchHomeArtistsStreaming's
-  // own doc comment for that removal) would otherwise keep reading that
-  // stale, wrong-image cache indefinitely: isArtistsFresh()'s 6-hour gate
-  // means _loadArtists() (the correct fetch) never even fires again until
-  // that window lapses, so the wrong photos just sat there. Changing the
-  // storage key makes any pre-existing v1 cache invisible to loadArtists()
-  // (reads back empty, exactly like a fresh install) WITHOUT needing a
-  // migration — _hydrateFromCache() finding nothing simply falls through
-  // to a real fetch immediately, same as any other cold start with no
-  // cache yet.
-  //
-  // BUMPED AGAIN v2 -> v3 ("home page pe artist hi nahi aa rahe" —
-  // 2026-09-12, same day as the Worker-removal fix on
-  // fetchYtMusicHomeArtists): identical reasoning as the v1->v2 bump
-  // above — any device that had already cached a v2 artist list (from
-  // before the Home artist row stopped calling the Worker and switched
-  // to InnerTube-only) gets that cache invalidated once, so it can never
-  // keep showing stale/empty data from the old Worker-backed path.
-  // One-time effect per device (first launch after this update writes a
-  // v3 entry, which behaves normally — timed freshness, instant
-  // hydration — from then on).
   static const _artistsKey = 'home_feed_cache_artists_v3';
   static const _savedAtKey = 'home_feed_cache_saved_at_ms';
-  // Paired with _artistsKey's bump — an old v1/v2 timestamp must not be
-  // read as if it were the v3 cache's freshness marker (that would
-  // report the brand-new-but-empty v3 cache as "fresh" and skip the
-  // fetch entirely).
   static const _artistsSavedAtKey = 'home_feed_cache_artists_saved_at_ms_v3';
 
-
-  // TIME-BASED FRESHNESS (restored 2026-09): the previous "never expire on
-  // its own" behavior meant _loadOnline()/_loadArtists() — and therefore
-  // RecommendationEngine's own listening-based personalization
-  // (rotatingAffinityArtists/rotatingAffinityGenres in api_service.dart's
-  // fetchHomeStreaming) — only ever ran ONCE per install, on the very
-  // first cold start with nothing cached yet. Every subsequent app open
-  // kept re-showing that exact same first-ever snapshot forever, no
-  // matter how much new listening history piled up, until the user
-  // discovered and used pull-to-refresh themselves. That's the opposite
-  // of what recommendations are supposed to do.
-  //
-  // A fixed interval strikes the balance the previous two states each
-  // missed: zero-expiry never refreshed on its own (stale forever);
-  // refreshing on every cold start would burn data/battery on every
-  // single app open even minutes apart. 6 hours means roughly 3-4
-  // natural refreshes a day — real listening-based content turnover
-  // without a background fetch on every launch.
   static const Duration _maxFreshAge = Duration(hours: 6);
-  // Data Saver: refresh the feed at most once a day on cold start (pull-to-
-  // refresh still always fetches fresh) — fewer feed round-trips + thumbnails.
   static const Duration _maxFreshAgeDataSaver = Duration(hours: 24);
 
-  // ZERO-MB COLD START: a saved cache is ALWAYS considered fresh, so cold
-  // start NEVER triggers a background network fetch when a cache exists.
-  // Only (a) first-ever launch / empty cache, or (b) manual pull-to-refresh
-  // fetches from the network.
   static bool _isRecent(int? savedAtMs) {
     if (savedAtMs == null) return false;
-    // Data Saver ON: a saved cache NEVER expires on cold start (zero MB).
     if (AudioPrefs.dataSaverActiveNotifier.value) return true;
-    // Data Saver OFF: original 6-hour freshness window.
     final age = DateTime.now().millisecondsSinceEpoch - savedAtMs;
     return age >= 0 && age < _maxFreshAge.inMilliseconds;
   }
 
-  // GATE for the caller's own background network fetch — not just what's
-  // displayed. isFresh()/isArtistsFresh()/isPlaylistsFresh() below mean
-  // "is there a cache AND is it still within _maxFreshAge" — true right
-  // after a fresh save, false again once it's aged out, so
-  // initState() in home_screen.dart fires a real background fetch on a
-  // genuine first-ever launch, a cleared/corrupted cache, OR simply
-  // whenever the existing cache has gone stale — never on every single
-  // cold start regardless of age.
-  // ZERO-MB COLD START: empty results are never saved, so a cache that is
-  // "empty" (failed/empty fetch, or user with no history) would otherwise
-  // look stale and re-fetch on EVERY cold start. These helpers record a
-  // cold-start fetch ATTEMPT and suppress repeat cold-start attempts for
-  // 24h whether or not it produced data. Pull-to-refresh ignores this.
   static Future<bool> coldAttemptedRecently(String key) async {
-    // Data Saver OFF: original behaviour, no attempt suppression.
     if (!AudioPrefs.dataSaverActiveNotifier.value) return false;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -303,8 +121,6 @@ class HomeFeedCache {
     } catch (_) {}
   }
 
-  // Failed/empty cold fetch ke baad marker hata do taaki agli launch pe
-  // (Data Saver ON me bhi) dobara try ho, 24h tak khali home na rahe.
   static Future<void> clearColdAttempt(String key) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -321,10 +137,6 @@ class HomeFeedCache {
     }
   }
 
-  // Same gate as isFresh() above, for the artist strip's own SEPARATE
-  // cache timestamp (_artistsSavedAtKey) — sections and artists are saved
-  // independently, so checking the sections' isFresh() alone would wrongly
-  // decide the artist strip's freshness off the wrong signal.
   static Future<bool> isArtistsFresh() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -335,22 +147,12 @@ class HomeFeedCache {
   }
 
   static Future<void> saveSections(List<SongSection> sections) async {
-    if (sections.isEmpty) return; // never overwrite a good cache with nothing
-    // Guard against caching a visibly broken/partial batch — a section
-    // with no songs at all isn't something a returning user should see
-    // flash on screen before being replaced; only cache sections that
-    // actually have content, same bar real display logic already applies.
+    if (sections.isEmpty) return;
     final usable = sections.where((s) => s.songs.isNotEmpty).toList();
     if (usable.isEmpty) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final sectionsJson = usable.map((s) => s.toJson()).toList();
-      // Size-aware, same reasoning as loadSections()'s decode dispatch —
-      // .toJson() itself (building the plain Map list) is cheap regardless
-      // of size, so only the actual string-encode step is size-gated here.
-      // A rough pre-check on section/song count avoids fully building the
-      // list twice just to measure it: encode inline unless there's
-      // clearly enough data for it to matter.
       final approxSongCount =
           usable.fold<int>(0, (sum, s) => sum + s.songs.length);
       final encoded = approxSongCount > 200
@@ -359,8 +161,6 @@ class HomeFeedCache {
       await prefs.setString(_sectionsKey, encoded);
       await prefs.setInt(_savedAtKey, DateTime.now().millisecondsSinceEpoch);
     } catch (_) {
-      // Best-effort — a failed cache write just means the next cold start
-      // falls back to the normal loading state, same as before this fix.
     }
   }
 
@@ -369,61 +169,17 @@ class HomeFeedCache {
       final prefs = await SharedPreferences.getInstance();
       final savedAtMs = prefs.getInt(_savedAtKey);
       if (savedAtMs == null) return [];
-      // Always paints instantly regardless of age (2026-09): this
-      // function itself has no expiry check — a saved cache paints
-      // immediately on cold start no matter how old it is, so there is
-      // never a shimmer/wait here. Whether a background RE-FETCH also
-      // kicks off is a completely separate decision, gated by isFresh()
-      // (see that function's doc comment) — that's where _maxFreshAge
-      // is actually enforced, not here.
       final raw = prefs.getString(_sectionsKey);
       if (raw == null || raw.isEmpty) return [];
-      // PERF FIX ("app freezes right after opening, splash looks skipped"):
-      // this used to run jsonDecode() + SongSection.fromJson() for every
-      // song in every cached section directly here, on the UI isolate,
-      // inside HomeScreen.initState() — i.e. the exact same frame window
-      // where the native OS splash (art_splash_anim.xml) hands off to
-      // Flutter's first real frame. A cache with many sections/songs
-      // made this decode heavy enough to drop frames right at that
-      // handoff, which read as the splash animation stuttering/skipping
-      // (it was actually the native splash's OWN animation still
-      // finishing, but Flutter's very next frame freezing made the
-      // handoff itself feel broken) and the whole UI felt frozen.
-      //
-      // Size-aware dispatch: only hand this off to compute() (a real
-      // background isolate) once the payload is big enough that decoding
-      // it inline would risk blocking a frame — see _computeThresholdBytes
-      // above for why. A typical/small cache decodes inline, which is both
-      // simpler and actually faster than paying an isolate-spawn cost for
-      // a few KB of JSON — keeping the common case as lightweight as
-      // possible instead of unconditionally paying isolate overhead.
       if (raw.length < _computeThresholdBytes) {
         return _decodeSections(raw);
       }
       return compute(_decodeSections, raw);
     } catch (_) {
-      // Corrupt/incompatible cache (e.g. a future model-shape change) —
-      // treat exactly like an empty cache rather than crashing home screen.
       return [];
     }
   }
 
-  // BUNDLED SNAPSHOT (2026-08-31, "1 second se bhi kam" fix): a real (not
-  // hardcoded) home feed captured once via lib/tools/export_home_snapshot.dart
-  // and shipped as an asset — assets/data/home_snapshot.json. Only ever
-  // used as a genuinely-new-install fallback (see home_screen.dart's
-  // _hydrateFromCache: this is only reached when the normal SharedPreferences
-  // cache above is empty, i.e. this app has never successfully loaded a
-  // home feed on this device before). Reading a bundled asset is a pure
-  // in-memory/rootBundle operation — no disk cache lookup, no network —
-  // so this resolves in low single-digit milliseconds. Same "frozen until
-  // live fetch replaces it" contract as the disk cache: this is only ever
-  // the very first paint, and _loadOnline()'s progressive fetch immediately
-  // starts replacing these sections with current live data. If the asset
-  // is missing (e.g. no snapshot has been generated/bundled yet) this
-  // simply returns an empty list, same as an unavailable disk cache — the
-  // screen falls through to the normal loading state exactly as before
-  // this fix existed.
   static Future<List<SongSection>> loadBundledSnapshot() async {
     try {
       final raw = await rootBundle.loadString('assets/data/home_snapshot.json');
@@ -433,8 +189,6 @@ class HomeFeedCache {
       }
       return compute(_decodeSections, raw);
     } catch (_) {
-      // Asset not bundled yet, or corrupt — fall through to normal
-      // loading state, exactly as if this feature didn't exist.
       return [];
     }
   }
@@ -458,15 +212,8 @@ class HomeFeedCache {
       final prefs = await SharedPreferences.getInstance();
       final savedAtMs = prefs.getInt(_artistsSavedAtKey);
       if (savedAtMs == null) return [];
-      // Always paints instantly regardless of age — see loadSections() above; background re-fetch gating lives in isArtistsFresh()/isPlaylistsFresh() instead.
       final raw = prefs.getString(_artistsKey);
       if (raw == null || raw.isEmpty) return [];
-      // PERF FIX — same "splash skipped / frozen open" issue loadSections()
-      // was already fixed for (see _decodeArtists doc comment above): only
-      // hand this off to a real background isolate once the payload is
-      // large enough that decoding it inline would risk blocking a frame;
-      // a typical/small artists list decodes inline, which is both simpler
-      // and faster than paying isolate-spawn overhead for a few KB of JSON.
       if (raw.length < _computeThresholdBytes) {
         return _decodeArtists(raw);
       }
@@ -476,13 +223,6 @@ class HomeFeedCache {
     }
   }
 
-  // ── "Playlists For You" row cache ──────────────────────────────────
-  // Same treatment as sections/artists above — always paints instantly,
-  // background re-fetch gated by isPlaylistsFresh()'s 6-hour window.
-  // Keyed separately by mood (_kMoodAll's cards are different from e.g.
-  // "bollywood"'s), so each mood's own cache/timestamp is independent —
-  // switching mood is a deliberate action that always fetches fresh
-  // regardless of this cache's age either way.
   static String _playlistsKey(String mood) => 'home_playlist_cards_v1_$mood';
   static String _playlistsSavedAtKey(String mood) =>
       'home_playlist_cards_saved_at_ms_$mood';
@@ -505,7 +245,6 @@ class HomeFeedCache {
       final prefs = await SharedPreferences.getInstance();
       final savedAtMs = prefs.getInt(_playlistsSavedAtKey(mood));
       if (savedAtMs == null) return [];
-      // Always paints instantly regardless of age — see loadSections() above; background re-fetch gating lives in isArtistsFresh()/isPlaylistsFresh() instead.
       final raw = prefs.getString(_playlistsKey(mood));
       if (raw == null || raw.isEmpty) return [];
       final decoded = jsonDecode(raw) as List;
@@ -522,18 +261,12 @@ class HomeFeedCache {
   static Future<bool> isPlaylistsFresh(String mood) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // Time-gated the same way as isFresh()/isArtistsFresh() — see
-      // _maxFreshAge's doc comment near the top of this file.
       return _isRecent(prefs.getInt(_playlistsSavedAtKey(mood)));
     } catch (_) {
       return false;
     }
   }
 
-  // ── Home "Albums" row cache — same cold-start-instant / 6-hour
-  // background-refresh treatment as the playlists row above, keyed
-  // separately per mood for the same reason (a different mood's albums
-  // are a different result set, not a refinement of the same one). ──
   static String _albumsKey(String mood) => 'home_album_cards_v1_$mood';
   static String _albumsSavedAtKey(String mood) =>
       'home_album_cards_saved_at_ms_$mood';
@@ -576,28 +309,9 @@ class HomeFeedCache {
     }
   }
 
-  // ── "Quick Picks" cache — real-InnerTube personalized song mix shown
-  // as a flat vertical list at the very top of Home (YT Music's own
-  // "Quick picks" shelf). Same cold-start-instant / 6-hour background-
-  // refresh treatment as every other row above — see _maxFreshAge's doc
-  // comment. Not mood-keyed (Quick Picks itself has no mood selector,
-  // unlike the playlist/album rows), so a single fixed key is enough.
   static const _quickPicksKey = 'home_quick_picks_v1';
   static const _quickPicksSavedAtKey = 'home_quick_picks_saved_at_ms';
 
-  // FIX ("refresh pe artist/content aane mein problem na ho" — 2026-09-15):
-  // this now saves the FULL ranked pool (up to 4x the shown count, not
-  // just the ~24 actually displayed) — _QuickPicksSectionState._pool reads
-  // this back on cold start so a light pull-to-refresh can immediately
-  // reshuffle real, already-cached history-based songs instead of only
-  // having a pool to reshuffle from AFTER at least one real fetch has run
-  // this session. Without this, a light refresh right after a cold start
-  // (before any real fetch fired, e.g. the quick-picks cache was still
-  // fresh) had nothing to reshuffle and fell back to a real fetch anyway —
-  // safe, but quietly defeated the point of a network-free light refresh
-  // in the most common case.
-  // [touch] false => sirf list update (timestamp nahi badhta). "Not interested"
-  // jaise local edit pe purana feed "fresh" na dikhe.
   static Future<void> saveQuickPicks(List<Song> songs,
       {bool touch = true}) async {
     if (songs.isEmpty) return;
@@ -639,41 +353,6 @@ class HomeFeedCache {
     }
   }
 
-  // ── "Similar to <Artist>" rows cache — ADDED ("MB kam use ho... na
-  // koi feature cut ho, aur ye similar to artist wala refresh pe
-  // automatically gayab ho ja raha hai" — 2026-09-14).
-  //
-  // Two separate problems this solves together:
-  //   1. MB: before this cache existed, _HomeShelvesAndSimilarSection's
-  //      _similarRows/_similarSongRows lived ONLY in that State object's
-  //      memory — gone the instant the widget was disposed (app
-  //      backgrounded+killed by the OS, or the Home screen itself
-  //      rebuilt fresh), forcing a full re-fetch of 3 artists' worth of
-  //      InnerTube browse data + fresh album artwork on every cold
-  //      start, even when nothing about the user's taste had changed
-  //      since the last successful fetch minutes/hours earlier. Same
-  //      "instant paint from disk, silent background refetch" contract
-  //      as saveQuickPicks/loadQuickPicks above — cold starts inside the
-  //      6-hour freshness window now paint the last real result
-  //      immediately with ZERO network call, instead of unconditionally
-  //      re-downloading it.
-  //   2. Disappearing rows: home_screen.dart's own _loadSimilarRows fix
-  //      (2026-09-14, see that function's doc comment) already stops one
-  //      flaky artist lookup from wiping the other 1-2 that succeeded
-  //      WITHIN a single fetch. This cache is the complementary fix
-  //      ACROSS fetches — if a cold start's fresh fetch comes back fully
-  //      empty (e.g. opened the app with zero connectivity for a moment),
-  //      there's now a real last-known-good result on disk to fall back
-  //      to instead of the row just not existing for that session.
-  //
-  // No feature/quality is reduced by this — it's the exact same real
-  // fetched data (topAlbums, related artist, images), just not
-  // re-requested from the network when a recent copy is already sitting
-  // on disk. A manual pull-to-refresh still always forces a real fetch
-  // (didUpdateWidget's refreshKey check in home_screen.dart bypasses
-  // this cache entirely), so refreshing never shows stale data on
-  // purpose — this only shortcuts the passive "just reopened the app"
-  // path.
   static const _similarArtistRowsKey = 'home_similar_artist_rows_v2';
   static const _similarArtistRowsSavedAtKey =
       'home_similar_artist_rows_saved_at_ms';
@@ -735,10 +414,6 @@ class HomeFeedCache {
     }
   }
 
-  // ── "Similar to <Song>" rows cache — same reasoning and contract as
-  // the artist-rows cache directly above; kept as its own key since it's
-  // a structurally different shape (song seed + related songs, not
-  // artist seed + albums).
   static const _similarSongRowsKey = 'home_similar_song_rows_v1';
   static const _similarSongRowsSavedAtKey =
       'home_similar_song_rows_saved_at_ms';
@@ -797,17 +472,6 @@ class HomeFeedCache {
     }
   }
 
-  // ── Real home shelves cache ("poora home page reopen pe shimmer karta
-  // hai" — 2026-09-15): fetchHomeShelvesForDisplay (the actual main
-  // InnerTube shelves — the largest visual chunk of Home) previously had
-  // NO disk cache of its own, unlike quick picks / similar rows / artists
-  // above — _HomeShelvesAndSimilarSection._hydrateFromCache always called
-  // _load() for shelves unconditionally on every cold start, so _shelves
-  // started null and a full skeleton showed on every single reopen while
-  // that network fetch ran, even seconds after the app had already loaded
-  // it once. Same "instant paint from disk, freshness-gated silent
-  // background refresh" contract as every other Home cache in this file —
-  // a manual pull-to-refresh still always forces a real fetch regardless.
   static const _homeShelvesKey = 'home_real_shelves_v1';
   static const _homeShelvesSavedAtKey = 'home_real_shelves_saved_at_ms';
 
@@ -849,34 +513,10 @@ class HomeFeedCache {
     }
   }
 
-  // ── Pull-to-refresh throttle counter ("har refresh pe thoda content
-  // refresh ho, sirf Quick Picks nahi — dhire dhire naturally, YouTube
-  // Music jaisa, heavy load/MB spike na ho" — 2026-09-15, round-robin
-  // revision): the original staged cut (Quick-Picks-only for 3 pulls,
-  // then Shelves joins at pull 4, etc.) avoided ever spiking every
-  // section at once, but meant 3 refreshes in a row felt identical
-  // before anything else joined in — not something the user could feel
-  // on every single pull. RefreshStage.forPosition now rotates exactly
-  // ONE heavy section in per pull (position % 3) on top of the always-on
-  // free Quick Picks reshuffle, so every pull visibly brings something
-  // new while still never bundling more than one network-heavy section
-  // into the same pull. Persisted (not just in-memory) so the position
-  // in the cycle survives app restarts.
   static const _pullRefreshCountKey = 'home_pull_refresh_count';
 
-  // How many pull-to-refreshes make one full cycle before the counter
-  // wraps back to 1. Kept at 10 for continuity with the saved counter's
-  // existing range — RefreshStage.forPosition only actually cares about
-  // position % 3, so any multiple of 3 boundary isn't required here.
   static const int fullRefreshEvery = 10;
 
-  /// Increments the counter and returns the 1-10 position within the
-  /// current cycle (wraps back to 1 after [fullRefreshEvery]). Home
-  /// screen turns this into a [RefreshStage] via [RefreshStage.forPosition]
-  /// to decide which section rotates in as the "new" one on this specific
-  /// pull. Best-effort: on any SharedPreferences failure, returns 1
-  /// (Quick Picks + Shelves — a single, cheap, guaranteed-safe stage)
-  /// rather than guessing at a position that might land on a heavier slot.
   static Future<int> bumpPullRefreshAndGetPosition() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -888,5 +528,4 @@ class HomeFeedCache {
       return 1;
     }
   }
-
 }

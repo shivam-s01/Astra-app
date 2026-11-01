@@ -5,9 +5,11 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-# Naya push aaye to purani chal rahi build cancel ho jaye (queue me atakna band)
+# Naya push aaye to purani chal rahi build cancel ho jaye (queue me atakna band).
+# Release build (commit message me "release") ka alag group hai, taaki baad ka
+# normal push release build ko cancel na kar de.
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.ref }}-${{ contains(github.event.head_commit.message, 'release') && 'release' || 'dev' }}
   cancel-in-progress: true
 
 jobs:
@@ -136,6 +138,7 @@ jobs:
 
       - name: Generate polished changelog
         id: changelog
+        if: contains(github.event.head_commit.message, 'release')
         # Turns raw commit messages into a clean, categorized release
         # body WITHOUT any AI/API call — pure text processing, so it
         # costs nothing and needs no secret key. Sorts each commit into
@@ -269,14 +272,16 @@ jobs:
           retention-days: 1
 
       - name: Create Release
-        # Gate removed (per explicit request): every successful push to
-        # main/master now always creates/updates a GitHub release,
-        # unconditionally — no [release] keyword needed.
+        # Gate: release (aur update popup) sirf tab jab commit message me
+        # "release" likha ho. Normal push pe sirf APK build hoti hai (Actions
+        # artifact me milti hai), GitHub release / check.json / push
+        # notification kuch nahi jata.
         #
         # body_path points at the categorized changelog generated above
         # instead of relying on this action's own default (raw commit
         # log dump) — that raw dump is what used to show up verbatim as
         # a single flat bullet in the on-device "WHAT'S NEW" list.
+        if: contains(github.event.head_commit.message, 'release')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build${{ steps.build_number.outputs.build }}
@@ -286,6 +291,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish check.json to 'update' branch
+        if: contains(github.event.head_commit.message, 'release')
         # Drives the in-app update popup. Rewritten to be failure-proof:
         #  * versionCode is read from the BUILT APK (aapt2) — Flutter's
         #    --split-per-abi adds an ABI offset to the versionCode, so the
@@ -333,8 +339,9 @@ jobs:
       - name: Notify users of new update (FCM push)
         # Best-effort: a push-notification hiccup must never fail the build.
         continue-on-error: true
-        # Runs on every release now (gate removed, see Create Release
-        # above). Separately, and regardless of that: silently skipped
+        if: contains(github.event.head_commit.message, 'release')
+        # Runs only on release commits (see Create Release above).
+        # Separately, and regardless of that: silently skipped
         # (not failed) if the FIREBASE_SERVICE_ACCOUNT secret hasn't been
         # added yet, so this step is a no-op until FCM_SETUP.md's steps
         # are done, rather than breaking the whole release pipeline for

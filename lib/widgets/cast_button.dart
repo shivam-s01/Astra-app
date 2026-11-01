@@ -5,13 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/widgets/cast_button.dart
-// Chromecast button — matches Spotify's cast icon behavior: hidden if
-// unsupported, outline icon when devices are available, pulsing while
-// connecting, filled gold + device name once connected.
-// =============================================================================
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -23,9 +16,6 @@ import '../services/audio_prefs.dart';
 import '../utils/aurum_haptics.dart';
 import '../utils/aurum_sheet.dart';
 
-/// Opens the right Cast sheet (session sheet if connected, device picker
-/// otherwise). Shared by [CastIconButton] and the full player's 3-dot menu
-/// so both entry points behave identically.
 void showCastSheet(BuildContext context) {
   final engine = context.read<PlayerProvider>().engine;
   AurumHaptics.light();
@@ -40,10 +30,6 @@ void showCastSheet(BuildContext context) {
   );
 }
 
-/// Compact cast icon button for the full player's top bar. Renders
-/// nothing (zero width) if Cast isn't supported on this device, and
-/// nothing if no Cast devices are on the network — same as Spotify only
-/// showing the icon when it's actually actionable.
 class CastIconButton extends StatelessWidget {
   final Color? color;
   final double size;
@@ -93,14 +79,6 @@ class CastIconButton extends StatelessWidget {
           initialData: engine.castState,
           builder: (context, snapshot) {
             final state = snapshot.data ?? const CastState();
-            // 'always': show once the Cast SDK itself is supported on this
-            // device, regardless of whether a device is currently detected
-            // on the network — matches what the setting promises ("always
-            // visible"). Still hidden if the Cast SDK genuinely can't run
-            // here (broken/missing Google Play Services), since there's
-            // nothing a tap could do in that case.
-            // 'auto' (default): only show once a device is actually
-            // reachable, same as Spotify/YT Music.
             final shouldShow = visibility == 'always'
                 ? state.supported
                 : (state.supported && state.status != CastConnectionStatus.unavailable);
@@ -145,9 +123,6 @@ class CastIconButton extends StatelessWidget {
   }
 }
 
-/// Small "Casting to X" banner — drop this under the top bar or above
-/// the artwork in the full player when a session is active, matching
-/// Spotify's persistent cast strip.
 class CastingBanner extends StatelessWidget {
   const CastingBanner({super.key});
 
@@ -197,9 +172,6 @@ class CastingBanner extends StatelessWidget {
   }
 }
 
-/// Bottom sheet shown when tapping the cast icon while already connected
-/// — lets the user disconnect or stop casting entirely, same two options
-/// Spotify's cast sheet offers.
 class _CastSessionSheet extends StatelessWidget {
   const _CastSessionSheet();
 
@@ -263,14 +235,6 @@ class _CastSessionSheet extends StatelessWidget {
   }
 }
 
-/// Custom Cast device picker — replaces Google's MediaRouteChooserDialog,
-/// which requires an AppCompatActivity host and silently fails to show
-/// on this app's FlutterFragmentActivity-based MainActivity (tap did
-/// nothing, no error). Backed by AurumCastManager's own MediaRouter
-/// route discovery (see castRoutesStream), so opening this sheet is what
-/// starts the active device scan and closing it stops that scan —
-/// listening to the stream IS the "start scanning" signal on the
-/// Kotlin side.
 class _CastDevicePickerSheet extends StatelessWidget {
   const _CastDevicePickerSheet();
 
@@ -315,13 +279,6 @@ class _CastDevicePickerSheet extends StatelessWidget {
                 stream: engine.castRoutesStream,
                 builder: (context, snapshot) {
                   final routes = snapshot.data ?? const <CastRoute>[];
-                  // No data yet at all (stream hasn't emitted once) vs.
-                  // an empty list (scanned, found nothing) are genuinely
-                  // different states — the former shows a spinner
-                  // ("still looking"), the latter shows a clear "none
-                  // found" message so the user isn't left staring at an
-                  // indefinite spinner when there's truly nothing on
-                  // the network.
                   if (!snapshot.hasData) {
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 32),

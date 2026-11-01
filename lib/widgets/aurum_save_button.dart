@@ -5,20 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/widgets/aurum_save_button.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Premium animated "Save" toggle button (bookmark icon), used on
-//   AlbumScreen (and reusable anywhere similar save/follow affordances are
-//   needed). Gives the tap a paid-app feel:
-//   - Icon bounce-pop (scale 1 -> 1.3 -> 1) on every toggle, spring-out curve.
-//   - A soft gold glow ring flashes outward and fades when saving (not when
-//     un-saving) — a quick "confirmation" pulse rather than a static state
-//     change.
-//   - Border/icon color cross-fades between saved/unsaved instead of
-//     snapping instantly.
-// =============================================================================
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/aurum_theme.dart';
@@ -110,9 +96,6 @@ class _AurumSaveButtonState extends State<AurumSaveButton>
           alignment: Alignment.center,
           clipBehavior: Clip.none,
           children: [
-            // Expanding glow ring — only visible for a moment right after
-            // saving, reads as a little "confirmation pulse" rather than
-            // a plain state flip.
             AnimatedBuilder(
               animation: _glowCtrl,
               builder: (context, _) {

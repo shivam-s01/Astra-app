@@ -5,14 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// Firebase Analytics wrapper. Fails soft (no-op) if Firebase isn't
-// configured for the build. Respects Incognito Mode: while incognito is ON,
-// collection is switched off entirely (no events, no sessions).
-//
-// Automatic (no code needed): first_open, session_start, app version, device
-// brand/model, OS version, country + city (derived from IP by Google, no
-// location permission). Custom events below add song/search/screen insight.
-
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
@@ -44,7 +36,6 @@ class AnalyticsService {
     _log('app_open');
   }
 
-  /// Called from AudioPrefs.setIncognito — incognito = no tracking at all.
   Future<void> setCollection(bool enabled) async {
     try {
       await _fa?.setAnalyticsCollectionEnabled(enabled);
@@ -85,7 +76,6 @@ class AnalyticsService {
     SupabaseTracker.instance.onLogin();
   }
 
-  // ── Supabase-only events (not sent to Firebase / Cloudflare worker) ──
   Map<String, Object> _songParams(Song s) => {
         'song_id': _cut(s.id),
         'song_title': _cut(s.title),

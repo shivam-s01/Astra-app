@@ -22,19 +22,6 @@ import '../widgets/aurum_snack.dart';
 import 'api_service.dart';
 import 'recommendation_engine.dart';
 
-/// Handles "open Astra Music and play <x>" from Gemini / Google Assistant.
-/// Native side: VoiceBridge.kt / MainActivity / AurumMediaSessionService.
-///
-/// The native side hands over either a plain string ("liked songs") or a JSON
-/// payload {focus, q, title, artist, album, genre, playlist}. Like YouTube
-/// Music, this layer tells apart:
-///   song      "play Kesariya by Arijit Singh"   -> that song, then radio
-///   artist    "play Arijit Singh" / "Arijit ke gaane" -> artist's songs
-///   album     "play Aashiqui 2 album"           -> the album/movie songs
-///   mood      "play sad songs" / "90s hits"     -> a mood/genre mix
-///   library   "my liked songs" / "<my playlist>" -> your own library
-///   generic   "play some music" / "kuch bhi bajao" -> shuffled liked songs
-/// and understands English, Hinglish and Devanagari phrasing.
 class VoicePlayService {
   VoicePlayService._();
   static const _ch = MethodChannel('com.aurum.music/voice');
@@ -42,7 +29,6 @@ class VoicePlayService {
   static bool _coldStart = true;
   static String _lastQ = '';
   static DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
-  // Latest voice command wins: a newer command cancels an older, still-loading one.
   static int _gen = 0;
 
   static Future<void> init() async {
@@ -60,8 +46,6 @@ class VoicePlayService {
     } catch (_) {}
   }
 
-  // ───────────────────────────── main flow ─────────────────────────────
-
   static Future<void> _play(String payload) async {
     final p = payload.trim();
     if (p.isEmpty) return;
@@ -73,7 +57,6 @@ class VoicePlayService {
 
     final it = _parse(p);
 
-    // Cold start: wait for the widget tree (max ~15s).
     for (var i = 0; i < 60 && navigatorKey.currentContext == null; i++) {
       await Future.delayed(const Duration(milliseconds: 250));
     }
@@ -81,8 +64,6 @@ class VoicePlayService {
     if (navigatorKey.currentContext == null) return;
 
     try {
-      // Start the network search NOW so it overlaps with provider loading and
-      // the audio-engine settle delay below (this used to run strictly after).
       Future<List<Song>>? fetched;
       if (it.needsNetwork) fetched = _fetchFor(it);
 
@@ -91,7 +72,7 @@ class VoicePlayService {
 
       if (_coldStart) {
         _coldStart = false;
-        await Future.delayed(const Duration(milliseconds: 1200)); // let audio engine settle
+        await Future.delayed(const Duration(milliseconds: 1200));
         if (gen != _gen) return;
       }
 
@@ -101,13 +82,11 @@ class VoicePlayService {
       final favs = ctx.read<FavoritesProvider>().favorites;
       final playlists = ctx.read<PlaylistProvider>().playlists;
 
-      // 1. "my playlists" -> open the playlists screen
       if (it.libKey == 'playlists' || it.libKey == 'all playlists') {
         navigatorKey.currentState?.push(AurumPageRoute(builder: (_) => const PlaylistsScreen()));
         return;
       }
 
-      // 2. "liked songs" / "favourites"
       if (it.liked) {
         if (favs.isNotEmpty) {
           await _playCurated(player, favs, shuffle: it.shuffle);
@@ -117,7 +96,6 @@ class VoicePlayService {
         return;
       }
 
-      // 3. "play some music" -> a shuffled mix of the user's liked songs
       if (it.generic) {
         if (favs.isNotEmpty) {
           await _playCurated(player, favs, shuffle: true);
@@ -127,9 +105,6 @@ class VoicePlayService {
         return;
       }
 
-      // 4. one of the user's own playlists (library first, like YT Music).
-      //    Unstructured text must match the name exactly unless the user said
-      //    "playlist" — so a song called "Hit Me" never hijacks a playlist "Hit".
       if (it.focus == _Focus.playlist || it.focus == _Focus.any) {
         final key = _norm(it.libKey);
         if (key.isNotEmpty) {
@@ -148,7 +123,6 @@ class VoicePlayService {
         }
       }
 
-      // 5. catalog search (song / artist / album / mood)
       final list = await (fetched ??= _fetchFor(it));
       if (gen != _gen) return;
       if (list.isEmpty) {
@@ -161,14 +135,11 @@ class VoicePlayService {
         return;
       }
 
-      // Plain "arijit singh": if the top results are all BY that artist and
-      // none is a song with that name, it is an artist request.
       if (it.focus == _Focus.any && it.artist.isEmpty && _looksLikeArtistQuery(it.text, list)) {
         await _playCurated(player, _byArtist(list, it.text), shuffle: it.shuffle);
         return;
       }
 
-      // A single song: best match (title + artist aware), then radio.
       final idx = _bestIndex(list, it.title, it.artist);
       await player.playSong(list[idx], queue: list, index: idx);
     } catch (_) {}
@@ -214,8 +185,6 @@ class VoicePlayService {
     } catch (_) {}
   }
 
-  // ───────────────────────────── fetching ─────────────────────────────
-
   static Future<List<Song>> _fetchFor(_VoiceIntent it) async {
     try {
       if (it.collection) return await _collection(it);
@@ -225,8 +194,6 @@ class VoicePlayService {
     }
   }
 
-  /// Fast path first (quickSearch: capped, cached, 4-9s timeouts), full search
-  /// engine only as a fallback.
   static Future<List<Song>> _candidates(String q, {int limit = 20}) async {
     try {
       final quick = await ApiService.quickSearch(q, limit: limit);
@@ -251,10 +218,6 @@ class VoicePlayService {
     return const <Song>[];
   }
 
-  /// YT Music song search WITHOUT the relevance scorer. The scorer demands that
-  /// query words appear in a song's title/artist, which is right for "type a
-  /// song name" but wipes out mood/album queries ("hindi sad songs"): no single
-  /// song is titled that. Quality filters stay; relevance is YT Music's own.
   static Future<List<Song>> _rawSongs(String q, {int limit = 40}) async {
     try {
       final raw = await ApiService.searchYtRaw(q, limit: limit)
@@ -287,12 +250,9 @@ class VoicePlayService {
       }
     }
 
-    // Artist: the scored search ranks exact artist-name matches first (the same
-    // list the in-app search shows for that name).
     if (it.focus == _Focus.artist) {
       addAll(await _firstNonEmpty(it.queries, limit: 40));
     }
-    // Everything else (and thin artist results): raw YT Music song search.
     if (list.length < 15) {
       for (final q in it.rawQueries) {
         if (q.trim().isEmpty) continue;
@@ -300,7 +260,6 @@ class VoicePlayService {
         if (list.length >= 25) break;
       }
     }
-    // Last resort: the scored engine (also pulls related songs).
     if (list.length < 5) {
       for (final q in it.queries) {
         if (q.trim().isEmpty) continue;
@@ -313,8 +272,6 @@ class VoicePlayService {
     }
     return it.artist.isNotEmpty ? _byArtist(list, it.artist) : list;
   }
-
-  // ───────────────────────────── ranking ─────────────────────────────
 
   static final RegExp _nonWordRe = RegExp(r'[^\p{L}\p{N}\s]', unicode: true);
   static final RegExp _wsRe = RegExp(r'\s+');
@@ -334,7 +291,6 @@ class VoicePlayService {
     return true;
   }
 
-  /// Songs by [artist] first (engine order kept). With >=5 matches only those.
   static List<Song> _byArtist(List<Song> list, String artist) {
     final tk = _tokens(artist);
     if (tk.isEmpty) return list;
@@ -353,15 +309,13 @@ class VoicePlayService {
     final qn = _norm(q);
     var artistHits = 0;
     for (final s in list.take(3)) {
-      if (_norm(s.title).contains(qn)) return false; // a song with that name exists
+      if (_norm(s.title).contains(qn)) return false;
       final a = _norm(s.artist);
       if (qt.every((w) => a.contains(w))) artistHits++;
     }
     return artistHits >= 2;
   }
 
-  /// Picks the best of the first results using title/artist hints; the search
-  /// engine's own ordering is the tie-breaker.
   static int _bestIndex(List<Song> list, String title, String artist) {
     if (list.isEmpty) return 0;
     final tt = _tokens(title);
@@ -387,8 +341,6 @@ class VoicePlayService {
     }
     return best;
   }
-
-  // ───────────────────────────── parsing ─────────────────────────────
 
   static final RegExp _likedRe = RegExp(
       r'\bliked\b|\bfavou?rites?\b|my likes|pasand|पसंद|फेवरेट|फ़ेवरेट',
@@ -458,8 +410,6 @@ class VoicePlayService {
   static bool _hasWord(String text, Set<String> words) =>
       _tokens(text).any(words.contains);
 
-  /// Strips the spoken command wrapper ("can you play ... on Astra Music",
-  /// "... chalao", "... bajao please") and reports plural/singular/shuffle.
   static _Cleaned _clean(String raw) {
     var s = raw.replaceAll(_punctRe, ' ').replaceAll(_wsRe, ' ').trim();
     var shuffle = false;
@@ -510,8 +460,6 @@ class VoicePlayService {
     return q;
   }
 
-  /// Devanagari queries: try the romanised form first (YT titles are mostly
-  /// Latin and the relevance scorer compares Latin text), then the original.
   static List<String> _withRoman(List<String> qs) {
     final out = <String>[];
     for (final q in qs) {
@@ -579,7 +527,6 @@ class VoicePlayService {
     it.shuffle = c.shuffle;
     var text = c.text;
 
-    // Extras present but the assistant left the focus open -> infer it.
     if (focus == _Focus.any) {
       if (title.isNotEmpty) {
         focus = _Focus.song;
@@ -594,7 +541,6 @@ class VoicePlayService {
       }
     }
 
-    // Focus known but its field empty -> the free text is that field.
     switch (focus) {
       case _Focus.artist:
         if (artist.isEmpty) artist = text;
@@ -615,7 +561,6 @@ class VoicePlayService {
         break;
     }
 
-    // Free text only (no focus, no extras): work out what was asked.
     if (focus == _Focus.any && !structured && !it.liked) {
       final generic = text.isEmpty || _tokens(text).every(_genericWords.contains);
       if (generic) {
@@ -623,14 +568,12 @@ class VoicePlayService {
       } else {
         final by = _songsByRe.firstMatch(text);
         if (it.saidPlaylist) {
-          // "play my gym playlist" -> the user's playlist, even if "gym" is a mood word
           playlist = text;
           focus = _Focus.playlist;
         } else if (by != null) {
           artist = by.group(1)!.trim();
           focus = _Focus.artist;
         } else if ((c.plural || c.single) && _possRe.hasMatch(text)) {
-          // "arijit singh ke gaane" / "kishore kumar ka gaana"
           artist = text.replaceFirst(_possRe, '').trim();
           focus = _Focus.artist;
         } else if (c.plural) {
@@ -638,7 +581,7 @@ class VoicePlayService {
             genre = text;
             focus = _Focus.genre;
           } else {
-            artist = text; // "arijit singh songs"
+            artist = text;
             focus = _Focus.artist;
           }
         } else {
@@ -664,7 +607,6 @@ class VoicePlayService {
         focus == _Focus.genre ||
         focus == _Focus.playlist;
 
-    // Library lookup key ("my gym playlist" -> "gym"; "my playlists" -> "playlists").
     final libSrc = playlist.isNotEmpty ? playlist : text;
     it.libKey = libSrc
         .toLowerCase()
@@ -672,8 +614,6 @@ class VoicePlayService {
         .replaceAll(_wsRe, ' ')
         .trim();
 
-    // Catalog queries, best first. `qs` feeds the scored search (songs/artists);
-    // `raw` feeds the unscored YT Music search (collections).
     final qs = <String>[];
     final raw2 = <String>[];
     switch (focus) {
@@ -716,8 +656,8 @@ enum _Focus { any, song, artist, album, playlist, genre }
 
 class _Cleaned {
   final String text;
-  final bool plural; // "songs / gaane / hits / music" -> a collection was asked
-  final bool single; // "song / gaana"
+  final bool plural;
+  final bool single;
   final bool shuffle;
   const _Cleaned(this.text, this.plural, this.single, this.shuffle);
 }

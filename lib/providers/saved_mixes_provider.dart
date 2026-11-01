@@ -5,20 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/providers/saved_mixes_provider.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Persists which curated "mixes" (the Trending Playlists row on
-//   Home — Trending Now, Party Anthems, 90s Bollywood, etc) the user has
-//   Saved via MixScreen's Save button, Spotify-style.
-//
-//   These aren't real JioSaavn album IDs — they're client-side curated
-//   queries (see _kCuratedPlaylists in home_screen.dart), so unlike
-//   FollowedAlbumsProvider (which only needs to store id/name/artworkUrl and
-//   re-fetches songs by album ID on open), this provider stores the actual
-//   song list snapshot too — there's no album ID to re-fetch from later.
-// =============================================================================
-
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -27,18 +13,12 @@ import '../models/song.dart';
 
 class SavedMixesProvider extends ChangeNotifier {
   static const _boxName = 'aurum_saved_mixes';
-  // PERF/SAFETY FIX (cold-start race): see followed_artists_provider.dart's
-  // matching comment — nullable _box + a Completer keep every read/write
-  // crash-safe in the (now shorter, but non-zero) window before init()'s
-  // Hive.openBox resolves, now that all 7 Hive-backed providers open
-  // concurrently instead of one after another.
   Box<String>? _box;
   bool _isLoading = true;
   final Completer<Box<String>> _boxReady = Completer<Box<String>>();
 
   bool get isLoading => _isLoading;
 
-  /// Saved mixes, most-recently-saved first.
   List<Map<String, dynamic>> get saved => (_box?.values ?? const [])
       .map((raw) => Map<String, dynamic>.from(jsonDecode(raw) as Map))
       .toList()
@@ -71,9 +51,6 @@ class SavedMixesProvider extends ChangeNotifier {
         'name': name,
         'artworkUrl': artworkUrl,
         'emoji': emoji,
-        // Snapshot at save-time — the mix's contents were already
-        // fetched once for the thumbnail/open, no reason to keep
-        // hitting the network every time the user reopens a saved mix.
         'songs': songs.map((s) => s.toJson()).toList(),
       };
       await box.put(mixId, jsonEncode(data));
@@ -81,7 +58,6 @@ class SavedMixesProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Rehydrates the stored song list for a saved mix back into [Song]s.
   List<Song> songsFor(String mixId) {
     final raw = _box?.get(mixId);
     if (raw == null) return [];
@@ -92,7 +68,6 @@ class SavedMixesProvider extends ChangeNotifier {
         .toList();
   }
 
-  /// Wipes all saved mixes — local only, called on sign-out.
   Future<void> clearAll() async {
     final box = _box ?? await _boxReady.future;
     await box.clear();

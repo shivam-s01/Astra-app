@@ -5,30 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// edge_to_edge_full_player.dart
-// Astra Music — "Edge to Edge" Full Player Layout
-//
-// Second full-player design, selectable from Settings → Appearance →
-// Full Player Layout. Unlike the default "Card" layout (album art inset
-// in a rounded card, dedicated top bar with back/cast/queue icons, blur
-// or solid background painted separately behind the card), this layout:
-//
-//   • Renders the artwork as a single BoxFit.cover image filling the
-//     ENTIRE screen, from the very top of the status bar down to the
-//     bottom of the volume row — the art IS the background, there is no
-//     separate blur/solid bg layer underneath it.
-//   • Has no top bar at all. Back navigation is via swipe-down-to-dismiss
-//     or the system back gesture, matching the reference design.
-//   • Overlays title/artist/actions, the scrub bar, transport controls,
-//     and the volume row directly on top of the art with a bottom
-//     gradient scrim for legibility, exactly as in the reference
-//     screenshot.
-//
-// Deliberately self-contained (does not import or extend anything from
-// full_player_screen.dart's massive _FullPlayerScreenState) so this
-// layout can be maintained, tweaked, or removed independently without
-// any risk to the Card layout's own drag-to-dismiss/animation logic.
-
 import 'dart:async';
 import 'dart:ui';
 
@@ -72,33 +48,17 @@ class EdgeToEdgeFullPlayer extends StatefulWidget {
 }
 
 class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
-  // Swipe-down ab route ke apne controller se chalta hai (Spotify player
-  // jaisa) — sirf ek hi motion, koi shrink/second transform nahi.
   late final RouteDragDismiss _routeDrag;
   static const double _routeDismissDistance = 120.0;
   static const double _routeDismissVelocity = 900.0;
-  // Toggled true for exactly the window the immersive lyrics screen is
-  // open (see _BottomIconRow.onLyricsOpenChanged / _openLyricsSheet's
-  // fix comment) — hides this screen's own artwork Hero below so it's
-  // never mounted at the same time as the lyrics screen's matching
-  // Hero, which is what makes sharing that tag safe.
   bool _lyricsOpen = false;
 
-  // Song-specific gradient stops — all four extracted from the current
-  // artwork's palette (same ArtworkPaletteCache the Card layout's "Solid"
-  // background style uses), each contrast-clamped for white text/icons on
-  // top. Starts as safe dark neutrals before the first extraction resolves,
-  // then updates per-song via _loadPaletteFor(). Kept as a single object so
-  // the whole set animates together via TweenAnimationBuilder below.
   _PanelPalette _panel = const _PanelPalette(
     top: Color(0xFF1E1B2E),
     mid: Color(0xFF17141F),
     bottom: Color(0xFF0C0A12),
     glow: Color(0xFF2A2440),
   );
-  // Previous palette, kept purely so the mesh/glow can tween FROM it to
-  // the new _panel whenever the song (and therefore the palette) changes,
-  // instead of _panel.glow being passed as both tween endpoints below.
   _PanelPalette _prevPanel = const _PanelPalette(
     top: Color(0xFF1E1B2E),
     mid: Color(0xFF17141F),
@@ -107,22 +67,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
   );
   String? _paletteUrl;
 
-
-  // FIX ("statusbar upar kabhi kabhi show ho jaata hai"): AnnotatedRegion
-  // in build() below only wins the status-bar style while nothing else
-  // calls SystemChrome.setSystemUIOverlayStyle imperatively afterwards.
-  // main.dart's top-level Consumer2 does exactly that on every app-level
-  // rebuild (theme swap, DynamicColorBuilder callback, locale change,
-  // etc.) — if one of those fires while this screen is open, the
-  // imperative call runs AFTER AnnotatedRegion already set its style for
-  // this frame and wins until this screen's own AnnotatedRegion happens
-  // to rebuild again, so the status bar can flash back to a solid/visible
-  // bar for a frame or more. Setting it imperatively here too — on open,
-  // and again on every dependency change — makes this screen's style win
-  // regardless of what main.dart does in the background, so it never
-  // shows a bar over the edge-to-edge artwork. Restored to whatever the
-  // app-level style should be on dispose so Home isn't left with the
-  // player's forced style after closing.
   static const SystemUiOverlayStyle _immersiveStyle = SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
@@ -143,27 +87,19 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Re-assert every time this screen's dependencies change (theme,
-    // locale, etc. all trigger this) so any imperative call main.dart
-    // made in between gets immediately overwritten again while this
-    // screen is still the one on screen.
     SystemChrome.setSystemUIOverlayStyle(_immersiveStyle);
   }
 
   @override
   void dispose() {
     _routeDrag.cancel();
-    // Let main.dart's own Consumer2 recompute and reapply the correct
-    // app-level style for whatever screen is now on top (it runs on the
-    // very next build after this pops, so this doesn't need to guess the
-    // right theme-aware value itself).
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light);
     super.dispose();
   }
 
   void _handleDragUpdate(DragUpdateDetails d) {
     if (!_routeDrag.isActive) {
-      if (d.delta.dy <= 0) return; // ignore upward drag start
+      if (d.delta.dy <= 0) return;
       if (!_routeDrag.start()) return;
     }
     _routeDrag.update(d.delta.dy);
@@ -178,24 +114,10 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
     );
   }
 
-  // Gesture arena ne pointer le liya to wapas fully-open pe spring back.
   void _handleDragCancel() {
     _routeDrag.cancel();
   }
 
-  /// Boosts a color's saturation and pulls its brightness toward a target,
-  /// the same way ArchiveTune's PlayerColorExtractor (Palette.Swatch →
-  /// HSV boost) turns a flat/muted extracted swatch into a rich, punchy
-  /// mesh-gradient color instead of a washed-out grey-red. Operates in
-  /// HSV rather than lerping toward black/white, so hue is fully preserved.
-  ///
-  /// Deliberately has NO satFloor — Material You/Google's own dynamic
-  /// color never invents saturation an image doesn't have; a genuinely
-  /// pastel/desaturated cover (sketch art, a mostly-white poster) should
-  /// still produce a neutral grey panel, not a forced-colorful one. Only a
-  /// gentle multiplier (`satBoost`, ~1.15-1.3x) lifts a swatch that's
-  /// already somewhat colorful into "rich" territory — it can't manufacture
-  /// color that wasn't there, only sharpen what is.
   Color _boostColor(
     Color c, {
     required double satBoost,
@@ -210,16 +132,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
   }
 
   _PanelPalette _paletteFrom(ArtworkPalette p) {
-    // Anchor on the top-ranked color from PlayerColorExtractor —
-    // ArchiveTune's own population*vibrancyBonus-weighted winner (see
-    // player_color_extractor.dart, ported 1:1 from PlayerColorExtractor.kt)
-    // — instead of unconditionally using `vibrant`. On any given artwork
-    // crop the winning swatch might be dominant, muted, or darkVibrant
-    // rather than vibrant; hardcoding `vibrant` here is exactly why this
-    // app's mesh color could disagree with ArchiveTune's own player for
-    // the *same* artwork. Falls back to the old vibrant-chain only if
-    // gradientColors somehow came back empty (shouldn't happen — the
-    // extractor always returns at least one color).
     final hueSource =
         p.gradientColors.isNotEmpty ? p.gradientColors.first : p.vibrant;
 
@@ -253,10 +165,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
       ),
       isLight: false,
     );
-    // Glow stays bright — it's blurred/translucent, so it can sit well
-    // outside the dark contrast-safe range the panel text needs, same as
-    // the Kotlin extractor's separate un-clamped accent use. Still no
-    // satFloor: a pastel cover gets a soft, pale glow, not a neon one.
     final glow = _boostColor(
       Color.lerp(hueSource, p.lightVibrant, 0.4)!,
       satBoost: 1.2,
@@ -271,7 +179,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
     if (url.isEmpty || url == _paletteUrl) return;
     _paletteUrl = url;
 
-    // Cache hit — apply instantly, no flash of the fallback color.
     final cached = ArtworkPaletteCache.peek(url);
     if (cached != null) {
       if (mounted) {
@@ -319,17 +226,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: SystemUiOverlayStyle.light,
           child: Scaffold(
-            // FIX (swipe-down shows solid black instead of the Home screen
-            // behind it): this was `Colors.black`. The route this screen is
-            // pushed on is `opaque: false` specifically so Home keeps
-            // rendering live frames underneath during the drag (see
-            // home_screen.dart's PageRouteBuilder comment) — but a fully
-            // opaque black Scaffold background here painted over that live
-            // Home frame on every single frame regardless, so the "reveal
-            // Home while dragging" effect never had anywhere to show
-            // through. Transparent lets Home itself be what's visible
-            // around/behind the shrinking, fading player card as it's
-            // dragged down, instead of a black void.
             backgroundColor: Colors.transparent,
             body: GestureDetector(
               onVerticalDragUpdate: _handleDragUpdate,
@@ -337,20 +233,9 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
               onVerticalDragCancel: _handleDragCancel,
               child: LayoutBuilder(
                     builder: (context, constraints) {
-                      // Reference design keeps art filling roughly the top
-                      // ~58% of the screen, but the panel underneath is now
-                      // an animated 3-stop mesh gradient (derived from the
-                      // artwork's own palette) instead of a flat color —
-                      // matches ArchiveTune's Material Extended-style
-                      // artwork-driven theming instead of a single solid.
                       final artHeight = constraints.maxHeight * 0.58;
                       return Stack(
                         children: [
-                          // ── Ambient glow: soft, oversized blurred blob
-                          // of the extracted "glow" swatch sitting behind
-                          // the artwork, bleeding light past its edges —
-                          // this is what reads as "premium" vs a flat
-                          // rectangle of art. Animates with the palette.
                           TweenAnimationBuilder<Color?>(
                             key: ValueKey('glow_${_panel.hashCode}'),
                             tween: ColorTween(begin: _prevPanel.glow, end: _panel.glow),
@@ -377,25 +262,11 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
                             ),
                           ),
 
-                          // ── Artwork: fixed-height top section ──
                           Positioned(
                             top: 0,
                             left: 0,
                             right: 0,
                             height: artHeight,
-                            // FIX (crash on lyrics open — full root-cause
-                            // writeup lives on _openLyricsSheet): this
-                            // Hero shares its tag with the lyrics
-                            // screen's small thumbnail Hero on purpose,
-                            // for a real two-way flight — but only one
-                            // of them can be mounted at a time. While
-                            // _lyricsOpen is true (that screen is
-                            // pushed on top with opaque:false, so this
-                            // whole screen stays mounted underneath),
-                            // this Hero is swapped for a plain,
-                            // non-Hero copy of the exact same artwork —
-                            // visually identical, just not registered
-                            // as a second Hero for the same tag.
                             child: _lyricsOpen
                                 ? AurumArtwork(
                                     url: AurumArtwork.upgradeForFullPlayer(
@@ -406,28 +277,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
                                   )
                                 : Hero(
                                     tag: 'aurum_art_${song.id}',
-                                    // FIX ("offline songs pe thumbnail load hi
-                                    // nahi ho raha, online pe kabhi-kabhi"):
-                                    // this used to call CachedNetworkImage
-                                    // directly on song.artworkUrl (upgraded to
-                                    // HD). CachedNetworkImage only understands
-                                    // http(s) URLs — for an offline/downloaded
-                                    // song artworkUrl is a content:// MediaStore
-                                    // URI or a local file path, so it silently
-                                    // failed every time (no fallback, straight
-                                    // to the flat errorWidget). For online songs
-                                    // it also had no retry: a slow connection or
-                                    // a genuinely-missing HD tier just failed
-                                    // once with no lower-quality fallback.
-                                    // AurumArtwork already solves both — it
-                                    // branches on content://, local file, and
-                                    // network URL, and its network branch
-                                    // (_RetryableNetworkImage) retries a failed
-                                    // HD tier against a smaller guaranteed-to-
-                                    // exist size instead of giving up. Passing
-                                    // the HD-upgraded URL through it here gets
-                                    // "try HD first" AND "gracefully degrade
-                                    // instead of blank" for every song type.
                                     child: AurumArtwork(
                                       url: AurumArtwork.upgradeForFullPlayer(
                                           song.artworkUrl),
@@ -438,10 +287,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
                                   ),
                           ),
 
-                          // ── Top status-bar scrim: artwork now runs
-                          // edge-to-edge under the status bar, so a short
-                          // dark fade keeps the clock/battery legible on
-                          // bright/busy covers without a hard bar. ──
                           Positioned(
                             top: 0,
                             left: 0,
@@ -463,18 +308,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
                             ),
                           ),
 
-                          // ── Blend zone: art and panel merge into one
-                          // continuous surface via a pure color fade — no
-                          // optical blur (BackdropFilter removed; it was
-                          // smearing busy/high-detail artwork into an
-                          // awkward muddy band right at the seam). Tall,
-                          // gradual 6-stop fade (mirrors ArchiveTune's own
-                          // scrim: art stays crisp almost all the way down,
-                          // then eases into the panel color with no visible
-                          // edge/line) — starts nearly invisible, ends
-                          // exactly on _panel.top so there's zero color
-                          // jump at the artHeight boundary where the solid
-                          // mesh panel picks up.
                           Positioned(
                             top: artHeight - 280,
                             left: 0,
@@ -501,9 +334,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
                             ),
                           ),
 
-                          // ── Animated 3-stop mesh panel: bottom section.
-                          // Cross-fades smoothly between songs instead of
-                          // snapping to the new palette instantly. ──
                           Positioned(
                             top: artHeight,
                             left: 0,
@@ -531,7 +361,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
                             ),
                           ),
 
-                          // ── Foreground content ──
                           SafeArea(
                             top: false,
                             child: Padding(
@@ -556,15 +385,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
                                     player: player,
                                     song: song,
                                     panel: _panel,
-                                    // MOUNTED-SAFETY FIX: if this player
-                                    // screen itself gets popped (e.g. user
-                                    // backs out) while lyrics are still
-                                    // open on top, the lyrics route's
-                                    // .then() fires after this State is
-                                    // already disposed — calling setState
-                                    // on a dead State throws. Guard with
-                                    // mounted so that late callback is a
-                                    // harmless no-op instead of a crash.
                                     onLyricsOpenChanged: (open) {
                                       if (!mounted) return;
                                       setState(() => _lyricsOpen = open);
@@ -587,9 +407,6 @@ class _EdgeToEdgeFullPlayerState extends State<EdgeToEdgeFullPlayer> {
   }
 }
 
-/// Bundles the three mesh-gradient stops plus a brighter "glow" swatch
-/// used for the ambient blur and accent tints, so the whole set can be
-/// swapped and animated together per-song instead of as four loose colors.
 class _PanelPalette {
   const _PanelPalette({
     required this.top,
@@ -713,14 +530,6 @@ class _CircleIconButton extends StatelessWidget {
   }
 }
 
-/// Smaller sibling of _CircleIconButton for the bottom icon row (queue /
-/// lyrics / sleep) — same flat, borderless, translucent circle-pill
-/// treatment as the top ••• / heart buttons and the Speaker pill, just
-/// sized to sit comfortably in a tighter row of three instead of two.
-/// Reference screenshot has all of these — top corner actions, bottom row
-/// icons, and the output pill — sharing one consistent "soft dark circle"
-/// language; this was the one row still rendering as bare icons with no
-/// pill at all.
 class _RoundIconButton extends StatelessWidget {
   const _RoundIconButton({required this.icon, required this.onTap});
   final IconData icon;
@@ -744,11 +553,6 @@ class _RoundIconButton extends StatelessWidget {
   }
 }
 
-// Thin wrapper around the shared AurumSeekBar (see widgets/aurum_seek_bar.dart)
-// so every "Player Slider Style" option (Slim/Thick/Rounded/Waveform) looks
-// and behaves EXACTLY like the classic full player — this used to be its own
-// hand-rolled Slider that ignored the setting entirely, so picking e.g.
-// "Waveform" only ever applied on the classic full player screen, never here.
 class _ScrubBar extends StatelessWidget {
   const _ScrubBar({required this.player, required this.accent});
   final PlayerProvider player;
@@ -756,9 +560,6 @@ class _ScrubBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Active track/thumb pick up the artwork's accent color (lifted toward
-    // white so it always reads clearly against the dark mesh) — same tint
-    // logic the old implementation used, now just fed into AurumSeekBar.
     final tint = Color.lerp(accent, Colors.white, 0.35)!;
     return AurumSeekBar(
       player: player,
@@ -766,7 +567,6 @@ class _ScrubBar extends StatelessWidget {
       activeColor: tint,
       inactiveColor: Colors.white.withOpacity(0.22),
       timeColor: Colors.white.withOpacity(0.75),
-      // Center pill: live equalizer wave + real stream quality (codec/kbps).
       centerLabel: AurumStreamQualityChip(player: player),
     );
   }
@@ -791,8 +591,6 @@ class _TransportRow extends StatelessWidget {
         return Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            // Double-chevron rewind — matches the reference's "◀◀" seek/
-            // skip-back glyph instead of the single skip_previous triangle.
             IconButton(
               iconSize: 34,
               icon: const Icon(Icons.fast_rewind_rounded, color: Colors.white),
@@ -801,11 +599,6 @@ class _TransportRow extends StatelessWidget {
                 player.skipPrev();
               },
             ),
-            // Play/pause: reference (ArchiveTune) shows the bare morphing
-            // glyph directly in the row — no circle, no ring, no border —
-            // sitting flush alongside the rewind/forward icons as one
-            // clean set of three. Matches that exactly now: just the icon,
-            // slightly larger since there's no ring to frame it anymore.
             GestureDetector(
               onTap: () {
                 AurumHaptics.medium();
@@ -828,22 +621,11 @@ class _TransportRow extends StatelessWidget {
                 ),
               ),
             ),
-            // Double-chevron fast-forward — matches the reference's "▶▶".
             IconButton(
               iconSize: 34,
               icon: const Icon(Icons.fast_forward_rounded, color: Colors.white),
               onPressed: () {
                 AurumHaptics.light();
-                // FIX ("perfect work krega na" recheck — real gap found):
-                // skipNext() returns false (without skipping) once the
-                // free-tier skip limit is hit — see player_provider.dart's
-                // own "caller shows PremiumGate" comment. The Card
-                // layout's transport row already checks this and shows
-                // the sign-in/upgrade sheet; this row was ignoring the
-                // return value entirely, so on this layout hitting the
-                // limit just silently did nothing — the button looked
-                // unresponsive/broken with zero explanation instead of
-                // telling the user why. Now matches Card layout exactly.
                 player.skipNext().then((allowed) {
                   if (!allowed && context.mounted) {
                     PremiumGate.show(
@@ -875,12 +657,7 @@ class _VolumeRowState extends State<_VolumeRow> {
   int _level = 0;
   int _max = 15;
   bool _loaded = false;
-  int? _fadeGen; // increments to cancel an in-flight fade if user interacts again
-  // True only while the user's thumb/tap is actively driving the level —
-  // guards against the live mediaVolumeStream (hardware keys, another
-  // app, or this row's own setMediaVolume echoing back) yanking the
-  // slider or fade-to-mute animation out from under an in-progress
-  // interaction. Same pattern as audio_output_sheet.dart's _isDragging.
+  int? _fadeGen;
   bool _userDriving = false;
 
   @override
@@ -899,21 +676,16 @@ class _VolumeRowState extends State<_VolumeRow> {
         _loaded = true;
       });
     } catch (_) {
-      // Device volume read failed — hide the slider rather than show a
-      // stuck/incorrect value.
     }
   }
 
   void _onChanged(double v) {
-    _fadeGen = (_fadeGen ?? 0) + 1; // cancel any in-progress fade
+    _fadeGen = (_fadeGen ?? 0) + 1;
     final level = v.round();
     setState(() => _level = level);
     widget.player.engine.setMediaVolume(level);
   }
 
-  /// Tapping the mute icon: smoothly steps volume down to 0, one tick at
-  /// a time, instead of an instant jump — reads as a deliberate "fade
-  /// out" rather than a hard cut.
   Future<void> _fadeToMute() async {
     final gen = (_fadeGen ?? 0) + 1;
     _fadeGen = gen;
@@ -929,10 +701,8 @@ class _VolumeRowState extends State<_VolumeRow> {
     if (mounted) setState(() => _userDriving = false);
   }
 
-  /// Tapping the speaker/max icon: jumps straight to full volume — no
-  /// fade, immediate.
   void _jumpToMax() {
-    _fadeGen = (_fadeGen ?? 0) + 1; // cancel any in-progress fade
+    _fadeGen = (_fadeGen ?? 0) + 1;
     AurumHaptics.light();
     setState(() => _level = _max);
     widget.player.engine.setMediaVolume(_max);
@@ -941,13 +711,6 @@ class _VolumeRowState extends State<_VolumeRow> {
   @override
   Widget build(BuildContext context) {
     if (!_loaded) return const SizedBox(height: 20);
-    // LIVE FIX ("valum live ekdam sahi se connect kro" — volume row didn't
-    // move when changed via hardware keys or another app, exactly the bug
-    // already fixed for audio_output_sheet.dart's slider): wrap in the
-    // same mediaVolumeStream StreamBuilder so this row updates instantly
-    // from ANY source, not just its own onChanged. _userDriving keeps the
-    // live value from fighting an active drag/fade the same way
-    // audio_output_sheet.dart's _isDragging does.
     return StreamBuilder<MediaVolume?>(
       stream: widget.player.engine.mediaVolumeStream,
       builder: (context, snapshot) {
@@ -983,9 +746,6 @@ class _VolumeRowState extends State<_VolumeRow> {
                   min: 0,
                   max: max.toDouble(),
                   onChangeStart: (_) => setState(() {
-                    // Seed local state from whatever was showing (live or
-                    // last-known) so the drag starts from the visible
-                    // thumb position, not a possibly-stale _level.
                     _level = level;
                     _max = max;
                     _userDriving = true;
@@ -1020,15 +780,6 @@ class _BottomIconRow extends StatefulWidget {
   final PlayerProvider player;
   final Song song;
   final _PanelPalette panel;
-  // PROPER FIX for the Hero-tag-collision crash (see _openLyricsSheet's
-  // own comment below for the full root-cause writeup): rather than
-  // dropping the Hero from the lyrics screen, the main artwork's Hero is
-  // now toggled out of the tree for exactly as long as lyrics are open,
-  // via this callback up to _EdgeToEdgeFullPlayerState. That keeps BOTH
-  // Heroes sharing the same tag — a real two-way Hero flight on open
-  // AND on close — while guaranteeing only one of them is ever mounted
-  // at a time, which is what Flutter's "multiple heroes" rule actually
-  // requires.
   final ValueChanged<bool> onLyricsOpenChanged;
 
   @override
@@ -1041,18 +792,7 @@ class _BottomIconRowState extends State<_BottomIconRow> {
   @override
   void initState() {
     super.initState();
-    // Rebuild when the sleep timer starts/ticks/ends so the moon icon's
-    // filled/outline state always matches SleepTimerService.instance —
-    // same mechanism _PremiumOptionsSheet uses for its own sleep row.
     SleepTimerService.instance.addListener(_onSleepTick);
-    // outputDevicesStream only carries LIVE change events (connect/
-    // disconnect) — getAudioOutputDevices() is the one-shot snapshot call
-    // and does not itself feed that stream (see native_engine_bridge.dart:
-    // _outputDevices is only ever `.add()`-ed from the native EventChannel
-    // listener). Without fetching + holding this locally, the pill would
-    // sit on the "Speaker" fallback until the next connect/disconnect
-    // happened to fire, or until the user opened the full output sheet
-    // (which does its own separate fetch) at least once this session.
     widget.player.engine.getAudioOutputDevices().then((d) {
       if (mounted) setState(() => _initialDevices = d);
     });
@@ -1076,14 +816,6 @@ class _BottomIconRowState extends State<_BottomIconRow> {
       children: [
         Row(
           children: [
-            // FIX ("dusre app jaisa beautiful, top grade" — screenshot
-            // shows queue/lyrics/sleep sitting inside their own soft
-            // translucent circle pill, same as the ••• and heart buttons
-            // up top — these were plain naked IconButtons with no
-            // background at all, which is exactly the "less premium"
-            // difference from the reference. Wrapped each in the same
-            // flat circle-pill treatment _CircleIconButton already uses
-            // above, just a touch smaller to match this row's icon size.
             _RoundIconButton(
               icon: Icons.reorder_rounded,
               onTap: () => _openQueueSheet(context),
@@ -1100,20 +832,9 @@ class _BottomIconRowState extends State<_BottomIconRow> {
             ),
           ],
         ),
-        // LIVE FIX ("blootooth wala bhe connect kro jo connect ho wahi
-        // show ho" — pill was hardcoded to the text "Speaker" regardless
-        // of actual output): now reads engine.outputDevicesStream, the
-        // same live device stream audio_output_sheet.dart already uses,
-        // so this shows whichever device (phone speaker / wired / the
-        // connected Bluetooth headset's real name) is actually selected,
-        // and updates the instant a Bluetooth device connects or
-        // disconnects — no need to reopen the sheet.
         StreamBuilder<AudioOutputDevices?>(
           stream: widget.player.engine.outputDevicesStream,
           builder: (context, snapshot) {
-            // Live stream event (a connect/disconnect firing after mount)
-            // takes priority once it arrives; until then, fall back to
-            // the one-shot snapshot fetched in initState above.
             final devices = snapshot.data ?? _initialDevices;
             AudioOutputDevice? selected;
             for (final d in devices?.devices ?? const <AudioOutputDevice>[]) {
@@ -1169,35 +890,7 @@ class _BottomIconRowState extends State<_BottomIconRow> {
   void _openQueueSheet(BuildContext context) {
     AurumHaptics.light();
     final song = context.read<PlayerProvider>().currentSong;
-    // Snapshot the panel palette at open-time so the sheet's tint doesn't
-    // jump mid-scroll if the underlying song happens to change while it's
-    // open (matches the reference: the sheet carries the color of whatever
-    // song was playing when it was opened).
     final panel = widget.panel;
-    // FIX ("drag to move wala set hokar turant apni jagah chala jata hai
-    // — YouTube wala"): the sheet used to hand its OWN ScrollController
-    // straight to the ReorderableListView inside it (see
-    // _EdgeToEdgeQueueSheetBody below). A ReorderableListView/ListView
-    // claims the vertical drag gesture for itself the instant a touch
-    // starts over its content — that's true regardless of whether it
-    // shares a controller with the enclosing sheet or not. So a drag
-    // that started over the list (which is most of the sheet's height)
-    // was being read as "scroll/reorder the list", never "resize the
-    // sheet" — the sheet's size briefly looked like it responded (a
-    // frame or two of visual settling as the drag released), then
-    // snapped straight back to initialChildSize because no real resize
-    // drag had ever actually been recognized.
-    //
-    // Fix: give the sheet its own explicit DraggableScrollableController
-    // instead of relying on the implicit one, and stop feeding that same
-    // controller into the list — the list now gets its own independent
-    // ScrollController (see _EdgeToEdgeQueueSheetBody). With the two
-    // decoupled, a drag that starts on the visible grab handle at the
-    // top resizes the sheet (handled below via a dedicated drag area),
-    // and a drag that starts over the list scrolls/reorders the list —
-    // exactly the YouTube/Spotify split between "grab the handle to
-    // resize" and "drag a row to reorder", with no gesture-arena race
-    // between the two.
     final sheetController = DraggableScrollableController();
     showAurumModalBottomSheet(
       context: context,
@@ -1215,10 +908,6 @@ class _BottomIconRowState extends State<_BottomIconRow> {
         builder: (context, _) => ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           child: DecoratedBox(
-            // Artwork-palette-tinted background — same top/mid/bottom mesh
-            // the player itself is showing, so the sheet reads as a
-            // continuation of the current song's color rather than a
-            // separate flat-grey surface. Matches the reference exactly.
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
@@ -1236,42 +925,12 @@ class _BottomIconRowState extends State<_BottomIconRow> {
         ),
       ),
     ).whenComplete(() {
-      // Dispose the controller once the sheet is fully closed — it's a
-      // fresh one created per-open (see above), so nothing else can
-      // still be holding a reference to it after this.
       sheetController.dispose();
     });
   }
 
   void _openLyricsSheet(BuildContext context) {
     AurumHaptics.light();
-    // Old sheet is gone — lyrics now open as a dedicated full-screen,
-    // animated overlay (see _EdgeToEdgeImmersiveLyrics) instead of a
-    // bottom sheet, matching the reference: small top-left artwork, X to
-    // close, blurred palette background, and synced lines that scroll/
-    // highlight live with playback — not a drawer sliding up from the
-    // bottom.
-    //
-    // BUG FIX ("crash jab lyrics khulte hain") — root cause and the
-    // PROPER fix (not just dropping the Hero):
-    // This route is pushed with `opaque: false`, which deliberately
-    // keeps EdgeToEdgeFullPlayer mounted underneath as a see-through
-    // background — that's the whole point of opaque:false. Both this
-    // screen's small thumbnail AND the main player's big artwork used
-    // the identical Hero tag ('aurum_art_${song.id}'), so with both
-    // routes alive at once, two Heroes shared one tag — Flutter's fatal
-    // "multiple heroes that share the same tag within a subtree"
-    // assertion, crashing the app the instant lyrics opened.
-    // A same-tag Hero flight is only safe between two routes shown
-    // SEQUENTIALLY (one fully gone before the other's Hero exists), so
-    // the actual fix is to make that true here too: onLyricsOpenChanged
-    // (wired from _BottomIconRowState up to _EdgeToEdgeFullPlayerState)
-    // removes the main player's Hero from the tree for exactly the
-    // window lyrics are open, then restores it the instant this pushed
-    // route is popped — via .then() below, which fires on every close
-    // path (X button, swipe-down, system back), not just one of them.
-    // Net effect: still a genuine two-way Hero flight (open AND close),
-    // just with the two Heroes never coexisting.
     widget.onLyricsOpenChanged(true);
     Navigator.of(context).push(
       PageRouteBuilder(
@@ -1292,15 +951,6 @@ class _BottomIconRowState extends State<_BottomIconRow> {
   }
 }
 
-/// Full-screen immersive lyrics view for the Edge to Edge player —
-/// replaces the old bottom-sheet lyrics drawer entirely. Matches the
-/// reference: a small top-left artwork thumbnail (not the big hero art),
-/// title/artist next to it, X-to-close and a ••• menu on the top-right,
-/// a blurred version of the current mesh palette as the full-screen
-/// background, and the actual lyrics content reusing AurumLyricsPage —
-/// the same self-contained fetch/sync/scroll/glow-highlight widget the
-/// Card layout's own immersive lyrics view is built on, so line-by-line
-/// highlighting and auto-scroll behave identically here.
 class _EdgeToEdgeImmersiveLyrics extends StatefulWidget {
   const _EdgeToEdgeImmersiveLyrics({
     required this.song,
@@ -1320,10 +970,6 @@ class _EdgeToEdgeImmersiveLyricsState extends State<_EdgeToEdgeImmersiveLyrics>
   @override
   void initState() {
     super.initState();
-    // Drives the entrance choreography below (background fade-in, thumbnail
-    // settle, lyrics rise-in) — one shared timeline so every piece lands in
-    // the same coordinated beat instead of several independent implicit
-    // animations starting/finishing at slightly different times.
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 420),
@@ -1354,12 +1000,6 @@ class _EdgeToEdgeImmersiveLyricsState extends State<_EdgeToEdgeImmersiveLyrics>
             return Stack(
               fit: StackFit.expand,
               children: [
-                // ── Blurred palette background: same mesh gradient the
-                // player itself is showing, so the lyrics screen reads as
-                // a continuation of the same surface rather than a
-                // different screen — then a heavy blur on top of that
-                // gradient plus a softly blurred, oversized copy of the
-                // artwork gives it real depth instead of a flat color.
                 DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
@@ -1375,11 +1015,6 @@ class _EdgeToEdgeImmersiveLyricsState extends State<_EdgeToEdgeImmersiveLyrics>
                     opacity: 0.35,
                     child: ImageFiltered(
                       imageFilter: ImageFilter.blur(sigmaX: 60, sigmaY: 60),
-                      // FIX: same offline-artwork gap as the main hero
-                      // artwork above — raw CachedNetworkImage can't read
-                      // content:// / local-file artworkUrl, so this went
-                      // blank for offline songs. AurumArtwork handles all
-                      // three source types with the right fallback.
                       child: AurumArtwork(
                         url: widget.song.artworkUrl,
                         size: double.infinity,
@@ -1388,12 +1023,8 @@ class _EdgeToEdgeImmersiveLyricsState extends State<_EdgeToEdgeImmersiveLyrics>
                       ),
                     ),
                   ),
-                // Darkening scrim so lyrics text stays legible regardless
-                // of how bright the blurred artwork underneath is.
                 DecoratedBox(decoration: BoxDecoration(color: Colors.black.withOpacity(0.38))),
 
-                // ── Foreground: header row + lyrics, fading/rising in
-                // together as the overlay opens. ──
                 Opacity(
                   opacity: t,
                   child: Transform.translate(
@@ -1405,27 +1036,10 @@ class _EdgeToEdgeImmersiveLyricsState extends State<_EdgeToEdgeImmersiveLyrics>
                             padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
                             child: Row(
                               children: [
-                                // Small top-left artwork thumbnail — a
-                                // Hero back to the SAME tag the main
-                                // player's big artwork uses
-                                // ('aurum_art_${song.id}'), so this
-                                // screen closing morphs it back smoothly
-                                // instead of a hard cut. Safe to share
-                                // the tag because _openLyricsSheet (see
-                                // its own fix comment) now hides the
-                                // main player's Hero for exactly the
-                                // window this screen is open, so the two
-                                // are never mounted at the same time —
-                                // Flutter only ever sees one Hero per
-                                // tag, and gets a genuine two-way flight
-                                // out of it on both open and close.
                                 Hero(
                                   tag: 'aurum_art_${widget.song.id}',
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(10),
-                                    // FIX: same offline-artwork gap — swapped
-                                    // to AurumArtwork so this thumbnail loads
-                                    // for local/content:// songs too.
                                     child: AurumArtwork(
                                       url: widget.song.artworkUrl,
                                       size: 52,
@@ -1480,11 +1094,6 @@ class _EdgeToEdgeImmersiveLyricsState extends State<_EdgeToEdgeImmersiveLyrics>
                               ],
                             ),
                           ),
-                          // Reuses the exact same self-contained widget the
-                          // Card layout's immersive lyrics view uses — full
-                          // fetch/sync/scroll/highlight/glow behavior comes
-                          // along for free and stays in sync between both
-                          // full-player layouts automatically.
                           const Expanded(child: AurumLyricsPage(onDarkBackdrop: true)),
                         ],
                       ),
@@ -1500,15 +1109,6 @@ class _EdgeToEdgeImmersiveLyricsState extends State<_EdgeToEdgeImmersiveLyrics>
   }
 }
 
-/// Minimal, self-contained queue list for the Edge to Edge sheet — avoids
-/// depending on full_player_screen.dart's private _QueuePage.
-/// Full "Up Next" sheet body — header (artwork + title/artist + favorite),
-/// action row (lock/menu/delete + song count & total duration), a 3-button
-/// mode row (shuffle / move-mode toggle / repeat), a "Continue Playing"
-/// section header, then the reorderable queue itself. Every control here is
-/// wired to real PlayerProvider/FavoritesProvider state — nothing is
-/// decorative filler copied from the reference screenshot without a real
-/// action behind it.
 class _EdgeToEdgeQueueSheetBody extends StatefulWidget {
   const _EdgeToEdgeQueueSheetBody({
     required this.sheetController,
@@ -1516,12 +1116,6 @@ class _EdgeToEdgeQueueSheetBody extends StatefulWidget {
     required this.panel,
   });
 
-  // The sheet's OWN resize controller (see _openQueueSheet's fix comment
-  // above) — used only by the drag-handle area below to explicitly
-  // resize the sheet. Deliberately NOT handed to the list; the list gets
-  // its own independent ScrollController in State below so list-
-  // scrolling/reordering and sheet-resizing never compete for the same
-  // gesture.
   final DraggableScrollableController sheetController;
   final Song? currentSong;
   final _PanelPalette panel;
@@ -1531,44 +1125,19 @@ class _EdgeToEdgeQueueSheetBody extends StatefulWidget {
 }
 
 class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
-  // The list's own scroll controller — independent from
-  // widget.sheetController (see class doc comment above for why).
   final ScrollController _listScrollController = ScrollController();
 
-  // FIX ("Up Next drag ekdam YouTube Music level smooth chahiye — abhi
-  // set hone se pehle idhar-udhar bump karta hai"): same root cause and
-  // same fix as full_player_screen.dart's _QueuePageState — see that
-  // class's doc comment for the full writeup. onReorder used to call
-  // PlayerProvider.moveQueueItem() directly, whose synchronous
-  // notifyListeners() rebuilt this Selector with the new order while
-  // ReorderableListView was still mid-flight animating the drop for the
-  // OLD order — two competing sources of truth landing across different
-  // frames is exactly the "bump before it settles" artifact. A local
-  // optimistic copy means the list always sees one single, already-final
-  // order the instant the drop happens.
   List<Song> _localQueue = const [];
   int? _localCurrent;
 
-  // Exact order (song ids) the local list committed to after a drop /
-  // swipe-remove. The old single-use `_awaitingOwnReorderEcho` flag was
-  // consumed by the very first rebuild — which is the setState() of the
-  // drop itself, where the provider still holds the OLD order — so the
-  // list snapped back to the old order for a few frames and then jumped
-  // to the new one again (the "bump after release"). Now EVERY provider
-  // sync is ignored until it actually matches this target (or a timeout
-  // passes), however many rebuilds that takes.
   List<String>? _pendingTargetIds;
   DateTime? _pendingTargetSetAt;
   static const _pendingTargetTimeout = Duration(seconds: 3);
 
-  // True while a row is being dragged: the list is never swapped under
-  // the user's finger by a provider sync (e.g. smart-queue appending).
   bool _isDragging = false;
   List<Song>? _latestProviderQueue;
   int? _latestProviderCurrent;
 
-  // Provider calls (move / remove) run strictly one after another, so
-  // two quick reorders can't interleave inside PlayerProvider.
   Future<void> _providerOps = Future<void>.value();
   void _enqueueProviderOp(Future<void> Function() op) {
     _providerOps = _providerOps.then((_) => op()).catchError((_) {});
@@ -1588,8 +1157,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
       final setAt = _pendingTargetSetAt;
       final timedOut = setAt == null ||
           DateTime.now().difference(setAt) > _pendingTargetTimeout;
-      // Matches when the provider caught up to our target (extra songs
-      // appended at the end by something else are fine).
       var matches = queue.length >= pending.length;
       if (matches) {
         for (var i = 0; i < pending.length; i++) {
@@ -1599,11 +1166,10 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
           }
         }
       }
-      if (!matches && !timedOut) return; // stale / in-flight — ignore
+      if (!matches && !timedOut) return;
       _pendingTargetIds = null;
       _pendingTargetSetAt = null;
     }
-    // PlayerProvider.queue is its internal list BY REFERENCE — always copy.
     _localQueue = List<Song>.of(queue);
     _localCurrent = current;
   }
@@ -1613,16 +1179,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
     _listScrollController.dispose();
     super.dispose();
   }
-  // REORDER-LOCK FIX ("upnext mai songs drag wala awkward hai"): this
-  // used to start locked, so dragging a row did nothing at all until
-  // the user first found and tapped the separate lock icon (or the
-  // swap_vert mode button) — an invisible extra step with zero
-  // feedback on why the drag handle wasn't working, easy to mistake
-  // for a bug. Spotify/YT Music never gate their queue drag behind a
-  // lock; the handle just works. Reorder is now always enabled — the
-  // drag handle drags on first touch, no unlock step. _reorderLocked
-  // stays (always false) purely so the existing lock-icon/proxyDecorator
-  // wiring below doesn't need to be re-plumbed.
   final bool _reorderLocked = false;
 
   String _totalDuration(List<Song> queue) {
@@ -1638,9 +1194,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
   Widget build(BuildContext context) {
     final song = widget.currentSong;
     final panel = widget.panel;
-    // `sig` makes the Selector notice in-place reorders/removals of the
-    // provider's (same-instance) queue list, which plain list identity
-    // comparison would miss.
     return Selector<PlayerProvider,
         ({List<Song> queue, int? current, String sig})>(
       selector: (_, p) => (
@@ -1651,9 +1204,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
       builder: (context, data, _) {
         _syncFromProvider(data.queue, data.current);
         final queue = _localQueue;
-        // Tile keys follow the SONG (id + n-th occurrence), not its
-        // index or object instance, so a reorder only slides tiles and
-        // never remounts them.
         final seenIds = <String, int>{};
         final tileKeys = List<Key>.generate(queue.length, (i) {
           final id = queue[i].id;
@@ -1663,28 +1213,9 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
         return Column(
           children: [
             const SizedBox(height: 10),
-            // ── Drag handle ──
-            // FIX (part of the "sheet snaps back to its old size" bug —
-            // see _openQueueSheet's comment): this used to be a bare,
-            // gesture-less Container — purely decorative. The ENTIRE
-            // sheet relied on Flutter's implicit whole-sheet drag-to-
-            // resize, which the list below was winning the gesture arena
-            // against (see that comment for the full explanation). Now
-            // this handle is the ONE deliberate, dedicated resize target:
-            // dragging it calls DraggableScrollableController.jumpTo()
-            // directly, so resizing the sheet no longer depends on
-            // winning a gesture-arena race with the list at all — it's
-            // driven explicitly, exactly like YouTube's own Up Next
-            // handle.
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onVerticalDragUpdate: (details) {
-                // Guard: the controller only finishes attaching to the
-                // sheet after its first build/initState — calling .size
-                // or .jumpTo() before that (isAttached == false) throws
-                // an assertion. A drag starting in the very first frame
-                // the sheet opens (fast double-tap-and-drag) could hit
-                // this window; bail out silently rather than crash.
                 if (!widget.sheetController.isAttached) return;
                 final screenHeight = MediaQuery.of(context).size.height;
                 if (screenHeight <= 0) return;
@@ -1693,13 +1224,7 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                 widget.sheetController.jumpTo(next);
               },
               onVerticalDragEnd: (details) {
-                // Same attachment guard as onVerticalDragUpdate above.
                 if (!widget.sheetController.isAttached) return;
-                // Snap to the nearest of the sheet's declared snapSizes
-                // (0.5 / 0.82 / 0.94) rather than leaving it wherever the
-                // finger happened to lift — same settle behavior YouTube's
-                // handle has, and it's what stops the size looking
-                // "stuck" at an arbitrary in-between value.
                 const stops = [0.5, 0.82, 0.94];
                 final current = widget.sheetController.size;
                 var nearest = stops.first;
@@ -1718,14 +1243,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                 );
               },
               child: Container(
-                // Generous invisible hit area around the visible bar so
-                // the handle is easy to grab with a thumb — the visible
-                // 4px bar alone would be an unrealistically thin target.
-                // Padding is sized so total vertical space here (10 +
-                // padding + 4px bar + 8) matches the original layout's
-                // 10 + 4px bar + 18 exactly — the extra hit area is
-                // absorbed into existing whitespace, not added on top of
-                // it, so nothing else in the sheet shifts down.
                 padding: const EdgeInsets.symmetric(vertical: 5),
                 color: Colors.transparent,
                 child: Container(
@@ -1739,7 +1256,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
               ),
             ),
             const SizedBox(height: 8),
-            // ── Header: artwork + title/artist + favorite ──
             if (song != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -1748,8 +1264,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      // FIX: same offline-artwork gap — AurumArtwork
-                      // handles content://, local file, and network URL.
                       child: AurumArtwork(
                         url: song.artworkUrl,
                         size: 64,
@@ -1800,7 +1314,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                 ),
               ),
             const SizedBox(height: 18),
-            // ── Action row: lock / overflow / delete-queue + song count & duration ──
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Container(
@@ -1826,42 +1339,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                           ? null
                           : () async {
                               AurumHaptics.medium();
-                              // Clears every queued item except the one
-                              // currently playing, mirroring the reference's
-                              // trash icon (clear Up Next, not stop
-                              // playback).
-                              //
-                              // FIX: this used to loop over a captured
-                              // `data.current` index taken once before the
-                              // loop started. removeFromQueue() shifts
-                              // _currentIndex internally every time it
-                              // removes an item that sits before the
-                              // current song — so after even one removal,
-                              // the stale `data.current` no longer pointed
-                              // at the actually-playing song, and a
-                              // subsequent iteration could delete the
-                              // wrong item, including the song currently
-                              // playing. Re-reading the live queue/current
-                              // song by identity on every iteration instead
-                              // of trusting a snapshot index avoids that
-                              // entirely.
-                              // FIX (recheck): the previous version read
-                              // `player.queue.length`/`player.queue[i]`
-                              // fresh on every iteration while also
-                              // `await`-ing removeFromQueue() inside the
-                              // loop. If removeFromQueue() reassigns the
-                              // provider's queue to a new list (immutable
-                              // update, not an in-place mutation), the
-                              // loop's own `i` no longer lines up with the
-                              // just-shrunk live list on the next
-                              // iteration — same class of index-drift bug
-                              // as the one already fixed above for a
-                              // captured `data.current`, just reintroduced
-                              // one layer deeper. Snapshotting the queue
-                              // ONCE up front and walking that fixed
-                              // snapshot by identity avoids re-deriving
-                              // indices against a list that's changing out
-                              // from under the loop.
                               final player = context.read<PlayerProvider>();
                               final playingSong = player.currentSong;
                               final snapshot = List.of(player.queue);
@@ -1888,13 +1365,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
               ),
             ),
             const SizedBox(height: 14),
-            // ── Mode row: shuffle / repeat ──
-            // REORDER-LOCK FIX (cont'd): the middle button here used to
-            // be the swap_vert lock toggle. Now that reorder is always
-            // on (no lock to toggle), that button had nothing left to
-            // do — removed rather than left as a dead tap target, so
-            // the row is a clean 2-up shuffle/repeat pair instead of 3
-            // buttons where the middle one silently does nothing.
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Selector<PlayerProvider, (bool, LoopMode)>(
@@ -1934,7 +1404,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
               ),
             ),
             const SizedBox(height: 22),
-            // ── "Continue Playing" section header ──
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
@@ -1954,7 +1423,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
             ),
             const SizedBox(height: 14),
             Divider(color: Colors.white.withOpacity(0.12), height: 1),
-            // ── Reorderable queue ──
             Expanded(
               child: queue.isEmpty
                   ? Center(
@@ -1964,63 +1432,11 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                       ),
                     )
                   : ReorderableListView.builder(
-                      // FIX: independent from the sheet's own resize
-                      // controller now (see class doc comment + the
-                      // dedicated drag-handle above) — this list scrolls
-                      // and reorders completely on its own, with no
-                      // shared controller for a sheet-resize gesture to
-                      // race against.
                       scrollController: _listScrollController,
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       buildDefaultDragHandles: false,
                       itemCount: queue.length,
-                      // SMOOTHNESS FIX ("ekdam youtube level ka optimized
-                      // kro, koi bump na ho"): this list was on Flutter's
-                      // default BouncingScrollPhysics. Bouncing/rubber-band
-                      // physics actively springs back against
-                      // ReorderableListView's own autoscroll-near-edge
-                      // behavior — dragging a row toward the top or
-                      // bottom of the visible list fights that bounce
-                      // instead of scrolling cleanly, which reads as a
-                      // stutter/bump right in the middle of a drag. This
-                      // is the exact same class of fix already applied
-                      // to full_player_screen.dart's own Up Next list
-                      // (see its ClampingScrollPhysics comment) — flat,
-                      // no-bounce physics so a reorder drag's autoscroll
-                      // near either edge is perfectly smooth, matching
-                      // native Android / YouTube Music behavior instead
-                      // of fighting an iOS-style spring.
                       physics: const ClampingScrollPhysics(),
-                      // FIX ("ekdam YouTube level chahiye, drag mein koi
-                      // feedback nahi tha"): with no proxyDecorator, Flutter's
-                      // default reorder renders the dragged row completely
-                      // flat — same shadow, same scale, same color as every
-                      // static row. YouTube's Up Next visibly lifts the row
-                      // being dragged (soft shadow + slight scale-up) so your
-                      // eye never loses track of which item is moving,
-                      // especially once it's being carried past several other
-                      // rows during a fast drag.
-                      //
-                      // FIX (low-end perf): first pass used Material's
-                      // `elevation`, which on Android goes through
-                      // PhysicalModel — a real physical shadow layer that
-                      // Skia recomputes every single frame the drag is
-                      // active, plus a shape clip on top of that. Fine on a
-                      // flagship, but exactly the kind of per-frame GPU cost
-                      // that makes a drag feel janky on a low-end phone —
-                      // and a drag can run for several seconds if the user
-                      // carries a row a long way down the list, so the cost
-                      // isn't a one-off. Replaced with a plain
-                      // BoxDecoration + BoxShadow, which is a cheap paint-time
-                      // blur with no physical layer/clip — same soft-lift
-                      // look, a fraction of the per-frame cost. animation is
-                      // Flutter's own 0→1 lift progress for this row (t),
-                      // driven by the same reorder gesture — no extra
-                      // AnimationController needed either way.
-                      // Material ancestor: the drag proxy lives in the
-                      // Navigator's Overlay (outside this sheet), where
-                      // bare Text falls back to the debug yellow-underline
-                      // style. Transparent Material fixes that, no look change.
                       proxyDecorator: (child, index, animation) {
                         return Material(
                           type: MaterialType.transparency,
@@ -2059,8 +1475,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                       },
                       onReorderEnd: (_) {
                         _isDragging = false;
-                        // Cancelled / same-position drop: re-adopt any
-                        // provider change that arrived mid-drag.
                         final q = _latestProviderQueue;
                         if (_pendingTargetIds == null && q != null && mounted) {
                           setState(() => _syncFromProvider(
@@ -2078,10 +1492,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                         final player = context.read<PlayerProvider>();
                         final from = oldIndex;
                         final to = newIndex;
-                        // Local optimistic order first, in the same frame
-                        // as the drop; provider update runs in the
-                        // background (serialized) and every sync before
-                        // it matches is ignored — see _pendingTargetIds.
                         setState(() {
                           final item = _localQueue.removeAt(from);
                           final clampedTo = to.clamp(0, _localQueue.length);
@@ -2102,23 +1512,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                         final s = queue[i];
                         final isCurrent = i == _localCurrent;
                         final row = Container(
-                          // FIX: keying by index (`queue_${s.id}_$i`) gave
-                          // every item a NEW key on every reorder (since its
-                          // index changed), which defeats the whole point of
-                          // ReorderableListView's key-based item tracking —
-                          // it uses the key to know which visual item is
-                          // "the same one" moving to a new slot vs a
-                          // genuinely new item, and a key that always
-                          // changes on reorder produces wrong/glitchy drag
-                          // animations, and outright duplicate-key crashes
-                          // the moment the same song appears twice in the
-                          // queue (two Up Next entries would share both id
-                          // AND index-independent identity otherwise).
-                          // identityHashCode is stable per Song *instance*
-                          // (Song has no == override, so two queue entries
-                          // for the same song are still distinct objects)
-                          // and doesn't change when the list is reordered —
-                          // exactly what ReorderableListView needs.
                           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                           decoration: BoxDecoration(
@@ -2129,8 +1522,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                             children: [
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
-                                // FIX: same offline-artwork gap — AurumArtwork
-                                // handles content://, local file, and network URL.
                                 child: AurumArtwork(
                                   url: s.artworkUrl,
                                   size: 52,
@@ -2170,21 +1561,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                                   ),
                                 ),
                               ),
-                              // FIX ("up next panel mein kaam nahi kar raha"
-                              // — real gap found: this row's ••• used to
-                              // open the generic song-options sheet (Play
-                              // Next / Add to Queue / Like / Share / Save to
-                              // Playlist / Audio Effects / Sleep Timer /
-                              // Download / Song Info) — NONE of which can
-                              // remove a single song from the queue or move
-                              // it to the top. The only removal path left
-                              // was the trash icon, which nukes the ENTIRE
-                              // queue, not just this one row. Swapped for a
-                              // queue-specific quick-actions menu — same
-                              // Play Next / Move to Top / Remove set the
-                              // Card layout's own _QueueTile already offers
-                              // — so a single unwanted song can actually be
-                              // taken out.
                               IconButton(
                                 icon: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 18),
                                 onPressed: () => _showQueueItemActions(
@@ -2195,23 +1571,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                                   accentColor: panel.glow,
                                 ),
                               ),
-                              // GESTURE-ARENA FIX (same class of bug already
-                              // fixed in full_player_screen.dart's Card
-                              // layout — see its drag-handle comment): this
-                              // row is wrapped in a horizontal Dismissible
-                              // (swipe-to-delete) below, so a bare drag
-                              // handle here shares the same gesture arena
-                              // as that swipe. A press-and-drag starting on
-                              // the handle could get resolved as the row's
-                              // horizontal swipe instead of a reorder,
-                              // especially on a slightly diagonal first
-                              // movement from a thumb — exactly the
-                              // "bump"/misfire class of drag bug. Wrapping
-                              // the handle in its own opaque GestureDetector
-                              // gives it a private hit-test boundary so its
-                              // pan recognizer claims the touch before it
-                              // can ever reach Dismissible's recognizer —
-                              // the two gestures no longer compete at all.
                               GestureDetector(
                                 behavior: HitTestBehavior.opaque,
                                 onTap: () {},
@@ -2231,15 +1590,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                           ),
                         );
 
-                        // FIX (same gap as above, second half): rows had no
-                        // swipe-to-delete either — Card layout's queue rows
-                        // support a horizontal swipe as a fast one-song
-                        // removal alongside the drag handle. The current
-                        // song is excluded from Dismissible (removing the
-                        // song that's actively playing out of the "Up
-                        // Next" list isn't a meaningful action here) so it
-                        // stays exactly as a plain, undismissible Container
-                        // — everything else can be swiped away.
                         if (isCurrent) {
                           return KeyedSubtree(
                             key: tileKeys[i],
@@ -2253,11 +1603,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
                           secondaryBackground: _dismissBackground(alignStart: false),
                           onDismissed: (_) {
                             AurumHaptics.medium();
-                            // Index is resolved NOW from the live local
-                            // list (the build-time `i` can be stale after
-                            // the swipe animation), and the row is removed
-                            // locally in the same frame — a dismissed
-                            // Dismissible must leave the tree at once.
                             var idx = _localQueue.indexWhere((x) => identical(x, s));
                             if (idx < 0) {
                               idx = _localQueue.indexWhere((x) => x.id == s.id);
@@ -2285,10 +1630,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
     );
   }
 
-  /// Backdrop revealed behind a queue row while it's mid-swipe — a plain
-  /// rounded red delete affordance, aligned to whichever edge the swipe
-  /// is coming from so it never looks mirrored/wrong depending on swipe
-  /// direction.
   Widget _dismissBackground({required bool alignStart}) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -2302,13 +1643,6 @@ class _EdgeToEdgeQueueSheetBodyState extends State<_EdgeToEdgeQueueSheetBody> {
     );
   }
 
-  /// Queue-specific quick actions for a single row — Play Next / Move to
-  /// Top / Remove — the actions the generic showAurumFullPlayerOptionsSheet
-  /// doesn't cover (that sheet has no concept of "this song's position in
-  /// the queue" at all). Kept intentionally small/focused rather than
-  /// merged into the generic sheet, matching how the Card layout's
-  /// _QueueTile separates its own long-press menu from the shared
-  /// song-options sheet.
   void _showQueueItemActions(
     BuildContext context, {
     required Song song,
@@ -2419,21 +1753,6 @@ class _QueueModeButton extends StatefulWidget {
   State<_QueueModeButton> createState() => _QueueModeButtonState();
 }
 
-// FIX ("shuffle/repeat button click pe hil rahe hain, awkward"): the old
-// version was a bare GestureDetector with no press feedback of its own —
-// but it sat directly under a Selector<(bool, LoopMode)> that rebuilds
-// BOTH buttons together, and the active-state background color + the
-// repeat icon (repeat_one_rounded ↔ all_inclusive_rounded, two glyphs
-// with different visual weight/bounding boxes) both changed with a hard,
-// unanimated cut on every tap. That's what read as a "jump"/wobble on
-// press — nothing was actually shifting position, but an instant color
-// snap + instant icon swap on every tap, with zero tap-down feedback in
-// between, reads exactly like an unstable/jittery button. Fixed with the
-// same self-contained press-scale + smooth cross-fade every other
-// premium button in the app already uses (AurumPressable pattern),
-// scoped to just the icon/background inside this button so it can never
-// nudge sibling layout — pure Spotify-style "settle" on release, no
-// vertical shift ever.
 class _QueueModeButtonState extends State<_QueueModeButton>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(
@@ -2494,14 +1813,9 @@ class _QueueModeButtonState extends State<_QueueModeButton>
   }
 }
 
-
-/// Tap on the artist name in the player -> that artist's page. Uses the
-/// song's own channel id when known (instant), otherwise ArtistScreen
-/// resolves the first credited artist by name.
 void _openArtistFromPlayer(BuildContext context, Song song) {
   final raw = song.artist.trim();
   if (raw.isEmpty) return;
-  // Local files with no tag: there is no real artist to open.
   final lower = raw.toLowerCase();
   if (lower == 'unknown' || lower == '<unknown>' || lower == 'unknown artist') {
     return;

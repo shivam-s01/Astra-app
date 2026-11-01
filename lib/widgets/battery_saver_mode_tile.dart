@@ -5,31 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/widgets/battery_saver_mode_tile.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Settings → Player card for Battery Saver Mode — a purely
-//   visual power-saving feature, fully separate from Auto Sleep Guard
-//   (which pauses playback after inactivity). Battery Saver Mode never
-//   touches playback: while active, it only suppresses animations, the
-//   full player's blurred/breathing background, and other heavy
-//   rendering — see AudioPrefs.batterySaverActiveNotifier and its
-//   consumers (AurumMotion.enabled, AudioPrefs.effectivePlayerBgStyle).
-//
-//   Tapping the card opens a bottom sheet with two things: an Automatic /
-//   Off mode picker (radio-style, same visual language as Auto Sleep
-//   Guard's own mode picker) and, only while Automatic, the trigger
-//   threshold picker (15% or 20%, default 20%). Both choices apply
-//   instantly — no separate save step.
-//
-//   Live state (current battery %, whether the override is active right
-//   now) comes from BatterySaverController via AudioPrefs' notifiers —
-//   this widget only reads/writes the enabled + threshold preferences;
-//   the actual battery-level watching runs continuously at the app level
-//   regardless of whether this screen is open (see main.dart, which
-//   starts BatterySaverController once at startup).
-// =============================================================================
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -57,7 +32,7 @@ class BatterySaverModeTile extends StatelessWidget {
       ),
     );
 
-    if (result == null) return; // dismissed without changing anything
+    if (result == null) return;
 
     if (result.enabled != AudioPrefs.batterySaverEnabledNotifier.value) {
       await AudioPrefs.setBatterySaverEnabled(result.enabled);
@@ -88,9 +63,6 @@ class BatterySaverModeTile extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final isSignedIn = context.watch<AuthProvider>().isSignedIn;
 
-    // Three live values, one Selector-less rebuild via three
-    // ValueListenableBuilders nested — cheap, and each only touches this
-    // one small card (not the whole settings screen) when it changes.
     return ValueListenableBuilder<bool>(
       valueListenable: AudioPrefs.batterySaverEnabledNotifier,
       builder: (context, enabled, _) {
@@ -212,11 +184,6 @@ class _BatterySaverResult {
   const _BatterySaverResult(this.enabled, this.threshold);
 }
 
-// =============================================================================
-// Mode + threshold picker bottom sheet — same visual language as Auto
-// Sleep Guard's sheet (radio-style mode row, gold-tinted selection,
-// AnimatedCrossFade to hide the threshold row while Off is selected).
-// =============================================================================
 class _BatterySaverSheet extends StatefulWidget {
   final bool initialEnabled;
   final int initialThreshold;
@@ -414,11 +381,6 @@ class _BatterySaverSheetState extends State<_BatterySaverSheet> {
   }
 }
 
-/// Radio-style mode row — identical visual language to Auto Sleep
-/// Guard's own _ModeOption, kept as a private copy here rather than
-/// shared/exported since both are intentionally small, self-contained
-/// settings-sheet internals (same reasoning the app already applies to
-/// its other per-feature sheets).
 class _ModeOption extends StatelessWidget {
   final bool selected;
   final String title;

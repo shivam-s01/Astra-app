@@ -5,19 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FILE: lib/screens/jam_screen.dart
-// DESCRIPTION: "Astra Jam" page — start a room, join by code/link, and the
-//   live room view (members, now playing, invite, sync nudge).
-//
-// LIGHTWEIGHT BY DESIGN: no blur / shader effects, no per-frame animation
-// in the room. Only member avatars + now-playing artwork are images (cached,
-// tiny). The page rebuilds only when JamService notifies, and now-playing is
-// read with a Selector so position ticks never rebuild it. All motion goes
-// through AurumMotion (respects "Enable Animations" + Battery Saver) and all
-// feedback through AurumHaptics (respects the user's haptic intensity).
-// ═══════════════════════════════════════════════════════════════════════════
-
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -42,9 +29,6 @@ const Color _kGreen = Color(0xFF4CC38A);
 const Color _kAmber = Color(0xFFE0A63A);
 const Color _kRed = Color(0xFFE5645A);
 
-/// Tiny two-language string table (Hindi when the app language is Hindi,
-/// English otherwise) — keeps the Jam page self-contained so it needs no
-/// changes to the 20 .arb files.
 class _S {
   final bool hi;
   const _S(this.hi);
@@ -193,7 +177,6 @@ class _S {
 
 enum _JamAction { none, start, join }
 
-/// Errors that deserve a proper on-screen card (not just a toast).
 bool _isBlockingError(JamNotice n) =>
     n == JamNotice.roomNotFound ||
     n == JamNotice.roomFull ||
@@ -211,7 +194,6 @@ void _shareJam(BuildContext context) {
 }
 
 class JamScreen extends StatefulWidget {
-  /// When opened from a link / deep link the code is passed here.
   final String? initialCode;
   const JamScreen({super.key, this.initialCode});
 
@@ -228,7 +210,7 @@ class _JamScreenState extends State<JamScreen> {
   JamNotice? _error;
   JamPhase _prevPhase = JamPhase.idle;
   int _prevMembers = 0;
-  String? _savedCode; // a Jam this phone can still rejoin
+  String? _savedCode;
 
   @override
   void initState() {
@@ -237,12 +219,11 @@ class _JamScreenState extends State<JamScreen> {
     _prevPhase = _jam.phase;
     _prevMembers = _jam.members.length;
     _jam.addListener(_onJam);
-    _jam.loadSettings().then((_) => _jam.warmUp()); // DNS warm-up while the user is typing
+    _jam.loadSettings().then((_) => _jam.warmUp());
     _refreshSaved();
     final code = widget.initialCode;
     if (code != null && code.isNotEmpty) {
       _codeCtrl.text = JamService.parseCode(code) ?? '';
-      // Only auto-peek if we're not already inside a room.
       if (!_jam.inRoom) WidgetsBinding.instance.addPostFrameCallback((_) => _peek());
     } else if (!_jam.inRoom) {
       _fillFromClipboard();
@@ -267,7 +248,6 @@ class _JamScreenState extends State<JamScreen> {
     }
   }
 
-  /// A friend sent "ASTRA-XXXXXX" or the link → fill the code field for them.
   Future<void> _fillFromClipboard() async {
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -289,13 +269,12 @@ class _JamScreenState extends State<JamScreen> {
   void _onJam() {
     if (!mounted) return;
 
-    // Haptic feedback on the moments that matter.
     final phase = _jam.phase;
     final count = _jam.members.length;
     if (phase == JamPhase.inRoom && _prevPhase != JamPhase.inRoom) {
-      AurumHaptics.medium(); // you're in
+      AurumHaptics.medium();
     } else if (phase == JamPhase.inRoom && count > _prevMembers) {
-      AurumHaptics.light(); // a friend joined
+      AurumHaptics.light();
     }
     if (phase == JamPhase.idle && _prevPhase != JamPhase.idle) _refreshSaved();
     _prevPhase = phase;
@@ -305,7 +284,6 @@ class _JamScreenState extends State<JamScreen> {
     final n = _jam.notice;
     if (n == JamNotice.none) return;
 
-    // Cards show these inline; just a nudge so the host notices.
     if (n == JamNotice.joinRequest || n == JamNotice.suggestionIncoming) {
       AurumHaptics.medium();
       _jam.clearNotice();
@@ -313,15 +291,12 @@ class _JamScreenState extends State<JamScreen> {
     }
 
     if (_isBlockingError(n)) {
-      // Proper error card on the home screen, with "Try again".
       AurumHaptics.vibrate();
       setState(() => _error = n);
       _jam.clearNotice();
       return;
     }
 
-    // "waiting" / "reconnecting" are shown as a live banner in the room;
-    // everything else is a one-time toast.
     if (n != JamNotice.waitingForFriend && n != JamNotice.reconnecting) {
       final msg = _S.of(context).notice(n);
       ScaffoldMessenger.of(context)
@@ -369,7 +344,6 @@ class _JamScreenState extends State<JamScreen> {
   Future<void> _confirmLeave() async {
     final s = _S.of(context);
     final othersHere = _jam.members.any((m) => m.id != _jam.myId);
-    // 0 = stay, 1 = leave, 2 = end for everyone (host only)
     final choice = await showDialog<int>(
       context: context,
       builder: (c) => AlertDialog(
@@ -488,9 +462,6 @@ class _JamScreenState extends State<JamScreen> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Shared bits
-// ─────────────────────────────────────────────────────────────────────────
 class _PrimaryButton extends StatelessWidget {
   final String label;
   final IconData? icon;
@@ -595,9 +566,6 @@ InputDecoration _fieldDecoration(BuildContext context, String hint, {String? pre
   );
 }
 
-/// Fade + gentle scale-in, played once when the widget first appears.
-/// Used for member tiles so a friend joining feels alive. Zero cost when
-/// animations are off / Battery Saver is on.
 class _PopIn extends StatelessWidget {
   final Widget child;
   const _PopIn({required this.child});
@@ -617,7 +585,6 @@ class _PopIn extends StatelessWidget {
   }
 }
 
-/// Round avatar with optional status ring; falls back to the initial.
 class _Avatar extends StatelessWidget {
   final String? url;
   final String name;
@@ -669,9 +636,6 @@ class _Initial extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// 0) Connecting — honest progress (pulse), slow-network hint, cancel
-// ─────────────────────────────────────────────────────────────────────────
 class _ConnectingView extends StatefulWidget {
   final VoidCallback onCancel;
   const _ConnectingView({super.key, required this.onCancel});
@@ -762,9 +726,6 @@ class _ConnectingViewState extends State<_ConnectingView> with SingleTickerProvi
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// 1) Home — start or join
-// ─────────────────────────────────────────────────────────────────────────
 class _HomeView extends StatelessWidget {
   final TextEditingController nameCtrl;
   final TextEditingController codeCtrl;
@@ -820,7 +781,6 @@ class _HomeView extends StatelessWidget {
         ]),
         const SizedBox(height: 22),
 
-        // Inline error card (replaces the old tiny snackbar).
         AnimatedSize(
           duration: AurumMotion.durationOrZero(AurumMotion.medium1),
           curve: AurumMotion.standard,
@@ -833,7 +793,6 @@ class _HomeView extends StatelessWidget {
                 ),
         ),
 
-        // Rejoin a Jam we were kicked out of by a dead connection / app kill
         if (savedCode != null) ...[
           _Card(
             child: Row(children: [
@@ -862,7 +821,6 @@ class _HomeView extends StatelessWidget {
           const SizedBox(height: 14),
         ],
 
-        // Start
         _Card(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(s.newRoom, style: TextStyle(color: tp, fontSize: 16, fontWeight: FontWeight.w800)),
@@ -897,7 +855,6 @@ class _HomeView extends StatelessWidget {
         ]),
         const SizedBox(height: 18),
 
-        // Join
         _Card(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(s.joinWithCode, style: TextStyle(color: tp, fontSize: 16, fontWeight: FontWeight.w800)),
@@ -950,7 +907,6 @@ class _ErrorCard extends StatelessWidget {
     final tp = AurumTheme.textPrimaryOf(context);
     final ts = AurumTheme.textSecondaryOf(context);
     final offline = notice == JamNotice.connectionFailed;
-    // "Room full" can't be fixed by retrying right away, so no retry there.
     final canRetry = notice != JamNotice.roomFull && notice != JamNotice.joinRejected;
 
     return Container(
@@ -972,8 +928,6 @@ class _ErrorCard extends StatelessWidget {
             Text(s.errorTitle, style: TextStyle(color: tp, fontSize: 14.5, fontWeight: FontWeight.w800)),
             const SizedBox(height: 3),
             Text(s.notice(notice), style: TextStyle(color: ts, fontSize: 13, height: 1.35)),
-            // Tiny diagnostic line (socket status / presence) so a screenshot
-            // tells us exactly why a Jam didn't connect.
             if (JamService.instance.debugInfo.isNotEmpty &&
                 (notice == JamNotice.roomNotFound || notice == JamNotice.connectionFailed))
               Padding(
@@ -1033,9 +987,6 @@ class _Step extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// 2) Join preview (opened from a link or after typing a code)
-// ─────────────────────────────────────────────────────────────────────────
 class _PreviewView extends StatelessWidget {
   final VoidCallback onJoin;
   final VoidCallback onCancel;
@@ -1119,7 +1070,6 @@ class _PreviewView extends StatelessWidget {
   }
 }
 
-/// Overlapping avatars + "2/4 in the room".
 class _AvatarStack extends StatelessWidget {
   final List<String?> avatars;
   final int count;
@@ -1156,9 +1106,6 @@ class _AvatarStack extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// 3) Live room
-// ─────────────────────────────────────────────────────────────────────────
 class _RoomView extends StatelessWidget {
   final VoidCallback onLeave;
   const _RoomView({super.key, required this.onLeave});
@@ -1176,7 +1123,6 @@ class _RoomView extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
       children: [
-        // Title + live status chip
         Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Expanded(
             child: Text(
@@ -1331,8 +1277,6 @@ class _NowPlayingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = _S.of(context);
     final jam = JamService.instance;
-    // Selectors: only song identity + play state rebuild this card, never
-    // the 4×/second position updates.
     final song = context.select<PlayerProvider, Song?>((p) => p.currentSong);
     final playing = context.select<PlayerProvider, bool>((p) => p.isPlaying);
     final tp = AurumTheme.textPrimaryOf(context);
@@ -1406,9 +1350,6 @@ class _NowPlayingCard extends StatelessWidget {
   }
 }
 
-// Video-call style member tiles, two per row. Big round DP with a status
-// ring (green = in sync, amber = syncing). While the room has free slots,
-// one "Invite a friend" tile sits at the end — tap to share.
 class _MemberGrid extends StatelessWidget {
   final List<JamMember> members;
   final String? myId;
@@ -1507,7 +1448,6 @@ class _MemberTile extends StatelessWidget {
   }
 }
 
-/// Host: tap a member → hand over the Jam, remove, or remove & block.
 void _showMemberMenu(BuildContext context, JamMember m) {
   final s = _S.of(context);
   final jam = JamService.instance;
@@ -1568,9 +1508,6 @@ void _showMemberMenu(BuildContext context, JamMember m) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Host cards: join requests + song suggestions
-// ─────────────────────────────────────────────────────────────────────────
 class _RequestsCard extends StatelessWidget {
   const _RequestsCard();
 
@@ -1699,9 +1636,6 @@ class _SuggestionsCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Jam playlist — every song played in this Jam, save it to the library
-// ─────────────────────────────────────────────────────────────────────────
 class _CollabCard extends StatelessWidget {
   const _CollabCard();
 
@@ -1764,9 +1698,6 @@ class _CollabCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Waiting for the host to let us in
-// ─────────────────────────────────────────────────────────────────────────
 class _RequestingView extends StatefulWidget {
   final VoidCallback onCancel;
   const _RequestingView({super.key, required this.onCancel});
@@ -1887,8 +1818,6 @@ class _NudgeCardState extends State<_NudgeCard> {
     final accent = AurumTheme.accentOf(context);
     final v = _drag ?? jam.nudgeMs.toDouble();
 
-    // Collapsed by default — it's an advanced control, so it stays out of
-    // the way until someone with Bluetooth earbuds needs it.
     return _Card(
       padding: EdgeInsets.zero,
       child: ClipRRect(

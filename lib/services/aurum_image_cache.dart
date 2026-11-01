@@ -8,11 +8,6 @@
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'audio_prefs.dart';
 
-/// AurumImageCache — size-bounded disk cache for network artwork.
-///
-/// Data Saver ON: every downloaded thumbnail is treated as valid for 30
-/// days (ignores the CDN's short max-age), so cold start re-requests
-/// nothing. Data Saver OFF: behaves exactly as before (server max-age).
 class AurumImageCache extends CacheManager {
   static const key = 'aurumImageCache';
   static final AurumImageCache _instance = AurumImageCache._();

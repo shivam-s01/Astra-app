@@ -20,45 +20,6 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 
-/**
- * Auto Sleep Guard — battery feature, fully separate from the user-facing
- * Sleep Timer (SleepTimerService, Dart side).
- *
- * WHEN IT RUNS: only when the Dart-side Sleep Timer is NOT active. If the
- * user has a sleep timer running, this stays completely silent — see
- * [setSleepTimerActive], pushed from Dart on every SleepTimerService
- * start/cancel/expire so this native singleton always has a fresh view of
- * that state without polling Dart for it.
- *
- * WHAT IT DOES: if playback is ongoing and there has been no "activity"
- * (screen unlock, in-app tap: play/pause/skip/seek) for N hours (3 or 5,
- * see [DurationHours]), playback is paused automatically to save battery.
- *
- * ACCESS: available to every signed-in user (free or premium) — gated by
- * Google/Supabase sign-in only, not by PremiumProvider. On ("Automatic")
- * by default; the settings card lets a signed-in user flip it fully Off,
- * saved permanently in SharedPreferences until they change it again — see
- * [isEnabled] / [setEnabled]. While on, defaults to a 3h inactivity
- * window; the same settings card can switch that to 5h, independently of
- * the on/off state.
- *
- * IMPLEMENTATION: intentionally has NO Dart Timer, NO polling loop, and NO
- * WorkManager dependency (not present in this project's build.gradle, and
- * adding it purely for one occasional one-shot alarm isn't worth the new
- * dependency surface). Instead: a single inexact AlarmManager alarm,
- * rescheduled only when playback-affecting activity actually happens —
- * exactly the same "reschedule on event, not on a loop" shape the plan
- * called for, built on a primitive already available on every Android
- * version without any special permission.
- *
- * Deliberately uses `set(...)` / `setAndAllowWhileIdle(...)` — NOT
- * `setExactAndAllowWhileIdle(...)`. Exact alarms require the
- * SCHEDULE_EXACT_ALARM permission on Android 12+, which is a sensitive
- * permission that triggers extra Play Store policy review for something
- * that has zero user-facing reason to fire at a precise millisecond — a
- * battery-saving pause landing a few minutes late is invisible to the
- * user and saves us that entire review surface.
- */
 object AutoSleepGuard {
     private const val TAG = "AutoSleepGuard"
     private const val PREFS_NAME = "FlutterSharedPreferences"
@@ -73,26 +34,13 @@ object AutoSleepGuard {
     private const val NOTIFICATION_CHANNEL_ID = "aurum_auto_sleep_guard"
     private const val NOTIFICATION_ID = 1002
 
-    // Feature is always active for every signed-in user (no on/off
-    // toggle) — but the inactivity window is still user-choosable between
-    // 3h and 5h via the settings sheet. Defaults to 3h until changed.
     private const val DEFAULT_GUARD_HOURS = 3
 
     enum class DurationHours(val hours: Int) { THREE(3), FIVE(5) }
 
-    // Updated from Dart whenever SleepTimerService starts/cancels/expires
-    // (see AurumEngineChannelHandler's "setSleepTimerActive" method and
-    // SleepTimerService's calls into it). Defaults to false so a guard
-    // check that somehow runs before Dart has ever reported in does not
-    // get permanently blocked.
     @Volatile
     private var sleepTimerActive: Boolean = false
 
-    // Wall-clock timestamp (System.currentTimeMillis) of the last
-    // registered activity. Volatile: written from the player-listener
-    // thread (main), read from the alarm receiver, which also runs on
-    // main — kept volatile regardless as a cheap safety net against any
-    // future caller off the main thread.
     @Volatile
     private var lastActivityAtMs: Long = System.currentTimeMillis()
 
@@ -100,32 +48,17 @@ object AutoSleepGuard {
         sleepTimerActive = active
     }
 
-    /** Call on: screen unlock, and any in-app play/pause/skip/seek tap. */
     fun recordActivity(context: Context) {
         lastActivityAtMs = System.currentTimeMillis()
         if (awaitingConfirmation) {
-            // Any real activity (unlock, in-app tap) while a confirmation
-            // prompt is outstanding already answers the question — no
-            // need to make the user separately tap "Yes" too.
             awaitingConfirmation = false
             dismissConfirmationPrompt(context)
         }
-        // Reschedule relative to this fresh activity instead of leaving
-        // the old alarm in place — this IS the "reschedule on activity
-        // reset" the plan called for, and it's why no periodic loop is
-        // needed: the alarm only ever needs to know about the most recent
-        // activity, and every call here supersedes the previous one.
         scheduleNextCheck(context)
     }
 
-    /** Call whenever playback starts/resumes/stops, so we only ever have
-     *  an alarm scheduled while there's actually something to guard. */
     fun onPlaybackStateChanged(context: Context, isPlaying: Boolean) {
         if (isPlaying) {
-            // Treat a fresh play as activity too — covers the case where
-            // the user pressed play and then put the phone down; the
-            // inactivity window should start counting from there, not
-            // from whatever stale timestamp preceded it.
             recordActivity(context)
         } else {
             cancelScheduledCheck(context)
@@ -135,9 +68,6 @@ object AutoSleepGuard {
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /** Effective duration for a signed-in user: 3h by default, 5h if the
-     *  user has explicitly picked it via the settings sheet — persists
-     *  until changed again. Signed-out users get the same default. */
     fun durationHours(context: Context, isSignedIn: Boolean): Int {
         if (!isSignedIn) return DEFAULT_GUARD_HOURS
         val stored = prefs(context).getInt(KEY_DURATION_HOURS, DEFAULT_GUARD_HOURS)
@@ -149,21 +79,9 @@ object AutoSleepGuard {
         prefs(context).edit().putInt(KEY_DURATION_HOURS, clamped).apply()
     }
 
-    // User-facing toggle: "Automatic" (on, default) vs "Off". Defaults to
-    // true so existing users who upgrade into this version keep the
-    // behavior they already had, and only see it change if they
-    // deliberately pick "Off" in the settings sheet.
     fun isEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_ENABLED, true)
 
-    /** Flips the feature fully on/off. Off means a complete shutdown, not
-     *  a paused state: any in-flight alarm (next check OR an outstanding
-     *  grace-window timeout) is cancelled immediately, any "Still there?"
-     *  prompt on screen is dismissed, and nothing further is scheduled
-     *  until the user switches it back to Automatic. On means it goes
-     *  straight back to working exactly as before — [recordActivity]
-     *  reschedules from right now, so there's no waiting for the next
-     *  play/pause tap. */
     fun setEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
         if (!enabled) {
@@ -176,11 +94,6 @@ object AutoSleepGuard {
         }
     }
 
-    /** Returns the epoch-millis timestamp of the last auto-pause if it
-     *  hasn't been shown/consumed yet (for the "Paused after inactivity at
-     *  4:12 AM — Resume?" prompt), else null. Consuming (see
-     *  [consumeLastAutoPause]) is separate from reading so the UI can
-     *  decide when the prompt has actually been shown to the user. */
     fun peekLastAutoPause(context: Context): Long? {
         val p = prefs(context)
         if (p.getBoolean(KEY_LAST_AUTO_PAUSE_CONSUMED, true)) return null
@@ -206,8 +119,6 @@ object AutoSleepGuard {
     private fun scheduleNextCheck(context: Context) {
         if (!isEnabled(context)) return
         if (sleepTimerActive) {
-            // Sleep Timer owns pausing right now — stay completely out of
-            // the way, including not holding a stale alarm in the queue.
             cancelScheduledCheck(context)
             return
         }
@@ -217,9 +128,6 @@ object AutoSleepGuard {
             false
         }
         if (!isSignedIn) {
-            // Feature is Google/Supabase-sign-in gated at the guard level
-            // (per product decision — free users get it too, but ONLY
-            // once signed in; this is the enforcement point).
             cancelScheduledCheck(context)
             return
         }
@@ -246,16 +154,6 @@ object AutoSleepGuard {
         }
     }
 
-    /** Invoked by [AutoSleepGuardReceiver] when the alarm fires. Two-stage
-     *  flow: first fires an "Are you awake?" confirmation instead of
-     *  pausing immediately — a genuinely awake user (working, listening to
-     *  a podcast, just not touching the phone) gets a chance to say so
-     *  with one tap. Only pauses if there's truly no response within the
-     *  grace window, which is the only reliable way to tell "awake but not
-     *  touching the phone" apart from "actually asleep" without invasive
-     *  sensors (motion/mic false-trigger in both directions — a sleeping
-     *  person shifts in bed, an awake person working at a desk can leave
-     *  the phone perfectly still for hours). */
     internal fun onAlarmFired(context: Context) {
         if (!isEnabled(context) || sleepTimerActive) return
 
@@ -271,17 +169,11 @@ object AutoSleepGuard {
         val elapsedSinceActivity = System.currentTimeMillis() - lastActivityAtMs
 
         if (elapsedSinceActivity < hoursMs) {
-            // Woken slightly early (inexact alarm drift) — just
-            // reschedule against the real remaining time instead of
-            // prompting prematurely.
             scheduleNextCheck(context)
             return
         }
 
         if (awaitingConfirmation) {
-            // A confirmation prompt is already outstanding (grace window
-            // hasn't elapsed yet) — this alarm firing again means the
-            // grace period itself has now ended with no response.
             pauseNow(context)
             return
         }
@@ -291,13 +183,10 @@ object AutoSleepGuard {
         scheduleGraceTimeout(context)
     }
 
-    // Set true the moment a confirmation prompt is posted, cleared either
-    // by [onConfirmedAwake] (Yes / notification tap) or by [pauseNow]
-    // (No / grace timeout elapsed) — never left dangling either way.
     @Volatile
     private var awaitingConfirmation: Boolean = false
 
-    private const val GRACE_WINDOW_MS = 8L * 60L * 1000L // 8 minutes
+    private const val GRACE_WINDOW_MS = 8L * 60L * 1000L
 
     private fun scheduleGraceTimeout(context: Context) {
         val triggerAtElapsed = SystemClock.elapsedRealtime() + GRACE_WINDOW_MS
@@ -312,16 +201,12 @@ object AutoSleepGuard {
         }
     }
 
-    /** Called from [AutoSleepGuardActionReceiver] when the user taps "Yes"
-     *  or taps the notification body itself (both mean "I'm here"). */
     internal fun onConfirmedAwake(context: Context) {
         awaitingConfirmation = false
         dismissConfirmationPrompt(context)
-        recordActivity(context) // resets the countdown and reschedules cleanly
+        recordActivity(context)
     }
 
-    /** Called from [AutoSleepGuardActionReceiver] when the user explicitly
-     *  taps "No" — no need to wait out the rest of the grace window. */
     internal fun onConfirmedAsleep(context: Context) {
         pauseNow(context)
     }
@@ -331,8 +216,6 @@ object AutoSleepGuard {
         dismissConfirmationPrompt(context)
 
         val engine = AurumMediaSessionService.sharedEngine ?: return
-        // Smooth wind-down instead of an abrupt cut, matching the
-        // existing Sleep Timer's fade-out behavior for consistency.
         try {
             engine.sleepFadeOutAndPause(fadeMs = 8000)
         } catch (e: Exception) {
@@ -350,10 +233,6 @@ object AutoSleepGuard {
     }
 
     private fun postPauseNotification(context: Context) {
-        // Notification.Builder(context, channelId) is an API 26+
-        // constructor — on older devices it doesn't exist and calling it
-        // would crash. We target Android 10+ (API 29) in practice, but
-        // this stays defensive for any lower minSdk build variant.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -387,22 +266,11 @@ object AutoSleepGuard {
         }
     }
 
-    // ── Confirmation prompt ("Are you awake?") ─────────────────────────────
-    // Fires instead of pausing immediately once the inactivity window
-    // elapses — gives a genuinely awake-but-not-touching-the-phone user
-    // (working, listening to a podcast) one tap to say so, before playback
-    // is assumed to be unattended and paused. See onAlarmFired's doc
-    // comment for why this two-stage approach exists.
-
     private const val CONFIRM_NOTIFICATION_ID = 1003
     private const val ACTION_CONFIRM_AWAKE = "com.aurum.music.action.AUTO_SLEEP_GUARD_YES"
     private const val ACTION_CONFIRM_ASLEEP = "com.aurum.music.action.AUTO_SLEEP_GUARD_NO"
 
     private fun postConfirmationPrompt(context: Context) {
-        // Same API 26+ constraint as postPauseNotification — below that,
-        // there is no way to show the "Still there?" prompt at all, so
-        // fall back to pausing directly rather than waiting out a grace
-        // window the user has no visible way to respond to.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             pauseNow(context)
             return
@@ -410,11 +278,6 @@ object AutoSleepGuard {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
-            // No notification permission: fall back to the old behavior
-            // (pause directly) rather than silently waiting out a grace
-            // window the user has no way to see or respond to — leaving
-            // this case waiting invisibly for 8 minutes would just be a
-            // longer, equally silent pause with no benefit.
             if (!granted) {
                 pauseNow(context)
                 return
@@ -422,10 +285,6 @@ object AutoSleepGuard {
         }
         createNotificationChannelIfNeeded(context)
 
-        // Tapping the notification body itself counts as "I'm here" —
-        // same as explicitly tapping Yes. Uses the launch intent (not a
-        // broadcast) so it also brings the app forward, matching normal
-        // notification-tap expectations.
         val bodyTapIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
             ?.let {
                 it.putExtra("auto_sleep_guard_confirm", true)
@@ -453,7 +312,7 @@ object AutoSleepGuard {
             .setSmallIcon(R.drawable.ic_widget_pause)
             .setContentTitle("Still there?")
             .setContentText("No activity for a while — pausing soon to save battery")
-            .setOngoing(true) // not swipe-dismissable — this needs an explicit answer, not an accidental swipe
+            .setOngoing(true)
             .setContentIntent(bodyTapIntent)
             .addAction(Notification.Action.Builder(0, "Yes, I'm here", yesPendingIntent).build())
             .addAction(Notification.Action.Builder(0, "No, pause", noPendingIntent).build())
@@ -476,10 +335,6 @@ object AutoSleepGuard {
         }
     }
 
-    /** Clears the "Playback paused" notification if one is showing —
-     *  used when switching to Off so a stale notification from before the
-     *  toggle doesn't linger on screen for a feature the user just turned
-     *  off. */
     private fun dismissPauseNotification(context: Context) {
         try {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -502,29 +357,17 @@ object AutoSleepGuard {
     }
 }
 
-/**
- * Thin static bridge so AutoSleepGuard (no Dart/BuildContext access) can
- * read current sign-in state. Set from AurumEngineChannelHandler's
- * "setSignedIn" method call, pushed from Dart's AuthProvider whenever
- * auth state changes (see AuthProvider.init's authStateChanges listener).
- */
 object AuthStateBridge {
     @Volatile
     var isSignedIn: Boolean = false
 }
 
-/** Fires when the AlarmManager alarm goes off. Deliberately minimal —
- *  hands off to AutoSleepGuard immediately, does no work itself. */
 class AutoSleepGuardReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         AutoSleepGuard.onAlarmFired(context.applicationContext)
     }
 }
 
-/** Handles the "Yes, I'm here" / "No, pause" actions on the "Still
- *  there?" confirmation prompt. Kept separate from
- *  [AutoSleepGuardReceiver] so the two intents can never be confused with
- *  each other regardless of how their extras/actions are read. */
 class AutoSleepGuardActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val appContext = context.applicationContext

@@ -5,35 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// aurum_settings_tile.dart
-// Astra Music — Shared Animated Settings Row
-//
-// WHY THIS EXISTS:
-// Every settings sub-screen (Privacy, Storage, Notifications, About, ...)
-// had its own copy-pasted `_switchTile` / `_navTile` / `_dangerTile` /
-// `_dropdownTile` / `_actionTile` helper — plain Container + ListTile,
-// no press feedback, and a stock Switch that just snaps on/off. Meanwhile
-// the top-level Settings list (_SettingsTile in settings_screen.dart) has
-// a nice press-scale animation, so jumping from the main list into any
-// sub-page felt like landing somewhere less alive — "stuck".
-//
-// This file is the single reusable row for every settings screen:
-//   - Wraps AurumPressable (project's existing shared press-scale) so
-//     every row responds to touch identically to the rest of the app.
-//   - A custom animated switch/chevron/dropdown that eases instead of
-//     snapping, on AurumMotion's shared timing.
-//   - AurumSettingsListStagger: wrap a screen's rows once to get a
-//     gentle fade+slide-up entrance when the page opens, matching the
-//     "cool, alive" feel across every settings page instead of some
-//     pages animating and others rendering instantly.
-//
-// Drop-in usage — same named params as the old per-screen helpers:
-//   AurumSettingsTile.switchTile(context, icon: ..., title: ..., subtitle: ...,
-//     value: v, onChanged: (v) {})
-//   AurumSettingsTile.nav(context, icon: ..., title: ..., subtitle: ..., onTap: () {})
-//   AurumSettingsTile.danger(context, icon: ..., title: ..., subtitle: ..., onTap: () {}, isDanger: true)
-//   AurumSettingsTile.dropdown(context, icon: ..., title: ..., subtitle: ..., value: v, options: [...], onChanged: (v) {})
-
 import 'package:flutter/material.dart';
 import '../theme/aurum_theme.dart';
 import '../utils/aurum_motion.dart';
@@ -60,8 +31,6 @@ class AurumSettingsTile extends StatelessWidget {
   final Widget? trailing;
   final bool isDanger;
 
-  // ── Factory constructors matching the old per-screen helpers ──────────
-
   factory AurumSettingsTile.switchTile(
     BuildContext context, {
     required IconData icon,
@@ -74,9 +43,6 @@ class AurumSettingsTile extends StatelessWidget {
       icon: icon,
       title: title,
       subtitle: subtitle,
-      // FIX — dynamic theme coverage: switch-tile icon tint was the fixed
-      // accent constant; accentOf(context) picks up wallpaper hue when
-      // Dynamic Color is on, same fixed accent otherwise.
       iconColor: value ? AurumTheme.accentOf(context) : null,
       onTap: () => onChanged(!value),
       trailing: _AurumAnimatedSwitch(value: value, onChanged: onChanged),
@@ -163,9 +129,6 @@ class AurumSettingsTile extends StatelessWidget {
         value: value,
         underline: const SizedBox(),
         dropdownColor: AurumTheme.bgCardOf(context),
-        // FIX — dynamic theme coverage: dropdown text/arrow color was the
-        // fixed accent constant, unlike its dropdownColor above which
-        // already used the context-aware helper.
         style: TextStyle(color: AurumTheme.accentOf(context), fontSize: 12, fontWeight: FontWeight.w600),
         icon: Icon(Icons.keyboard_arrow_down_rounded, color: AurumTheme.accentOf(context), size: 18),
         items: options.map((o) => DropdownMenuItem(value: o, child: Text(label(o)))).toList(),
@@ -177,8 +140,6 @@ class AurumSettingsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final danger = isDanger;
-    // FIX — dynamic theme coverage: default icon/accent tint for a tile
-    // was the fixed accent constant.
     final baseColor = danger ? Colors.redAccent : (iconColor ?? AurumTheme.accentOf(context));
     final leading = customIcon ??
         Container(
@@ -194,7 +155,7 @@ class AurumSettingsTile extends StatelessWidget {
     return AurumPressable(
       onTap: onTap,
       scaleAmount: 0.98,
-      haptic: false, // switches/dropdowns fire their own haptic; nav/danger rows still get a tap ripple feel via scale
+      haptic: false,
       child: AnimatedContainer(
         duration: AurumMotion.durationOrZero(AurumMotion.short2),
         curve: AurumMotion.standard,
@@ -227,10 +188,6 @@ class AurumSettingsTile extends StatelessWidget {
   }
 }
 
-/// Custom animated switch — same visual size/position as Material's
-/// [Switch] so it drops in without layout shift, but the thumb eases
-/// across on AurumMotion's curve instead of Flutter's default snap,
-/// and the track color crossfades instead of hard-cutting.
 class _AurumAnimatedSwitch extends StatelessWidget {
   const _AurumAnimatedSwitch({required this.value, required this.onChanged});
 
@@ -249,8 +206,6 @@ class _AurumAnimatedSwitch extends StatelessWidget {
         padding: const EdgeInsets.all(3),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
-          // FIX — dynamic theme coverage: toggle track's ON color was the
-          // fixed accent constant.
           color: value ? AurumTheme.accentOf(context) : AurumTheme.dividerOf(context),
         ),
         child: AnimatedAlign(
@@ -272,15 +227,6 @@ class _AurumAnimatedSwitch extends StatelessWidget {
   }
 }
 
-/// Wrap a settings screen's row list with this to give every row a
-/// gentle staggered fade + slide-up entrance when the page first opens.
-/// Each row's start is offset by [stagger] from the one before it, so
-/// the list reads as one continuous cascading motion rather than every
-/// row popping in at once — the same "premium load" feel the app
-/// already uses for its home feed and library grids.
-///
-/// Usage: wrap each row (not the whole Column) —
-///   AurumStaggerItem(index: i, child: AurumSettingsTile.nav(...))
 class AurumStaggerItem extends StatefulWidget {
   const AurumStaggerItem({
     super.key,
@@ -314,11 +260,6 @@ class _AurumStaggerItemState extends State<AurumStaggerItem>
     if (!AurumMotion.enabled) {
       _ctrl.value = 1;
     } else {
-      // Cap the stagger so long screens (Privacy has ~13 rows) don't
-      // make the last row wait half a second to appear — beyond a
-      // handful of rows the cascade has already read as "cascading",
-      // so everything past that starts together instead of queuing
-      // further, keeping the whole entrance snappy on any list length.
       final cappedIndex = widget.index > 6 ? 6 : widget.index;
       final delay = widget.stagger * cappedIndex;
       Future.delayed(delay, () {

@@ -5,19 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/widgets/premium_gate.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Reusable premium gate — cinematic bottom sheet that gates
-//   premium features. Shows Google sign-in first if user is not signed in,
-//   then navigates to PremiumScreen for payment.
-//
-//   USAGE:
-//     PremiumGate.show(context, feature: 'Follow Artist');
-//     PremiumGate.guard(context, feature: 'Create Playlist',
-//       onAllowed: () => _showCreateDialog(context));
-// =============================================================================
-
 import 'package:aurum_music/widgets/aurum_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -37,8 +24,6 @@ class PremiumGate {
     String? description,
     bool requiresLoginOnly = false,
   }) {
-    // Payment gate removed — every feature is free once signed in with
-    // Google. Always show the sign-in-only sheet.
     showAurumModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -47,10 +32,6 @@ class PremiumGate {
     );
   }
 
-  /// Shows the SAME Google sign-in sheet used for "Create Playlist" and
-  /// resolves to true once the user is signed in (immediately, if they
-  /// already are), false if they dismissed it. Lets a caller do:
-  ///   if (!await PremiumGate.ensureSignedIn(context, feature: '...')) return;
   static Future<bool> ensureSignedIn(
     BuildContext context, {
     required String feature,
@@ -74,7 +55,6 @@ class PremiumGate {
     required VoidCallback onAllowed,
     bool requiresLoginOnly = false,
   }) {
-    // Payment gate removed — signed in is the only bar to clear now.
     final isSignedIn = context.read<AuthProvider>().isSignedIn;
     if (isSignedIn) {
       onAllowed();
@@ -83,8 +63,6 @@ class PremiumGate {
     }
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 class _PremiumGateSheet extends StatefulWidget {
   final String feature;
@@ -103,9 +81,6 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
   late final Animation<Offset> _contentSlide, _ctaSlide;
   bool _isSigningIn = false;
 
-  // Payment now only gates HD Audio (320kbps) — everything else moved to
-  // a free Google-account gate (see _LoginGateSheet below). Keeping the
-  // old 7-perk list here would misrepresent what payment actually buys.
   static const _perks = [
     (Icons.high_quality_rounded, 'HD Audio',      '320kbps quality'),
     (Icons.graphic_eq_rounded,   'Best Quality',  'Every track, full fidelity'),
@@ -160,20 +135,16 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
     final auth = context.read<AuthProvider>();
 
     if (!auth.isSignedIn) {
-      // Not signed in — trigger Google login first
       setState(() => _isSigningIn = true);
       final success = await auth.signInWithGoogle();
       if (!mounted) return;
       setState(() => _isSigningIn = false);
 
       if (success) {
-        // Signed in — now go to premium screen
-        Navigator.pop(context); // payment screen disabled
+        Navigator.pop(context);
       }
-      // If cancelled/failed, sheet stays open
     } else {
-      // Already signed in — go directly to premium screen
-      Navigator.pop(context); // payment screen disabled
+      Navigator.pop(context);
     }
   }
 
@@ -193,7 +164,6 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
           Container(
             margin: const EdgeInsets.only(top: 12),
             width: 36,
@@ -204,13 +174,11 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
             ),
           ),
 
-          // Crown + header
           FadeTransition(
             opacity: _crownFade,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
               child: Column(children: [
-                // Glowing crown
                 Container(
                   width: 68,
                   height: 68,
@@ -264,7 +232,6 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
 
           const SizedBox(height: 20),
 
-          // Perks horizontal scroll
           FadeTransition(
             opacity: _contentFade,
             child: SlideTransition(
@@ -327,7 +294,6 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
 
           const SizedBox(height: 22),
 
-          // CTA
           FadeTransition(
             opacity: _ctaFade,
             child: SlideTransition(
@@ -338,7 +304,6 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
                   20 + MediaQuery.of(context).viewInsets.bottom,
                 ),
                 child: Column(children: [
-                  // Sign-in note if not signed in
                   if (!isSignedIn) ...[
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -370,7 +335,6 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
                     const SizedBox(height: 12),
                   ],
 
-                  // Primary CTA button
                   SizedBox(
                     width: double.infinity,
                     child: _isSigningIn
@@ -414,14 +378,6 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  // Signed-in state keeps the premium crown
-                                  // icon; signed-out state shows Google's
-                                  // official "G" mark since this button's
-                                  // primary action is a Google sign-in —
-                                  // per Google's branding guidelines, the
-                                  // logo must always appear with the
-                                  // account-provider action it triggers,
-                                  // never as a bare unlabeled icon.
                                   isSignedIn
                                       ? const Icon(
                                           Icons.workspace_premium_rounded,
@@ -477,15 +433,6 @@ class _PremiumGateSheetState extends State<_PremiumGateSheet>
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Login-only gate — same premium visual language as _PremiumGateSheet
-// (gold gradient, glow, staggered fade/slide-in), but for the many
-// features that only require a Google account, not a paid plan. Never
-// mentions price and never routes to PremiumScreen — the single CTA is
-// "Sign in with Google", and success closes the sheet and calls back into
-// the feature immediately.
-// ─────────────────────────────────────────────────────────────────────────────
 
 class _LoginGateSheet extends StatefulWidget {
   final String feature;
@@ -567,7 +514,6 @@ class _LoginGateSheetState extends State<_LoginGateSheet>
     if (success && mounted) {
       Navigator.pop(context);
     }
-    // If cancelled/failed, sheet stays open so the user can retry.
   }
 
   @override
@@ -584,7 +530,6 @@ class _LoginGateSheetState extends State<_LoginGateSheet>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
           Container(
             margin: const EdgeInsets.only(top: 12),
             width: 36,
@@ -595,15 +540,11 @@ class _LoginGateSheetState extends State<_LoginGateSheet>
             ),
           ),
 
-          // Icon + header
           FadeTransition(
             opacity: _iconFade,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
               child: Column(children: [
-                // Glowing account icon — gold like the rest of the app,
-                // but a person/account glyph instead of a crown, since
-                // this is an identity gate, not a paywall.
                 Container(
                   width: 68,
                   height: 68,
@@ -657,8 +598,6 @@ class _LoginGateSheetState extends State<_LoginGateSheet>
 
           const SizedBox(height: 20),
 
-          // Perks horizontal scroll — same premium strip treatment as the
-          // payment gate, just listing what a signed-in account unlocks.
           FadeTransition(
             opacity: _contentFade,
             child: SlideTransition(
@@ -721,8 +660,6 @@ class _LoginGateSheetState extends State<_LoginGateSheet>
 
           const SizedBox(height: 22),
 
-          // CTA — sign in with Google, full stop. No price, no plan
-          // choice, no route to PremiumScreen.
           FadeTransition(
             opacity: _ctaFade,
             child: SlideTransition(
@@ -776,11 +713,6 @@ class _LoginGateSheetState extends State<_LoginGateSheet>
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  // Google's official "G" mark — this
-                                  // button's action IS a Google sign-in,
-                                  // so the real brand mark belongs here
-                                  // (see Google's Sign in with Google
-                                  // branding guidelines).
                                   Container(
                                     width: 20,
                                     height: 20,

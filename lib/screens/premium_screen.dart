@@ -5,12 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/premium_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Astra Plus paywall — cinematic premium experience.
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'package:aurum_music/widgets/aurum_loader.dart';
 import 'dart:math' as math;
@@ -35,33 +29,25 @@ class PremiumScreen extends StatefulWidget {
 
 class _PremiumScreenState extends State<PremiumScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  // Entrance
   late final AnimationController _entranceCtrl;
   late final Animation<double> _heroFade, _plansFade, _ctaFade;
   late final Animation<Offset> _heroSlide, _plansSlide, _ctaSlide;
 
-  // Glow breathing
   late final AnimationController _glowCtrl;
   late final Animation<double> _glow;
 
-  // Shimmer sweep
   late final AnimationController _shimmerCtrl;
   late final Animation<double> _shimmer;
 
-  // Rotating particles
   late final AnimationController _particleCtrl;
 
-  // CTA press
   late final AnimationController _pressCtrl;
 
-  // Countdown timer for urgency (fake scarcity)
   late final AnimationController _countdownCtrl;
 
   AurumPlan _selectedPlan = AurumPlan.lifetime;
   bool _isProcessing = false;
   bool _justPaid = false;
-
-
 
   @override
   void initState() {
@@ -96,14 +82,6 @@ class _PremiumScreenState extends State<PremiumScreen>
 
     WidgetsBinding.instance.addObserver(this);
 
-    // PERF: this is the single busiest screen for concurrent decorative
-    // animation (glow + shimmer + particle, all continuous, on top of the
-    // entrance/press/countdown controllers) — exactly the case the global
-    // Appearance -> Animations toggle exists for on low-end devices. Every
-    // other continuous-loop animation in the app (home banner shimmer,
-    // full player breathe) already gates on
-    // AudioPrefs.enableAnimationsNotifier; this screen previously didn't,
-    // so turning the toggle off still left 3 x 60fps loops running here.
     final animsOn = AudioPrefs.enableAnimationsNotifier.value;
 
     _glowCtrl = AnimationController(
@@ -129,9 +107,6 @@ class _PremiumScreenState extends State<PremiumScreen>
       _shimmerCtrl.repeat();
       _particleCtrl.repeat();
     } else {
-      // Hold each at a static mid-value instead of leaving it at 0, so the
-      // glow/shimmer/particle visuals still render (just frozen) rather
-      // than popping to an off/empty state with animations disabled.
       _glowCtrl.value = 0.5;
       _shimmerCtrl.value = 0.5;
       _particleCtrl.value = 0.0;
@@ -250,15 +225,6 @@ class _PremiumScreenState extends State<PremiumScreen>
     }
 
     return Scaffold(
-      // FIX ("premium screen theme se catch nahi ho raha"): this was
-      // AurumTheme.darkBg — a fixed dark-mode constant — so switching to
-      // Light or AMOLED in Settings had zero effect on this screen; it
-      // stayed the same dark violet regardless of the user's actual
-      // theme choice. bgOf(context) reads the live
-      // Theme.of(context).scaffoldBackgroundColor instead, so this
-      // screen now follows Light/Dark/AMOLED exactly like every other
-      // screen in the app (mix/album/artist/library all already use
-      // this same helper).
       backgroundColor: AurumTheme.bgOf(context),
       body: Stack(
         children: [
@@ -467,7 +433,6 @@ class _PremiumScreenState extends State<PremiumScreen>
     );
   }
 
-
   Widget _buildPlanSelector(AppLocalizations l10n) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -498,16 +463,6 @@ class _PremiumScreenState extends State<PremiumScreen>
             const SizedBox(width: 12),
             Expanded(
               child: _PlanCard(
-                // FIX: was AurumPlan.yearly, which does not exist on the
-                // AurumPlan enum (payment_service.dart only defines
-                // monthly/sixMonths/lifetime) -- this is what broke the
-                // build with "undefined_enum_constant". The actual plan
-                // behind this card is the Rs.149 / 6-month plan, so this
-                // maps back to AurumPlan.sixMonths. Only the enum
-                // reference changed; the "Yearly"-labelled UI copy from
-                // the localization strings is untouched (still reads
-                // from l10n.psPlanYearly / l10n.psSubPerYear /
-                // l10n.psPerYear below) so nothing visually changes.
                 plan: AurumPlan.sixMonths,
                 isSelected: _selectedPlan == AurumPlan.sixMonths,
                 badge: l10n.psBadgeSave58,
@@ -535,8 +490,6 @@ class _PremiumScreenState extends State<PremiumScreen>
   Widget _buildCTA(AppLocalizations l10n) {
     final priceLabel = switch (_selectedPlan) {
       AurumPlan.monthly   => l10n.psPerMonth(_selectedPlan.priceLabel),
-      // FIX: was AurumPlan.yearly (does not exist) -- mapped to
-      // sixMonths, the actual enum value this plan card represents.
       AurumPlan.sixMonths => l10n.psPerYear(_selectedPlan.priceLabel),
       AurumPlan.lifetime  => l10n.psOneTime(_selectedPlan.priceLabel),
     };
@@ -988,7 +941,6 @@ class _SuccessViewState extends State<_SuccessView>
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return Scaffold(
-      // Same theme-awareness fix as the paywall build() above.
       backgroundColor: AurumTheme.bgOf(context),
       body: SafeArea(
         child: Padding(

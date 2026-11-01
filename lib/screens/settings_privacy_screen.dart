@@ -40,22 +40,10 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
   bool   _incognitoMode   = false;
   bool   _hideListenStats = false;
   String _appLockPin      = '';
-  // Internal, language-independent key. Display label is resolved via
-  // _delayLabel() at build time so switching app language doesn't break
-  // the stored preference.
   String _lockDelayKey    = 'after10';
   bool   _dontLockPlaying = false;
   bool   _deletingAccount = false;
 
-  // FIX (toggle flash — same root cause across every settings screen):
-  // all the fields above are given hardcoded defaults, but the real saved
-  // values only arrive once _load()'s async SharedPreferences read
-  // completes. The very first build() always paints with these hardcoded
-  // defaults for at least a frame, then snaps to the real value the moment
-  // _load() finishes — reading as "a toggle looked on/off for a moment,
-  // then flipped by itself." _loaded gates the real UI behind a brief
-  // loader until the actual saved values are in hand, so the screen only
-  // ever paints once, already correct.
   bool _loaded = false;
 
   static const _delayKeys = ['immediately', 'after1', 'after5', 'after10', 'after30'];
@@ -99,19 +87,10 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
     if (value is String) await p.setString(key, value);
   }
 
-  // ── PIN Setup Sheet ────────────────────────────────────────────────────────
   void _showPinSheet(BuildContext context) {
     showAurumModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      // FIX: same barrier-dismiss race as feedback_dialog.dart's
-      // showDialog (see that file's comment for the full mechanism) —
-      // isDismissible defaults to true, and when the keyboard rises it
-      // shrinks the viewport and relayouts this sheet's content, which
-      // can read as an outside tap and pop the sheet before the keyboard
-      // even finishes rising. The sheet already has its own back-swipe/
-      // handle-drag affordance and no outside-tap was ever load-bearing
-      // here, so disabling it removes the race entirely.
       isDismissible: false,
       enableDrag: true,
       backgroundColor: AurumTheme.bgCardOf(context),
@@ -144,13 +123,7 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
       );
     }
 
-    // Built as a flat list (instead of inline in `children:`) so every
-    // row — including conditional ones like the PIN sub-rows — can be
-    // wrapped in AurumStaggerItem with a clean sequential index. That's
-    // what gives the page its cascading "alive" entrance instead of
-    // every row appearing at once.
     final rows = <Widget>[
-      // ── APP LOCK ──────────────────────────────────────────────────
       _sectionLabel(context, l10n.sprAppLock),
       AurumSettingsTile.switchTile(context,
         icon: Icons.lock_rounded,
@@ -161,7 +134,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
         value: _appLock,
         onChanged: (v) async {
           if (v && _appLockPin.isEmpty) {
-            // Must set PIN first
             _showPinSheet(context);
             return;
           }
@@ -218,7 +190,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
         ),
       ],
 
-      // ── INCOGNITO ─────────────────────────────────────────────────
       _sectionLabel(context, l10n.sprIncognito),
       AurumSettingsTile.switchTile(context,
         icon: Icons.visibility_off_rounded,
@@ -249,7 +220,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
         },
       ),
 
-      // ── CLEAR DATA ────────────────────────────────────────────────
       _sectionLabel(context, l10n.sprClearData),
       AurumSettingsTile.danger(context,
         icon: Icons.history_rounded,
@@ -257,9 +227,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
         subtitle: l10n.sprClearHistorySubtitle,
         onTap: () { AurumHaptics.medium(); _confirmClear(context, l10n, l10n.sprHistoryTitle, () async {
           await context.read<RecentlyPlayedProvider>().clearHistory();
-          // Also wipe the cloud copy — otherwise the next sign-in (this
-          // device or another) pulls the "cleared" history right back
-          // down from Supabase, undoing what the user just asked for.
           unawaited(SyncService.instance.clearRemoteHistory());
         }); },
       ),
@@ -276,12 +243,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
         title: l10n.sprClearAllData,
         subtitle: l10n.sprClearAllDataSubtitle,
         onTap: () { AurumHaptics.heavy(); _confirmClear(context, l10n, l10n.sprAllAppDataTitle, () async {
-          // Subtitle promises "playlists, settings, history" — the old
-          // implementation only ever cleared SharedPreferences (settings),
-          // silently leaving playlists/favorites/follows/history/download
-          // cache untouched. This is local-device-only (unlike "Delete
-          // Account" above, it never touches Supabase — the cloud copy is
-          // left alone so it's still there if the user signs in again).
           final ctx = context;
           if (ctx.mounted) {
             await ctx.read<PlaylistProvider>().clearAll();
@@ -297,7 +258,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
         isDanger: true,
       ),
 
-      // ── DANGER ZONE — ACCOUNT DELETION ───────────────────────────────
       if (context.watch<AuthProvider>().isSignedIn) ...[
         _sectionLabel(context, 'DANGER ZONE'),
         AurumSettingsTile.danger(context,
@@ -314,16 +274,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
       backgroundColor: AurumTheme.bgOf(context),
       appBar: _appBar(context, l10n.settingsPrivacy),
       body: ListView(
-        // AlwaysScrollableScrollPhysics wraps BouncingScrollPhysics so the
-        // bounce still fires even when the content is shorter than the
-        // viewport — e.g. before App Lock is turned on, the PIN/biometric/
-        // auto-lock sub-rows aren't rendered and this list can be short
-        // enough to fit the screen with nothing left to scroll. Plain
-        // BouncingScrollPhysics only bounces once content actually
-        // overflows; on a short list it silently does nothing, which read
-        // as this screen feeling "stuck" compared to longer screens where
-        // content naturally overflows and the same physics line works
-        // without this wrapper.
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
         children: [
@@ -353,9 +303,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
           final error = await AuthService.instance.deleteAllUserData();
 
           if (error != null) {
-            // Server-side delete didn't fully succeed — say so plainly,
-            // leave the session and local data untouched so nothing is
-            // half-deleted, and let the user retry.
             if (mounted) setState(() => _deletingAccount = false);
             if (sheetContext.mounted) Navigator.pop(sheetContext);
             if (providerContext.mounted) {
@@ -366,8 +313,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
             return;
           }
 
-          // Server-side rows are gone — now clear the local mirrors so
-          // nothing stale flashes on screen, then sign out.
           if (providerContext.mounted) {
             await providerContext.read<PlaylistProvider>().clearAll();
             await providerContext.read<FollowedArtistsProvider>().clearAll();
@@ -380,10 +325,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
           if (sheetContext.mounted) Navigator.pop(sheetContext);
 
           if (providerContext.mounted) {
-            // Pop back out of the settings stack to the app root, where
-            // the signed-out state naturally lands on the login screen —
-            // avoids leaving the user stranded deep in a settings screen
-            // that now has nothing signed-in left to show.
             Navigator.of(providerContext).popUntil((route) => route.isFirst);
             ScaffoldMessenger.of(providerContext).showSnackBar(
               const SnackBar(content: Text('Your account data has been deleted.')),
@@ -417,9 +358,6 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
   }
 }
 
-// =============================================================================
-// PIN Setup Sheet
-// =============================================================================
 class _PinSetupSheet extends StatefulWidget {
   final String currentPin;
   final ValueChanged<String> onSave;
@@ -434,12 +372,6 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
   final _step2Controller = TextEditingController();
   String _error = '';
   bool   _step2 = false;
-
-  // Keyboard-focus timing (autofocus-during-sheet-entrance-animation bug)
-  // is handled centrally by AurumFocusField — see that file for the full
-  // history. _step2 is passed as its refocusSignal so stepping from PIN
-  // entry to PIN confirmation re-requests focus on the new field without
-  // waiting on a route animation a second time.
 
   void _next(AppLocalizations l10n) {
     if (_step1Controller.text.length < 4) {
@@ -565,13 +497,6 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
   }
 }
 
-// =============================================================================
-// Delete Account Sheet
-// =============================================================================
-// Type-to-confirm pattern (same idea as GitHub/Spotify) so this can never
-// fire from an accidental tap. onConfirmed handles the actual delete +
-// sign-out; this widget only owns the confirmation UI and its own
-// in-flight/error state.
 class _DeleteAccountSheet extends StatefulWidget {
   final Future<void> Function() onConfirmed;
   const _DeleteAccountSheet({required this.onConfirmed});
@@ -706,9 +631,6 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
                   AurumHaptics.heavy();
                   setState(() => _submitting = true);
                   await widget.onConfirmed();
-                  // Sheet is popped by the caller once the flow finishes
-                  // (success or error) — if it's still mounted here,
-                  // something kept it open, so just release the lock.
                   if (mounted) setState(() => _submitting = false);
                 },
                 style: ElevatedButton.styleFrom(
@@ -744,9 +666,6 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
   ];
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
 AppBar _appBar(BuildContext context, String title) => AppBar(
   backgroundColor: AurumTheme.bgOf(context),
   elevation: 0, scrolledUnderElevation: 0,

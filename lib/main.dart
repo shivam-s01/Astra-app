@@ -5,49 +5,12 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════════════════
-// NOTICE FOR ANY FUTURE EDITS TO THIS FILE (human or AI assistant):
-//
-// The "Full Player swipe-dismiss leaves a gray/black layer over the whole
-// screen" bug (root cause: _FullPlayerRouteBackdrop in home_screen.dart
-// not hiding itself before the pop's reverse transition finished) has
-// been diagnosed AND FIXED. The fix lives in home_screen.dart
-// (_FullPlayerRouteBackdropState listening to the route's own
-// AnimationStatus and hiding on `reverse`/`dismissed`) and in
-// mini_player.dart (offline/local artwork paths no longer falling back to
-// a flat gray tint).
-//
-// While hunting that bug, this file temporarily carried debug-only code:
-// a `_kDebugRouteStack` flag, an in-memory `aurumDebugRouteLog` list, an
-// `_AurumDebugRouteObserver` NavigatorObserver logging every push/pop, and
-// an always-on-top purple bug-report button (MaterialApp.builder) that
-// opened a "Route log" AlertDialog. ALL of that has been removed — it was
-// diagnostic scaffolding only, not part of the fix itself, and left in a
-// release build it is dead weight at best and a source of new problems at
-// worst (e.g. the bug-report button was hard-coded always-visible and sat
-// above every route in the app).
-//
-// DO NOT reintroduce that debug observer/button/dialog to "help find" a
-// related bug. If a similar full-screen overlay/backdrop issue resurfaces:
-//   1. It is almost certainly in _FullPlayerRouteBackdrop
-//      (home_screen.dart) or in one of the ColoredBox/BackdropFilter
-//      layers inside full_player_screen.dart's _DragTransform — search
-//      those first before adding new tooling.
-//   2. If new diagnostics are genuinely needed, gate them behind
-//      `kDebugMode` (from package:flutter/foundation.dart), never a
-//      hand-rolled `const bool _kDebugXxx = true` that silently ships to
-//      release builds, and remove them again before considering the bug
-//      closed — don't leave them "temporarily" in a file that gets built
-//      into a release APK.
-// ═══════════════════════════════════════════════════════════════════════
-
 import 'services/analytics_service.dart';
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:dynamic_color/dynamic_color.dart';
@@ -98,31 +61,15 @@ import 'utils/aurum_motion.dart';
 
 late NativeAudioEngine _audioEngine;
 
-/// Global navigator key — lets the notification-tap callback (which fires
-/// outside the widget tree) push the Downloads screen.
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// Global ScaffoldMessenger key — lets debug tooling (e.g. the keyboard
-// flash watchdog) and any other code without a reliable local Scaffold
-// ancestor (bottom sheets, dialogs) show a SnackBar reliably. Without
-// this, ScaffoldMessenger.of(context) inside a sheet/dialog context can
-// silently find no messenger and do nothing — which looks exactly like
-// "the bug doesn't happen" even when it still does.
 final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
 
-/// Global RouteObserver — lets FullPlayerScreen pause ambient animations
-/// whenever a route is pushed on top (lyrics, queue, options sheets).
 final RouteObserver<ModalRoute<void>> aurumRouteObserver =
     RouteObserver<ModalRoute<void>>();
 
-/// App-wide debug ErrorWidget builder: renders the actual exception text on
-/// a dark-red card, in every build mode including release, instead of a
-/// silent blank/grey box. Referenced by name (e.g. home_screen.dart's
-/// _ErrorBoundary) to restore this exact builder after a local override.
 Widget aurumDebugErrorWidgetBuilder(FlutterErrorDetails details) {
-  // Release: never show raw exception text to users. The error is already
-  // written to the on-device diagnostic log via FlutterError.onError.
   if (kReleaseMode) return const SizedBox.shrink();
   return Material(
     color: const Color(0xFF7A0000),
@@ -143,52 +90,8 @@ Future<void> main() async {
   runZonedGuarded(() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Compile the liquid glass shader (nav bar + mini player, see
-  // widgets/aurum_glass.dart) before the first frame so the very first
-  // glass surface on screen is real refracted glass immediately, not
-  // frosted-fallback for a moment while the shader warms up.
-  // (awaited below, in parallel with Hive + Supabase init — all three are
-  // independent and all must finish before runApp())
-  final shaderFuture = () async {
-    try {
-      await LiquidGlassShaders.ensureLoaded();
-    } catch (_) {} // glass falls back to its frosted look; never block startup
-  }();
-
-  // GLOBAL CRASH-VISIBILITY FIX ("Library > Artists tab totally blank in
-  // release build, no error, no empty state — despite per-widget try/catch
-  // guards added in library_screen.dart"): those guards only wrapped the
-  // WIDGET CONSTRUCTOR call site (e.g. `return _TopArtistAndCountRow(...)`),
-  // not that widget's own build() method — Flutter calls a widget's build()
-  // separately, later, as part of normal element-tree building, which is
-  // OUTSIDE any try/catch wrapped around the constructor call. So if the
-  // actual exception happens inside _TopArtistAndCountRow.build() (or
-  // _AurumArtistRow.build(), or any nested child's build()), those local
-  // guards never catch it — and Flutter's default release-mode ErrorWidget
-  // renders as a bare grey box with NO text (error details are stripped in
-  // release/profile builds by default), which inside a Sliver can easily
-  // end up looking like literally nothing at all.
-  //
-  // Overriding ErrorWidget.builder here catches ANY widget's build()
-  // exception ANYWHERE in the app — regardless of nesting depth — and
-  // renders the actual exception text, in every build mode including
-  // release. This is what finally surfaces the real crash reason instead
-  // of a silent blank screen.
   ErrorWidget.builder = aurumDebugErrorWidgetBuilder;
 
-  // SECOND SAFETY NET: ErrorWidget.builder above only fires for exceptions
-  // thrown during a widget's build() call. Two other classes of crash can
-  // STILL produce a silent blank screen in a release build without it:
-  //   1. Exceptions during LAYOUT/PAINT (a RenderObject computing size —
-  //      Flutter reports these via FlutterError.onError, not ErrorWidget).
-  //   2. Uncaught async errors (inside a Future/microtask, e.g. a
-  //      notifyListeners() callback or an addPostFrameCallback body).
-  // Both are captured here and written into the SAME on-device diagnostic
-  // log file already used for native crashes/ANRs (Settings > Diagnostic
-  // Logs already knows how to read/share this file — no adb needed). This
-  // is the fallback for the rare case a crash isn't a plain build()
-  // exception: if the screen is ever blank with no red box, this log will
-  // still have the real reason.
   final previousOnError = FlutterError.onError;
   FlutterError.onError = (FlutterErrorDetails details) {
     DiagnosticLogService.logNetworkError(
@@ -198,160 +101,42 @@ Future<void> main() async {
     previousOnError?.call(details);
   };
 
-  // THE fix for "background playback/notification unreliable on Android
-  // 13+": AndroidManifest.xml already declares POST_NOTIFICATIONS, but
-  // declaring a dangerous permission in the manifest does not grant it —
-  // Android 13+ (API 33+) requires an explicit runtime request, exactly
-  // like camera or location. Without this being granted, the system can
-  // suppress AurumMediaSessionService's foreground notification entirely,
-  // which in turn makes Android treat the service as a low-priority
-  // "invisible" background process and kill it far more aggressively.
-  // Requested here (pre-UI) because it's a lightweight, well-behaved
-  // permission_handler call with no known crash history.
-  //
-  // Storage/audio and battery-optimization permissions are intentionally
-  // NOT requested here anymore — they're requested from MainShell's first
-  // frame instead (see main_shell.dart), fully inside the widget tree
-  // after the splash animation and Flutter UI are actually up. Firing
-  // multiple permission_handler system dialogs this early, before
-  // Flutter's first frame has even been drawn, was the likely source of
-  // the crash-on-launch some devices hit — permission_handler's platform
-  // channel can be fragile if invoked before the Activity is fully
-  // attached/resumed.
-  // PERF FIX (the actual "app freezes for a second on open" cause): this
-  // request used to be `await`-ed HERE, before runApp() — which meant
-  // Flutter's very first frame couldn't even be painted until the user
-  // dismissed the system permission dialog. On a device where that
-  // dialog takes a moment to appear (or the user pauses before tapping),
-  // the entire screen just sits blank/black, which reads exactly like
-  // "the app is lagging/frozen on launch" even though nothing was
-  // actually slow — Flutter was simply never given the chance to draw
-  // anything yet.
-  // The permission itself doesn't need to be granted before any UI can
-  // show — it only affects whether the background playback notification
-  // is visible later. Fired fire-and-forget after runApp() (see bottom
-  // of this function) instead, so the splash/home UI paints immediately
-  // and the system dialog appears as a normal overlay on top of a
-  // already-visible, already-interactive app, the way permission
-  // prompts work in virtually every other Android app.
-
-  // Wake the Saavn free-tier backend the instant the app launches — by the
-  // time the user reaches Home/Search it's had a head start to warm up.
   ApiService.wakeSaavn();
 
-  // Hive init for local DB (favorites, playlists, recently played,
-  // downloads) — GENUINELY MUST stay before runApp(). MultiProvider's
-  // providers below fire their own `..init()` synchronously the instant
-  // the widget tree builds inside runApp(), and 7 of them immediately
-  // call `Hive.openBox(...)` — that throws if Hive hasn't been
-  // initialized yet. This is a real dependency, not just caution.
   final hiveFuture = Hive.initFlutter();
 
-  // Supabase init — must happen before any AuthService/Supabase.instance
-  // use. AuthProvider.init() (see MultiProvider below) runs synchronously
-  // the moment runApp() builds the widget tree and immediately touches
-  // Supabase.instance.client — deferring this past runApp() would crash
-  // instead of just being slow. In practice this call is fast (local
-  // client setup, no network round-trip of its own).
   final authFuture = () async {
     try {
       await AuthService.init();
-    } catch (_) {} // app still works fully offline/unauthenticated if this fails
+    } catch (_) {}
   }();
 
-  // Startup speed: shader compile, Hive init and Supabase init no longer run
-  // one after another — total wait is the slowest of the three, not the sum.
-  await Future.wait<void>([shaderFuture, hiveFuture, authFuture]);
+  await Future.wait<void>([hiveFuture, authFuture]);
 
-  // Data Saver must already be known when the first frame builds Home —
-  // see AudioPrefs.primeDataSaverEarly(). Never throws / never blocks long.
   try {
     await AudioPrefs.primeDataSaverEarly();
   } catch (_) {}
 
-  // Saved theme must be known before the first frame (no theme flash).
   await ThemeProvider.primeEarly();
 
   runApp(AurumApp(engine: _audioEngine = NativeAudioEngine()));
 
-  // FAST FIRST HOME (new users): start the Home shelves fetch NOW, before
-  // anything else after runApp — it runs while the user is still on the
-  // splash/onboarding screens, so by the time Home appears the strip is
-  // already cached (HomeFeedCache) and paints instantly instead of
-  // shimmering. HomeScreen's own fetch shares this in-flight request
-  // (see ApiService.fetchHomeShelvesForDisplay) — no duplicate traffic.
   unawaited(_prefetchHomeFeed());
 
-  // Re-apply the user's saved Premium Sound / Bass Boost / EQ settings to the
-  // native engine. The settings screen only pushes them when a switch is
-  // toggled, so after every cold start the switches showed ON while the engine
-  // was actually running flat (and the user had to toggle off/on to get the
-  // effect back).
   unawaited(_restoreAudioEffects());
 
-  // ── COLD-START HANG FIX — everything below used to run BEFORE runApp() ──
-  // "app open karte hi bahut lag/hang hota hai" traced to this function
-  // chaining 6+ sequential `await` calls ahead of runApp(): Hive init,
-  // SharedPreferences.getInstance() (twice), AurumHaptics.init(),
-  // SystemChrome.setPreferredOrientations(), AudioPrefs.load(). Flutter
-  // cannot paint its first frame until main() reaches runApp() — so on
-  // any device where even ONE of those calls is slow (cold disk cache,
-  // a busy plugin channel, a slow first SharedPreferences read), the
-  // screen sits completely blank for however long that chain takes,
-  // which reads exactly like "the app is frozen/hanging on launch" even
-  // though nothing had actually crashed or errored.
-  //
-  // None of the calls below affect what the very first frame needs to
-  // look correct:
-  //  • Image cache size (prefs.getDouble('max_image_cache')) only
-  //    matters once images start decoding — Flutter's own default cache
-  //    size is already a safe value for the brief window until this
-  //    runs.
-  //  • AurumHaptics.init() only affects whether the FIRST haptic tap
-  //    feels right — inconsequential before the user has touched
-  //    anything.
-  //  • SystemChrome.setPreferredOrientations([portraitUp]) — the app is
-  //    already portrait by default on the overwhelming majority of
-  //    Android phones; locking it a few dozen ms later than before is
-  //    not visually detectable.
-  //  • AudioPrefs.load() overrides static defaults that AudioPrefs
-  //    already ships with — every screen that reads them
-  //    (backAnimationsNotifier, artworkShapeNotifier, etc.) does so via
-  //    ValueNotifier/ChangeNotifier, so the UI simply starts on the
-  //    built-in defaults for a beat and live-updates the instant this
-  //    finishes, exactly like any other async-loaded preference in this
-  //    app already does.
-  //
-  // Moving all of them here — after runApp() — means the very first
-  // frame (splash screen) now paints as soon as the widget tree itself
-  // is built, with zero dependency on disk/plugin-channel speed. Each
-  // stays independently try/caught so one failing can never affect
-  // another or crash the (already-running) app.
   try {
     final prefs = await SharedPreferences.getInstance();
     final maxImgMB = prefs.getDouble('max_image_cache') ?? 100.0;
     PaintingBinding.instance.imageCache.maximumSizeBytes =
         (maxImgMB * 1024 * 1024).toInt();
-    // PERF FIX (2GB-RAM smoothness): Flutter's default imageCache.maximumSize
-    // (item count, separate from the byte-size cap above) is 1000 — on a
-    // long scroll session (Library with hundreds of tracks, or Search
-    // results) that's up to 1000 decoded image entries kept alive with
-    // their own bookkeeping/GC overhead, even while comfortably under the
-    // byte-size limit above. Artwork here is small and heavily downscaled
-    // already (see AurumArtwork._cacheSize — capped to size*2, or 220px for
-    // blurred backgrounds), so 250 entries is still generous headroom for
-    // smooth scrolling — several screens worth of visible + prefetched
-    // tiles — while meaningfully cutting the worst-case memory/GC pressure
-    // on weaker devices.
     PaintingBinding.instance.imageCache.maximumSize = 250;
   } catch (_) {}
 
-  // Startup speed: haptics, orientation lock and AudioPrefs.load (below) are
-  // independent of each other — run them together instead of back to back.
   final hapticsFuture = () async {
     try {
       await AurumHaptics.init();
-    } catch (_) {} // haptics simply fall back to 'light' behavior if this fails
+    } catch (_) {}
   }();
   final orientationFuture = () async {
     try {
@@ -359,40 +144,18 @@ Future<void> main() async {
     } catch (_) {}
   }();
 
-  // Restore Player & Audio settings (shake-to-skip, swipe-to-change,
-  // stop-on-swipe, pause-on-call, duck-on-notifications, etc.) from disk.
-  // Every screen reads these through ValueNotifier/ChangeNotifier, so the
-  // UI simply starts on AudioPrefs' built-in defaults for the brief
-  // window until this resolves, then live-updates — same pattern as
-  // every other async-loaded preference in the app.
   try {
     await Future.wait<void>([hapticsFuture, orientationFuture, AudioPrefs.load()]);
   } catch (_) {}
 
-  // Battery Saver Mode: begin listening for live battery-percentage
-  // updates immediately after prefs are loaded, so the enabled/threshold
-  // values it reads are already correct from the very first native
-  // battery event, not the hardcoded defaults. Fully synchronous/
-  // fire-and-forget internally — never blocks startup (see
-  // BatterySaverController.start()'s doc comment).
   try {
     BatterySaverController.instance.start();
   } catch (_) {}
 
-  // EXTREME DATA SAVER (2026-09-15): begin pushing AudioPrefs.
-  // dataSaverActiveNotifier down to native immediately after prefs are
-  // loaded (same placement/reasoning as BatterySaverController just
-  // above) — see DataSaverController's doc comment for what this
-  // actually narrows (native's ahead-of-need queue pre-buffering).
   try {
     DataSaverController.instance.start();
   } catch (_) {}
 
-  // NOTIFICATION PERMISSION (UX fix): used to be requested here, on the very
-  // first frame of the very first launch, before the user had seen anything
-  // — the lowest-opt-in moment possible. New users now get the prompt right
-  // AFTER onboarding finishes (see _OnboardingGate onDone); users who
-  // already completed onboarding get it once, ~20s into a later session.
   unawaited(VoicePlayService.init());
   unawaited(_askNotificationOnce(afterDelay: const Duration(seconds: 20)));
 
@@ -414,13 +177,6 @@ Future<void> main() async {
     };
   } catch (_) {}
 
-  // Push notifications ("update available" reaching users even when the
-  // app is killed — see UpdatePushService's doc comment for the full
-  // flow). Deliberately placed after NotificationService.init() (needs
-  // its "App Updates" channel to already exist for the foreground-message
-  // path) and, like every other post-runApp() block here, never blocks
-  // the cold-start path — it fails soft on its own if Firebase isn't
-  // configured for this build (see FCM_SETUP.md).
   try {
     await AnalyticsService.instance.init();
   } catch (_) {}
@@ -428,30 +184,15 @@ Future<void> main() async {
     await UpdatePushService.instance.init();
   } catch (_) {}
 
-  // ASTRA JAM deep links: astra://jam/CODE and
-  // https://astra.mmusic.workers.dev/jam/CODE open the join screen. Cold
-  // start waits a moment so onboarding / the shell are on screen first.
   try {
-    // app_links 6.x: this stream already emits the cold-start link first,
-    // so getInitialLink() is NOT also called (it caused a double push).
     AppLinks().uriLinkStream.listen(_onJamLink, onError: (_) {});
   } catch (_) {}
 
-  // Wires the native→Dart callback for PackageInstaller's async install
-  // result (see UpdateService.installApk / AurumSilentInstaller's doc
-  // comment) — has to run once at startup so the handler exists no
-  // matter when/whether the user ever opens the update dialog.
   try {
     UpdateService.wireInstallResultHandler();
   } catch (_) {}
   }, (error, stack) {
     debugPrint('[Aurum] Uncaught error: $error\n$stack');
-    // Same on-device log as the ErrorWidget/FlutterError.onError hooks
-    // above — an uncaught async error (Future/microtask, e.g. inside a
-    // notifyListeners listener or a bare `..init()` cascade) never reaches
-    // either of those, so debugPrint alone would be invisible on a release
-    // APK with no adb attached. This guarantees it's still recoverable via
-    // Settings > Diagnostic Logs.
     DiagnosticLogService.logNetworkError('uncaught_zone_error', '$error');
   });
 }
@@ -460,8 +201,6 @@ bool _jamFirstLink = true;
 String? _jamLastLink;
 int _jamLastLinkAt = 0;
 
-/// De-dupes repeated deliveries; the first (cold-start) link waits so the
-/// splash / shell are on screen before the Jam page is pushed.
 void _onJamLink(Uri uri) {
   final now = DateTime.now().millisecondsSinceEpoch;
   final key = uri.toString();
@@ -477,11 +216,8 @@ void _onJamLink(Uri uri) {
   }
 }
 
-/// Opens the Astra Jam join screen for a Jam link. Ignores anything else.
 void _handleJamLink(Uri uri) {
   try {
-    // TV sign-in links (from the TV's QR): astra://tv/CODE or
-    // https://astra.mmusic.workers.dev/tv/CODE -> Link TV screen.
     String? tvRaw;
     if (uri.scheme == 'astra' && uri.host == 'tv' && uri.pathSegments.isNotEmpty) {
       tvRaw = uri.pathSegments.first;
@@ -547,9 +283,6 @@ class AurumApp extends StatelessWidget {
           create: (_) {
             final auth = AuthProvider();
             auth.init();
-            // Keep AudioPrefs in sync so service-layer code (PlayerProvider)
-            // can check isSignedIn without a BuildContext — mirrors the
-            // isPremium wiring just below for the same reason.
             AudioPrefs.isSignedIn = auth.isSignedIn;
             auth.addListener(() => AudioPrefs.isSignedIn = auth.isSignedIn);
             return auth;
@@ -558,13 +291,6 @@ class AurumApp extends StatelessWidget {
         ChangeNotifierProvider(
           create: (_) {
             final pp = PremiumProvider();
-            // Spotify-style cross-device check: _refresh() now calls
-            // Supabase's getUser() (real network round-trip, not the
-            // locally cached session) so a payment made on another
-            // device shows up here without the user having to sign out
-            // and back in. If that check is stuck long enough to look
-            // broken rather than just "loading", let them know it's a
-            // connectivity problem, not premium being lost/denied.
             pp.onSlowNetwork = () {
               scaffoldMessengerKey.currentState?.showSnackBar(
                 SnackBar(
@@ -578,10 +304,6 @@ class AurumApp extends StatelessWidget {
               );
             };
             pp.init();
-            // Keep AudioPrefs in sync so service-layer (ApiService) can
-            // check isPremium without a BuildContext. (isPremium now
-            // drives ads only — bitrate/sync/features are all
-            // sign-in-gated, not payment-gated; see PremiumProvider.)
             pp.addListener(() => AudioPrefs.isPremium = pp.isPremium);
             return pp;
           },
@@ -589,36 +311,12 @@ class AurumApp extends StatelessWidget {
         ChangeNotifierProxyProvider2<RecentlyPlayedProvider, FavoritesProvider, PlayerProvider>(
           create: (context) {
             final p = PlayerProvider(engine);
-            // See SourceProvider.isCurrentSongLocal: lets a connectivity
-            // drop skip stopping playback when the current song is a
-            // local file, since it doesn't need network to keep playing.
             context.read<SourceProvider>().isCurrentSongLocal =
                 () => p.currentSong?.isLocal ?? false;
-            // See SourceProvider.hasPlaybackBuffer: a connectivity drop
-            // doesn't stop an online stream that still has buffered audio
-            // left to play — matches Spotify, which keeps going until the
-            // buffer is actually exhausted.
             context.read<SourceProvider>().hasPlaybackBuffer =
                 () => p.hasPlaybackBuffer;
-            // Spotify-style auto-resume: capture what was playing right
-            // before a genuine connectivity drop stops it (see
-            // onSourceChanged below), and pick it back up automatically —
-            // same song, same position — the moment connectivity
-            // genuinely returns, instead of leaving a dead stream sitting
-            // there until the user notices and taps play again.
             context.read<SourceProvider>().onReconnected = () {
               p.resumeAfterReconnect();
-              // FEATURE ("data khule to You're back online, green,
-              // Spotify-level masterpiece" — 2026-09-11): fires exactly
-              // once per genuine offline->online transition (see
-              // SourceProvider._setSource's own previous/next check,
-              // the same edge-trigger the offline snackbar below
-              // relies on) — never on every connectivity poll, and
-              // never on a manual Online tap while already online.
-              // Styled as its own green success pill (not a default
-              // grey Material SnackBar like the informational ones
-              // below) since "reconnected" is a positive, reassuring
-              // event, not a warning.
               scaffoldMessengerKey.currentState?.showSnackBar(
                 SnackBar(
                   content: Row(
@@ -653,32 +351,11 @@ class AurumApp extends StatelessWidget {
                 ),
               );
             };
-            // Auto-switch is driven by real connectivity (see
-            // SourceProvider.init()). When it flips while a song is
-            // playing, the previous source's playback (online stream URL
-            // or local file) is no longer valid for the new mode — stop
-            // it immediately instead of leaving a dead/wrong song stuck
-            // in the mini player. Captures what was playing first (see
-            // markInterruptedByNetworkLoss) so onReconnected above can
-            // pick it back up automatically once connectivity returns.
-            //
-            // FIX: engine.stop() is async and was called fire-and-forget
-            // with no error handling. If the player has nothing loaded
-            // (e.g. user toggles source before playing anything) or the
-            // native ExoPlayer call throws, that became an unhandled
-            // Future rejection that crashed the app the instant the
-            // Online/Offline pill was tapped. Now any failure is caught
-            // and swallowed — stopping playback is best-effort, it should
-            // never be able to take down the UI.
             context.read<SourceProvider>().onSourceChanged = () {
               p.markInterruptedByNetworkLoss();
               engine.stop().catchError((e, st) {
                 debugPrint('[Aurum] stop() on source change failed: $e');
               });
-              // Only an online stream gets cut (see isCurrentSongLocal
-              // above) — so if we're here, the user needs to know why
-              // their music just stopped, rather than it looking like a
-              // random freeze/crash.
               scaffoldMessengerKey.currentState?.showSnackBar(
                 SnackBar(
                   content: const Text("You're offline — playback paused"),
@@ -690,16 +367,6 @@ class AurumApp extends StatelessWidget {
                 ),
               );
             };
-            // No-auto-skip resolve policy (see AurumAudioEngine.
-            // resolveWithPatience): a slow-but-real connection never
-            // skips or stops the song on its own — the native engine
-            // just keeps quietly retrying in the background. This is
-            // purely informational so the user understands why their
-            // tap hasn't started playing yet, distinct from the offline
-            // snackbar above (which fires only when the source has
-            // genuinely switched to Offline). Edge-triggered in
-            // PlayerProvider, so this shows once per stuck episode, not
-            // once per retry.
             p.onResolveTakingLong = () {
               scaffoldMessengerKey.currentState?.showSnackBar(
                 SnackBar(
@@ -722,28 +389,14 @@ class AurumApp extends StatelessWidget {
           },
         ),
       ],
-      // DynamicColorBuilder harvests the system's wallpaper-derived
-      // ColorScheme on Android 12+ (via the platform's dynamic color APIs)
-      // and rebuilds whenever it changes — e.g. the user changes wallpaper
-      // while Aurum is open, no app restart needed. On unsupported
-      // platforms/OS versions both schemes come back null, which
-      // ThemeProvider.isDynamicAvailable checks for before ever using them.
       child: DynamicColorBuilder(
         builder: (lightDynamic, darkDynamic) {
           return Consumer2<ThemeProvider, LocaleProvider>(
             builder: (context, themeProvider, localeProvider, _) {
-          // Push the latest schemes into ThemeProvider every build. This is
-          // cheap (identical() short-circuits inside updateDynamicSchemes)
-          // and is the only path through which "Dynamic Color" mode in
-          // Settings > Appearance ever gets real colors to render with.
           WidgetsBinding.instance.addPostFrameCallback((_) {
             themeProvider.updateDynamicSchemes(lightDynamic, darkDynamic);
           });
 
-          // Single source of truth now lives on ThemeProvider (see
-          // isDarkOf's FIX comment in theme_provider.dart) — pushFullPlayer
-          // and FullPlayerScreen read the exact same method instead of each
-          // re-deriving brightness independently via Theme.of(context).
           final isDark = themeProvider.isDarkOf(context);
 
           SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
@@ -751,28 +404,12 @@ class AurumApp extends StatelessWidget {
             statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
             statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
             systemStatusBarContrastEnforced: false,
-            // Transparent, not a solid fill — the nav bar is now a floating
-            // glass capsule (see main_shell.dart's extendBody: true), with
-            // real page content visible in the margins around/behind it.
-            // A solid systemNavigationBarColor here painted a color strip
-            // that didn't match that content, which flashed as a dark/black
-            // edge during route push/pop slide transitions once the nav
-            // bar stopped being an opaque full-width bar.
             systemNavigationBarColor: Colors.transparent,
             systemNavigationBarIconBrightness:
                 isDark ? Brightness.light : Brightness.dark,
             systemNavigationBarContrastEnforced: false,
           ));
 
-          // Resolve font-aware ThemeData. Dynamic mode swaps in the
-          // wallpaper-derived Material You scheme when one is actually
-          // available (Android 12+); on any other platform/OS version it
-          // silently behaves like the normal Dark theme instead of leaving
-          // the user on a broken/blank theme.
-          // A color theme (Ocean/Forest/Sunset/Midnight/Aurora) is independent
-          // of Dark/Light/AMOLED/System: each has its own light and dark
-          // palette. Dynamic (Material You) is the only thing that overrides
-          // it — effectivePreset is `none` while Dynamic is genuinely active.
           final preset = themeProvider.effectivePreset;
           final baseLight = (themeProvider.isDynamic && lightDynamic != null)
               ? AurumTheme.dynamicTheme(lightDynamic)
@@ -789,33 +426,6 @@ class AurumApp extends StatelessWidget {
                       ? AurumTheme.presetTheme(preset)
                       : AurumTheme.darkTheme));
 
-          // FIX ("home page font playlist mai kaam nahi kar raha"): also
-          // apply the font family across every TextStyle in textTheme, not
-          // just via GoogleFonts.xTextTheme() — see the doc comment on
-          // resolvedFontFamily in theme_provider.dart for why textTheme
-          // alone left every hardcoded `const TextStyle(...)` screen
-          // (home_screen.dart's playlist cards included) stuck on the
-          // system font.
-          //
-          // FIX (build error: "The named parameter 'fontFamily' isn't
-          // defined" / "'fontFamilyFallback' isn't defined" —
-          // undefined_named_parameter on lib/main.dart:492-498): the
-          // previous version of this fix called
-          // `baseLight.copyWith(fontFamily: ..., fontFamilyFallback: ...)`.
-          // ThemeData.copyWith() has no such parameters — fontFamily /
-          // fontFamilyFallback only exist on ThemeData's own default
-          // constructor, not on copyWith(). That's not a typo-level
-          // mistake either; Flutter's ThemeData intentionally omits them
-          // from copyWith() because they're meant to be consumed into
-          // textTheme up front, not stored/re-applied as loose top-level
-          // fields later. TextTheme.apply(fontFamily: ...) is the
-          // supported way to push a family onto every style in a
-          // TextTheme after the fact, so that's what resolvedFontFamily is
-          // folded into here instead, ONLY when a family is actually
-          // selected — when it's null (system-default font style), the
-          // resolved textTheme is used as-is, since apply(fontFamily:
-          // null) would be a no-op anyway and skipping it avoids any
-          // unnecessary TextTheme rebuild on the common default path.
           final resolvedFamily = themeProvider.resolvedFontFamily;
           final resolvedFallback = themeProvider.resolvedFontFamilyFallback;
 
@@ -848,15 +458,6 @@ class AurumApp extends StatelessWidget {
               GlobalWidgetsLocalizations.delegate,
               GlobalCupertinoLocalizations.delegate,
             ],
-            // If locale is null (user hasn't picked one — "follow system"),
-            // Flutter tries to match the device's system locale against
-            // supportedLocales. If the device is set to a language Aurum
-            // doesn't ship translations for (e.g. German), this callback
-            // falls back to English rather than Flutter's default behavior
-            // of falling back to the first supportedLocales entry
-            // regardless of fit — same practical result here since English
-            // is first, but explicit so this doesn't silently break if the
-            // list order ever changes.
             localeResolutionCallback: (deviceLocale, supported) {
               if (deviceLocale != null) {
                 for (final l in supported) {
@@ -865,21 +466,6 @@ class AurumApp extends StatelessWidget {
               }
               return const Locale('en');
             },
-            // Splash is fully native now — see the doc comment on
-            // `home:` below for why any Dart-side splash overlay was
-            // removed entirely (it would restart/double-play alongside
-            // the native OS splash instead of running once, smoothly).
-            // Cross-fades dark/light/AMOLED + accent color changes instead
-            // of the previous instant one-frame swap. MaterialApp already
-            // builds the correct Theme internally (theme/darkTheme/
-            // themeMode above); `child` here is that already-resolved
-            // subtree. Re-reading Theme.of(context) and animating it with
-            // AnimatedTheme smoothly interpolates every color that reads
-            // through Theme.of(context) — which is virtually all of
-            // aurum_theme.dart's *Of(context) helpers (scaffoldBackground
-            // Color, colorScheme.surface/onSurface, dividerColor, etc,
-            // used in 600+ places across the app) — with no changes needed
-            // at any of those call sites.
             builder: (context, child) {
               return AnimatedTheme(
                 data: Theme.of(context),
@@ -888,24 +474,6 @@ class AurumApp extends StatelessWidget {
                 child: child ?? const SizedBox.shrink(),
               );
             },
-            // Splash: native OS splash (styles.xml, animationDuration=0)
-            // hands off to Flutter's first frame instantly, then
-            // SplashScreen (screens/splash_screen.dart) plays ONE
-            // ~1.9s animated "ASTRA MUSIC" wordmark reveal as an
-            // overlay on top of the already-mounted app — not a
-            // separate screen swapped in before it. This is a
-            // deliberate reintroduction of a Dart-side splash after an
-            // earlier one (_SplashOnEveryEntry) was removed — see that
-            // class's leftover doc comment further down this file for
-            // why: the old one played AFTER the native splash finished,
-            // as a fully separate ~2400ms animation with its own
-            // restart/discontinuity. SplashScreen avoids that failure
-            // mode structurally: it does not gate `child` behind
-            // itself (child is always the first thing composited, the
-            // overlay just paints on top and fades out), so there is
-            // no route swap, no rebuild-from-scratch, and no visible
-            // "restart" — one continuous motion from the instant
-            // Flutter's first frame paints.
             home: SplashScreen(
               child: _BlurShaderWarmup(
                 child: AppLockScreen(
@@ -913,28 +481,15 @@ class AurumApp extends StatelessWidget {
                 ),
               ),
             ),
-            ); // closes MaterialApp
-            }, // closes Consumer2 builder
-          ); // closes Consumer2
-        }, // closes DynamicColorBuilder builder
-      ), // closes DynamicColorBuilder
-    ); // closes MultiProvider
+            );
+            },
+          );
+        },
+      ),
+    );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// _OnboardingGate
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// Shows OnboardingScreen exactly once — on a device's genuine first launch
-// — then remembers 'onboarding_complete' in SharedPreferences forever after,
-// so every subsequent app open (including background-resume) goes straight
-// to `child` (MainShell) with zero extra delay or flicker.
-//
-// Reads the flag itself (rather than requiring main() to await it before
-// runApp()) so it never blocks the cold-start path documented above main()
-// — the flag check is a single fast SharedPreferences read that resolves
-// in the same frame or two it takes AppLockScreen above it to do the same.
 class _OnboardingGate extends StatefulWidget {
   final Widget child;
   const _OnboardingGate({required this.child});
@@ -944,7 +499,7 @@ class _OnboardingGate extends StatefulWidget {
 }
 
 class _OnboardingGateState extends State<_OnboardingGate> {
-  bool? _done; // null = still checking, true/false = resolved
+  bool? _done;
 
   @override
   void initState() {
@@ -953,7 +508,7 @@ class _OnboardingGateState extends State<_OnboardingGate> {
   }
 
   Future<void> _check() async {
-    bool done = true; // fail-open: never trap a real user on an error
+    bool done = true;
     try {
       final p = await SharedPreferences.getInstance();
       done = p.getBool('onboarding_complete') ?? false;
@@ -964,20 +519,6 @@ class _OnboardingGateState extends State<_OnboardingGate> {
   @override
   Widget build(BuildContext context) {
     if (_done == null) {
-      // FIX (black/mismatched flash right after splash fades): this used
-      // to return Scaffold(backgroundColor: AurumTheme.bgOf(context)) —
-      // the THEME's scaffold background, which can be light-mode white
-      // depending on the user's theme setting, while the splash overlay
-      // above this (SplashScreen, screens/splash_screen.dart) always
-      // paints a fixed dark background (AurumTheme.darkBg) regardless of
-      // theme. If this SharedPreferences read hadn't resolved by the
-      // instant the splash overlay finished fading out, this frame could
-      // paint a different (even light) color for a beat — read as a
-      // jarring flash. Same root cause and same fix AppLockScreen already
-      // applied to its own equivalent "_checking" frame (see that file's
-      // doc comment) — a fixed dark background matching the splash
-      // overlay exactly, so this state is visually indistinguishable from
-      // the splash and never perceptible as its own frame.
       return const Scaffold(backgroundColor: AurumTheme.darkBg);
     }
     if (_done == false) {
@@ -993,40 +534,6 @@ class _OnboardingGateState extends State<_OnboardingGate> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// _SplashOnEveryEntry — HISTORICAL NOTE (class no longer exists)
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// This project previously had a class by this name implementing a
-// Dart-side splash overlay. It was removed because it played AFTER the
-// native OS splash finished, as a fully separate ~2400ms animation,
-// producing a visible restart/discontinuity between the two.
-//
-// The Dart-side splash has since been reintroduced correctly as
-// SplashScreen (screens/splash_screen.dart, wired in MaterialApp.home
-// above) — it composites as an overlay on top of the already-mounted
-// app rather than gating a route swap, so it cannot reproduce the
-// restart bug this class's removal was fixing. See splash_screen.dart's
-// file-level doc comment for the full reasoning. Do not recreate a
-// route-swap-based splash architecture; if touching splash behavior,
-// prefer extending SplashScreen's overlay approach.
-// ─────────────────────────────────────────────────────────────────────────────
-// _BlurShaderWarmup
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// FIX (full player "3 second stuck" on open): the full player's background
-// (_StaticBlurArtwork in full_player_screen.dart) uses ImageFilter.blur at a
-// large sigma. The very FIRST time any ImageFilter.blur is painted in a
-// process's lifetime, Skia has to compile/warm that blur shader on the GPU —
-// a one-time cost that can run into the hundreds of ms to a few seconds on
-// mid-range Android GPUs. Because that first blur used to happen the moment
-// the user opened the full player, it read as the player being stuck/frozen.
-//
-// Fix: paint one throwaway 1x1 blurred box, fully offstage and invisible,
-// the moment the app's widget tree first builds (right under the splash,
-// so it's hidden either way). This forces Skia to compile the shader once,
-// harmlessly, before the user ever taps a song — so the real first open is
-// instant.
 class _BlurShaderWarmup extends StatefulWidget {
   final Widget child;
   const _BlurShaderWarmup({required this.child});
@@ -1036,24 +543,8 @@ class _BlurShaderWarmup extends StatefulWidget {
 }
 
 class _BlurShaderWarmupState extends State<_BlurShaderWarmup> {
-  // Survives hot-reload / background-resume for the process lifetime.
-  // Unlike _SplashOnEveryEntry (which needed to move off this exact
-  // static-flag pattern — see its own doc comment for why), a static
-  // flag is actually correct here: shader compilation only needs to
-  // happen once per process regardless of how many times this widget's
-  // State gets torn down and recreated further down the tree, so
-  // re-warming on a State recreation would be pure wasted cost, not a
-  // correctness bug.
   static bool _warmed = false;
 
-  // FIX (flash / full app reload): build() used to return `widget.child`
-  // directly on every build after the first, but a Stack on the very first
-  // one. Any later rebuild of this widget (e.g. MaterialApp's Consumer
-  // rebuilding on a theme/locale change) therefore swapped Stack -> child,
-  // which makes Flutter unmount and recreate the ENTIRE app underneath
-  // (AppLock, onboarding gate, MainShell, Home). The structure is now
-  // constant — `child` is always Stack index 0 — and only the throwaway
-  // warm-up box is added, then removed after it has painted.
   late bool _showWarmup;
 
   @override
@@ -1076,8 +567,6 @@ class _BlurShaderWarmupState extends State<_BlurShaderWarmup> {
       fit: StackFit.passthrough,
       children: [
         widget.child,
-        // Offstage: laid out and painted once (which is all we need to
-        // force shader compilation) but never actually shown or hit-tested.
         if (_showWarmup)
           Positioned(
           left: -100,
@@ -1086,25 +575,10 @@ class _BlurShaderWarmupState extends State<_BlurShaderWarmup> {
             child: RepaintBoundary(
               child: Stack(
                 children: [
-                  // Blur shader (nav bar, mini player, dialogs, mix/profile
-                  // screens all use BackdropFilter.blur at various sigmas —
-                  // one compile covers every sigma; Skia caches by filter
-                  // *type*, not by parameter).
                   ImageFiltered(
                     imageFilter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
                     child: const SizedBox(width: 4, height: 4),
                   ),
-                  // PERF FIX (extends the blur-only warmup above): the
-                  // "very laggy for ~1 min, then smooth" symptom wasn't
-                  // just the blur shader — Home's hero gradients, card
-                  // drop-shadows, and rounded-rect image clips (artwork,
-                  // hero cards) are each their own distinct Skia shader,
-                  // and every one of them was still compiling for the
-                  // first time exactly when the user hit it while
-                  // scrolling Home right after launch. Warming the same
-                  // small set of primitives Home actually paints with
-                  // means those first real paints on Home are no longer
-                  // "first ever" paints.
                   Container(
                     width: 4,
                     height: 4,
@@ -1143,14 +617,6 @@ class _BlurShaderWarmupState extends State<_BlurShaderWarmup> {
   }
 }
 
-
-
-
-/// Warms the REAL Home content (YT Music shelves + regional fillers) before
-/// HomeScreen exists. The standalone artist strip is no longer rendered on
-/// Home, so it is deliberately NOT prefetched (it cost ~70 requests that
-/// competed with the shelves for bandwidth). Fully fail-soft: any error just
-/// means HomeScreen fetches normally.
 Future<void> _restoreAudioEffects() async {
   try {
     final p = await SharedPreferences.getInstance();
@@ -1159,8 +625,6 @@ Future<void> _restoreAudioEffects() async {
     final norm = p.getBool('volume_normalization') ?? false;
     final bands = List.generate(10, (i) => p.getDouble('eq_band_$i') ?? 0.0);
     final customCurve = bands.any((g) => g != 0.0);
-    // Only touch the engine when something is actually enabled, so users who
-    // never use these keep audio offload (cooler, less battery).
     if (bass || norm || customCurve) {
       await _audioEngine.applyAudioEffects(
         bassBoost: bass,
@@ -1172,16 +636,12 @@ Future<void> _restoreAudioEffects() async {
       await _audioEngine.applyPremiumSound(true);
     }
   } catch (_) {
-    // Best effort — a failure here must never affect startup.
   }
 }
 
 Future<void> _prefetchHomeFeed() async {
   try {
     if (await HomeFeedCache.isHomeShelvesFresh()) return;
-    // Personalized "Similar to X" shelves read the taste profile — it must be
-    // loaded first or returning users would get (and cache) un-personalized
-    // shelves. Idempotent + cheap.
     await RecommendationEngine.load();
     final shelves = await ApiService.fetchHomeShelvesForDisplay();
     if (shelves.isNotEmpty) {
@@ -1190,8 +650,6 @@ Future<void> _prefetchHomeFeed() async {
   } catch (_) {}
 }
 
-/// Shows the system notification prompt at most once per install, and only
-/// after onboarding (so it never fires on the very first frame).
 Future<void> _askNotificationOnce({
   required Duration afterDelay,
   bool force = false,

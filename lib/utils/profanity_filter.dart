@@ -5,18 +5,9 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-/// Blocks abusive Hindi / Hinglish / English / Devanagari text in feedback.
-///
-/// Approach: normalise the text (lowercase, leet-speak, repeated letters,
-/// "m.a.d.a.r" / "m a d a r" obfuscation) and then check
-///  - SHORT words ("bc", "mc", "lund") only as whole tokens, so normal
-///    words never false-positive.
-///  - LONG words ("madarchod", "fuck") as substrings of a token, so
-///    "madarchodddd" / "motherfucker" are caught too.
 class ProfanityFilter {
   ProfanityFilter._();
 
-  // Whole-token matches only (short / ambiguous inside other words).
   static const _exact = <String>{
     'bc', 'bsdk', 'bkl', 'mkc', 'mdrchd', 'bhosda', 'bhosdi',
     'chut', 'gand', 'gandu', 'gaandu', 'lund', 'lauda', 'loda', 'lawda',
@@ -27,7 +18,6 @@ class ProfanityFilter {
     'tmkc', 'tmkb', 'gnd', 'chutia',
   };
 
-  // Matched anywhere inside a token (long enough to be unambiguous).
   static const _contains = <String>{
     'madarchod', 'madharchod', 'maderchod', 'mdarchod', 'madrchod',
     'behenchod', 'bhenchod', 'bhanchod', 'benchod', 'behnchod', 'bahenchod',
@@ -35,7 +25,6 @@ class ProfanityFilter {
     'chutiya', 'chutiye', 'chutia', 'chotiya', 'chotiye', 'chotia', 'gandmara', 'gaandmara', 'haramkhor',
     'haramzada', 'haramzade', 'haramjada', 'lundfakir', 'randike',
     'fuck', 'motherfuck', 'asshole', 'bitch', 'bastard',
-    // Devanagari
     'मादरचोद', 'बहनचोद', 'भोसड़ी', 'भोसड', 'चूतिया', 'चुतिया', 'गांडू',
     'गाण्डू', 'रंडी', 'हरामी', 'हरामखोर', 'कमीना', 'कमीने', 'बेटीचोद',
     'लौड़ा', 'लवडा', 'चोदू',
@@ -63,7 +52,6 @@ class ProfanityFilter {
   static List<String> _tokens(String raw) {
     final parts =
         _normalise(raw).split(_split).where((t) => t.isNotEmpty).toList();
-    // Merge runs of 3+ single letters: "m a d a r c h o d", "m.a.d.a.r".
     final out = <String>[];
     final run = StringBuffer();
     var runLen = 0;
@@ -71,7 +59,6 @@ class ProfanityFilter {
       if (runLen >= 3) {
         out.add(run.toString());
       } else {
-        // not an obfuscation run — keep the letters as-is
         for (final c in run.toString().split('')) {
           out.add(c);
         }
@@ -96,7 +83,6 @@ class ProfanityFilter {
   static final Set<String> _exactC = _exact.map(_collapse).toSet();
   static final Set<String> _containsC = _contains.map(_collapse).toSet();
 
-  /// True if [text] contains abusive language.
   static bool containsProfanity(String text) {
     if (text.trim().isEmpty) return false;
     for (final tok in _tokens(text)) {
@@ -106,7 +92,6 @@ class ProfanityFilter {
         if (t.contains(w)) return true;
       }
     }
-    // Cross-word obfuscation for long words only (avoids "this hit" → shit).
     final squashed =
         _collapse(_normalise(text).replaceAll(_split, ''));
     for (final w in _containsC) {

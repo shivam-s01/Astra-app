@@ -5,18 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/services/user_region.dart
-// DESCRIPTION: Country-aware feed layer. User ki chuni hui country
-//   ('onboarding_country_code', onboarding/settings me save hoti hai) ab
-//   asli feed ko drive karti hai:
-//     * YouTube Music `gl` (home/search/browse region)
-//     * fallback "Similar to" starter artists (naye user ke liye)
-//     * fallback home shelves (country-local queries)
-//   Sab in-memory cached — sirf ek baar SharedPreferences read hota hai, phir
-//   sab sync. Koi extra network call nahi, low-end device pe bhi free.
-// =============================================================================
-
 import 'package:shared_preferences/shared_preferences.dart';
 
 class RegionShelfSeed {
@@ -37,11 +25,9 @@ class UserRegion {
   static String _name = 'India';
   static bool _loaded = false;
 
-  /// ISO country code (upper-case), e.g. 'IN', 'US'. Sync after load().
   static String get code => _code;
   static String get name => _name;
 
-  /// Call once at startup / before first feed fetch. Idempotent + cheap.
   static Future<void> load() async {
     if (_loaded) return;
     try {
@@ -51,8 +37,6 @@ class UserRegion {
     _loaded = true;
   }
 
-  /// Call right after onboarding/settings changes country so the very next
-  /// feed fetch already uses it (no app restart needed).
   static void update(String? code, String? name) {
     _apply(code, name);
     _loaded = true;
@@ -69,14 +53,10 @@ class UserRegion {
     }
   }
 
-  /// YouTube `gl` value — the user's real country.
   static String get gl => _code;
 
-  /// YouTube `hl` — English UI text kept (app is English), only region moves.
   static String get hl => 'en';
 
-  // ── Region -> top-tier starter artists (naye user / thin history) ──────────
-  // Sirf real, universally-known artists; search-by-name resolve hota hai.
   static const Map<String, List<String>> _starterByCountry = {
     'IN': [
       'Arijit Singh', 'Kumar Sanu', 'Udit Narayan', 'Alka Yagnik',
@@ -152,7 +132,6 @@ class UserRegion {
     ],
   };
 
-  /// Global fallback (koi region entry nahi) — worldwide top names.
   static const List<String> _globalStarter = [
     'Taylor Swift', 'The Weeknd', 'Ed Sheeran', 'Dua Lipa', 'Drake',
     'Billie Eilish', 'Bruno Mars', 'Coldplay', 'Arijit Singh', 'Bad Bunny',
@@ -161,7 +140,6 @@ class UserRegion {
   static List<String> starterArtists() =>
       _starterByCountry[_code] ?? _globalStarter;
 
-  // ── Region -> filler home shelves (fetchHomeShelvesForDisplay fallback) ────
   static const Map<String, List<RegionShelfSeed>> _shelvesByCountry = {
     'IN': [
       RegionShelfSeed('Fresh finds, old favorites',
@@ -293,9 +271,6 @@ class UserRegion {
   static List<RegionShelfSeed> seedShelves() =>
       _shelvesByCountry[_code] ?? _globalShelves;
 
-  /// Picker ke liye curated TOP artists — country ke sabse bade naam pehle
-  /// (search results pe akela depend nahi, jo kabhi random/chhote artists la
-  /// deta tha). Starter list + global superstars, dedup.
   static List<String> topArtistsForPicker() {
     final out = <String>[];
     final seen = <String>{};

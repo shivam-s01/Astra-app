@@ -5,28 +5,8 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// PROJECT: Astra Music
-// DESCRIPTION: The official Google "G" mark, drawn with CustomPainter using
-//   Google's published brand colors (#4285F4 blue, #34A853 green, #FBBC05
-//   yellow, #EA4335 red) and standard four-quadrant geometry — the same
-//   mark used on Google's own pre-approved "Sign in with Google" button
-//   assets (see developers.google.com/identity/branding-guidelines).
-//
-//   WHY A PAINTER INSTEAD OF A BUNDLED PNG/SVG:
-//   - Zero asset weight added to the APK (a few hundred bytes of Dart code
-//     vs. a bundled image file per density bucket).
-//   - Renders pixel-perfect at any size/DPI — no upscaling blur on large
-//     displays, no wasted resolution on small ones.
-//   - Matches this app's existing pattern of vector-drawn brand marks
-//     rather than bitmap assets for iconography.
-// =============================================================================
-
 import 'package:flutter/material.dart';
 
-/// The Google "G" logomark. Use at 18-24px inside a Sign in with Google
-/// button per Google's branding guidelines (icon + "Sign in with Google"
-/// text, never the bare mark alone as the only sign-in indicator).
 class GoogleLogo extends StatelessWidget {
   const GoogleLogo({super.key, this.size = 20});
 
@@ -43,7 +23,6 @@ class GoogleLogo extends StatelessWidget {
 }
 
 class _GoogleLogoPainter extends CustomPainter {
-  // Official Google brand colors.
   static const _blue = Color(0xFF4285F4);
   static const _green = Color(0xFF34A853);
   static const _yellow = Color(0xFFFBBC05);
@@ -51,13 +30,12 @@ class _GoogleLogoPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final s = size.width / 48.0; // native art is authored on a 48x48 grid
+    final s = size.width / 48.0;
     canvas.save();
     canvas.scale(s, s);
 
     final paint = Paint()..style = PaintingStyle.fill;
 
-    // Blue: right-side arc + the horizontal crossbar of the "G".
     paint.color = _blue;
     final blue = Path()
       ..moveTo(45.12, 24.5)
@@ -72,7 +50,6 @@ class _GoogleLogoPainter extends CustomPainter {
       ..close();
     canvas.drawPath(blue, paint);
 
-    // Green: bottom arc.
     paint.color = _green;
     final green = Path()
       ..moveTo(24, 46)
@@ -86,7 +63,6 @@ class _GoogleLogoPainter extends CustomPainter {
       ..close();
     canvas.drawPath(green, paint);
 
-    // Yellow: left arc.
     paint.color = _yellow;
     final yellow = Path()
       ..moveTo(10.46, 28.02)
@@ -100,7 +76,6 @@ class _GoogleLogoPainter extends CustomPainter {
       ..close();
     canvas.drawPath(yellow, paint);
 
-    // Red: top arc.
     paint.color = _red;
     final red = Path()
       ..moveTo(24, 9.06)

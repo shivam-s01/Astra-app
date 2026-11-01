@@ -76,34 +76,11 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
-/**
- * Dynamic-Island-style overlay: a small pill sitting on the camera cutout while
- * something plays; tap it (or swipe it down) and it morphs into a full
- * "now playing" card; the card collapses again on tap-outside / tap-on-card /
- * after a few idle seconds.
- *
- * Runs entirely as a WindowManager overlay (SYSTEM_ALERT_WINDOW) and rides on
- * AurumMediaSessionService's foreground lifetime. State comes straight from
- * [AurumMediaSessionService.sharedEngine]'s ExoPlayer.
- *
- * Customization (x / y / width / height / accent) is read from the same
- * "FlutterSharedPreferences" file Dart writes, so it works with no Dart
- * isolate alive. Until the user has positioned the pill themselves - or when
- * they left it within a few dp of the camera - it is locked onto the real
- * camera hole (detected from DisplayCutout).
- *
- * Interaction model of the pill:
- *  - tap / small wobble / quick swipe down  -> open the card
- *  - press and HOLD (~0.4 s, haptic)          -> drag to reposition (magnet on camera)
- *  A plain touch can never move the pill, so it stays exactly where it belongs.
- */
 class AurumIslandService : Service() {
-
     companion object {
         private const val TAG = "AurumIslandService"
         private const val AUTO_COLLAPSE_MS = 6_000L
 
-        // Equalizer bars: scaleY range while playing / resting.
         private const val WAVE_MIN_SCALE = 0.28f
         private const val WAVE_MAX_SCALE = 1.0f
         private const val WAVE_ANIM_MIN_MS = 280L
@@ -125,11 +102,9 @@ class AurumIslandService : Service() {
         private const val CARD_SIDE_MARGIN_DP = 12f
         private const val CARD_BASE_TOP_PAD_DP = 20f
 
-        // Invisible touch margin around the visible pill (sides + bottom).
         private const val PILL_HIT_X_DP = 18f
         private const val PILL_HIT_BOTTOM_DP = 16f
 
-        // Pill gestures.
         private const val LONG_PRESS_MS = 380L
         private const val TAP_SLOP_DP = 18f
         private const val SWIPE_EXPAND_DP = 14f
@@ -144,7 +119,6 @@ class AurumIslandService : Service() {
         private const val KEY_HEIGHT = "flutter.island_height_dp"
         private const val KEY_COLOR = "flutter.island_accent_color"
 
-        // shared_preferences (Dart) stores doubles as a prefixed String.
         private const val DOUBLE_PREFIX = "VGhpcyBpcyB0aGUgcHJlZml4IGZvciBEb3VibGUu"
 
         private const val DEFAULT_X_DP = 0f
@@ -161,12 +135,10 @@ class AurumIslandService : Service() {
         @Volatile
         private var activeInstance: AurumIslandService? = null
 
-        /** Re-applies position/size/color to whatever is showing. Main thread only. */
         fun refreshCustomizationNow() {
             activeInstance?.reapplyCustomization()
         }
 
-        /** Hides/shows the overlay while Aurum's own UI is in the foreground. */
         fun setHiddenForForeground(hidden: Boolean) {
             activeInstance?.applyForegroundHidden(hidden)
         }
@@ -180,8 +152,6 @@ class AurumIslandService : Service() {
         val accentColor: Int,
     )
 
-    /** One "Up next" slot. [queueIndex] indexes the engine's queue; [window]
-     *  is a raw ExoPlayer window (used only in shuffle mode). */
     private data class UpNext(
         val exists: Boolean,
         val artUrl: String?,
@@ -189,7 +159,6 @@ class AurumIslandService : Service() {
         val window: Int,
     )
 
-    /** Live rounded-rect the card is currently clipped to while morphing. */
     private class Morph {
         var l = 0f
         var t = 0f
@@ -204,7 +173,6 @@ class AurumIslandService : Service() {
     private var expandedView: View? = null
     private var isExpanded = false
 
-    /** Windows that are animating out; tracked so onDestroy can never leak one. */
     private val dyingViews = HashSet<View>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -236,7 +204,6 @@ class AurumIslandService : Service() {
     private val thumbLoading = HashSet<String>()
     private val thumbFailed = HashSet<String>()
 
-    // Visible pill size in px (the pill window itself is bigger: hit margin).
     private var pillW = 0
     private var pillH = 0
 
@@ -246,8 +213,6 @@ class AurumIslandService : Service() {
 
     private val expandInterpolator = PathInterpolator(0.16f, 1f, 0.3f, 1f)
     private val collapseInterpolator = PathInterpolator(0.32f, 0.72f, 0f, 1f)
-
-    // ---- Prefs ------------------------------------------------------------
 
     private fun rawFloat(key: String): Float? {
         val raw = try { prefs.all[key] } catch (_: Throwable) { null }
@@ -259,9 +224,6 @@ class AurumIslandService : Service() {
         return if (v == null || v.isNaN() || v.isInfinite()) null else v
     }
 
-    /** True only when the user has really moved the pill. Never-saved and
-     *  "Reset to defaults" (x=0, y=8) both count as "not placed", so the pill
-     *  stays locked on the camera hole. */
     private fun hasCustomPosition(): Boolean {
         val x = rawFloat(KEY_X)
         val y = rawFloat(KEY_Y)
@@ -283,9 +245,6 @@ class AurumIslandService : Service() {
             DEFAULT_ACCENT
         }
 
-        // Lock onto the real camera hole when the user never placed the pill,
-        // or left it within a few dp of the hole (so "almost centered" is
-        // always exactly centered).
         val cam = findCameraCutout()
         if (cam != null) {
             val d = resources.displayMetrics.density
@@ -301,8 +260,6 @@ class AurumIslandService : Service() {
         return IslandPrefs(xDp, yDp, widthDp, heightDp, accent)
     }
 
-    /** [lockedToCamera] writes the "not placed" defaults so the pill keeps
-     *  following the real cutout instead of a frozen pixel offset. */
     private fun savePosition(xPx: Int, yPx: Int, lockedToCamera: Boolean) {
         val d = resources.displayMetrics.density
         val xDp = if (lockedToCamera) DEFAULT_X_DP.toDouble() else (xPx / d).toDouble()
@@ -313,13 +270,6 @@ class AurumIslandService : Service() {
             .apply()
     }
 
-    // ---- Camera cutout ----------------------------------------------------
-
-    /** Bounding rect (screen px) of the top camera hole/notch, or null.
-     *  Prefers the true hole outline (API 31+ cutout path) so the pill is
-     *  centered on the actual hole, then the top bounding rect, then any
-     *  cutout rect that sits in the status-bar strip. Punch-holes do NOT
-     *  touch the very top edge, so no "top == 0" assumption is made. */
     private fun findCameraCutout(): Rect? {
         cachedCutout?.let { return it }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
@@ -343,8 +293,6 @@ class AurumIslandService : Service() {
 
         var cam: Rect? = null
 
-        // 1) Exact hole outline (getCutoutPath is API 31; reflection keeps
-        //    this compiling against any SDK).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             cam = try {
                 val path = DisplayCutout::class.java.getMethod("getCutoutPath").invoke(dc) as? Path
@@ -360,11 +308,9 @@ class AurumIslandService : Service() {
                 null
             }
         }
-        // 2) Top bounding rect.
         if (cam == null) {
             cam = try { dc.boundingRectTop.takeIf { plausible(it) } } catch (_: Throwable) { null }
         }
-        // 3) Any plausible cutout rect closest to the screen center.
         if (cam == null) {
             cam = try {
                 dc.boundingRects
@@ -377,8 +323,6 @@ class AurumIslandService : Service() {
         if (cam != null) cachedCutout = cam
         return cam
     }
-
-    // ---- Service lifecycle ------------------------------------------------
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -480,8 +424,6 @@ class AurumIslandService : Service() {
         }
     }
 
-    // ---- Player state sync ------------------------------------------------
-
     private fun ensurePlayerListener() {
         val player = AurumMediaSessionService.sharedEngine?.player ?: return
         if (playerListener != null && listenedPlayer === player) return
@@ -505,7 +447,6 @@ class AurumIslandService : Service() {
         listenedPlayer = null
     }
 
-    /** Coalesces bursts of player events (queue resolves fire many) into one refresh. */
     private fun postRefresh() {
         if (refreshPosted) return
         refreshPosted = true
@@ -593,8 +534,6 @@ class AurumIslandService : Service() {
         }
     }
 
-    // ---- Small icon states ------------------------------------------------
-
     private fun updateLikeIcon(view: View) {
         val engine = AurumMediaSessionService.sharedEngine ?: return
         setLikeIcon(view, engine.isCurrentSongLiked(), animate = false)
@@ -621,13 +560,6 @@ class AurumIslandService : Service() {
         )
     }
 
-    /**
-     * Opens the system's audio-output picker (Bluetooth / speaker / cast).
-     * Android 14+: the system output-switcher dialog. Android 10-13: Settings'
-     * media-output panel. Anything else (or if those are refused by the OEM):
-     * the Bluetooth settings page. The island holds "draw over other apps",
-     * which is what allows these activities to start from the background.
-     */
     private fun openOutputSwitcher(): Boolean {
         if (Build.VERSION.SDK_INT >= 34) {
             if (showSystemOutputSwitcherApi34()) return true
@@ -695,8 +627,6 @@ class AurumIslandService : Service() {
             }
             .start()
     }
-
-    // ---- Equalizer + pill artwork pulse ----------------------------------
 
     private fun dpToPx(dp: Float): Int = (dp * resources.displayMetrics.density).roundToInt()
 
@@ -779,8 +709,6 @@ class AurumIslandService : Service() {
         setIdleBars(root)
     }
 
-    // ---- Shape helpers (outline clipping = identical shapes, zero bitmap work) ----
-
     private fun clipCircle(v: View) {
         v.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
@@ -805,14 +733,11 @@ class AurumIslandService : Service() {
         v.foreground = if (resId == null) null else getDrawable(resId)
     }
 
-    // ---- Up-next thumbnails -----------------------------------------------
-
     private fun computeUpNext(player: Player): List<UpNext> {
         val none = UpNext(false, null, -1, -1)
         val out = ArrayList<UpNext>(UP_NEXT_COUNT)
 
         if (player.shuffleModeEnabled) {
-            // Shuffle plays ExoPlayer's own order, not the queue order.
             val tl = player.currentTimeline
             var w = player.currentMediaItemIndex
             for (i in 0 until UP_NEXT_COUNT) {
@@ -888,7 +813,7 @@ class AurumIslandService : Service() {
         }
         val size = if (thumbSizePx > 0) thumbSizePx else dpToPx(64f)
         val key = "$url@$size"
-        if (iv.tag == key && iv.drawable != null) return // already showing this one
+        if (iv.tag == key && iv.drawable != null) return
         iv.tag = key
         val cached = thumbCache.get(key)
         if (cached != null && !cached.isRecycled) {
@@ -942,7 +867,6 @@ class AurumIslandService : Service() {
                 p.play()
             }
         }
-        // The engine can take a beat to move (fresh resolve); re-sync twice.
         scope.launch {
             delay(350)
             refreshFromPlayer()
@@ -952,7 +876,6 @@ class AurumIslandService : Service() {
         scheduleAutoCollapse()
     }
 
-    /** Makes the four up-next tiles identical squares that fill the card row. */
     private fun sizeQueueThumbs(view: View, cardWidthPx: Int) {
         val inner = cardWidthPx - view.paddingLeft - view.paddingRight
         val gap = dpToPx(THUMB_GAP_DP)
@@ -967,8 +890,6 @@ class AurumIslandService : Service() {
             iv.isClickable = false
         }
     }
-
-    // ---- Artwork ----------------------------------------------------------
 
     private fun setArt(iv: ImageView, bmp: Bitmap, fade: Boolean) {
         iv.background = null
@@ -1003,17 +924,12 @@ class AurumIslandService : Service() {
         artworkJob = scope.launch {
             val bmp = withContext(Dispatchers.IO) { downloadBitmap(urlString, 360) }
             if (bmp == null) {
-                // Allow a retry on the next refresh instead of staying blank.
-                // DATA FIX: this used to clear lastArtworkUrl so EVERY player refresh
-                // retried the download -- an artwork URL that keeps failing was
-                // re-fetched endlessly. Retry only after a 5 minute cool-down.
                 artworkFailedAt[urlString] = android.os.SystemClock.elapsedRealtime()
                 if (lastArtworkUrl == urlString) lastArtworkUrl = null
                 return@launch
             }
             artworkFailedAt.remove(urlString)
-            if (urlString != lastArtworkUrl) return@launch // a newer song took over
-            // Old bitmap is NOT recycled by hand: a view may still be drawing it.
+            if (urlString != lastArtworkUrl) return@launch
             lastArtworkBitmap = bmp
             pillView?.let { applyArtworkTo(it, fade = true) }
             expandedView?.let { applyArtworkTo(it, fade = true) }
@@ -1021,8 +937,6 @@ class AurumIslandService : Service() {
         }
     }
 
-    /** Downloads/decodes at the smallest power-of-two sample that still gives
-     *  at least [targetPx] on the short side (sharp, but not wasteful). */
     private fun downloadBitmap(urlString: String, targetPx: Int): Bitmap? {
         return try {
             val uri = Uri.parse(urlString)
@@ -1044,14 +958,6 @@ class AurumIslandService : Service() {
         }
     }
 
-    // ---- Customization: position / size / color ---------------------------
-
-    /**
-     * Sizes the (bigger-than-visible) pill window and the black capsule inside
-     * it. The window is centered on the capsule horizontally and shares its
-     * top edge; the extra margin is only on the sides and bottom, so the
-     * capsule's own position is exactly [IslandPrefs.xDp]/[IslandPrefs.yDp].
-     */
     private fun applyPillCustomization(root: View, params: WindowManager.LayoutParams, s: IslandPrefs) {
         currentAccent = s.accentColor
         val m = resources.displayMetrics
@@ -1077,8 +983,6 @@ class AurumIslandService : Service() {
             lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             if (changed || body.layoutParams == null) body.layoutParams = lp
 
-            // Artwork + equalizer slots are the same square, mirrored on the
-            // two caps, so the content stays concentric with the capsule.
             val slot = dpToPx((s.heightDp - 8f).coerceIn(22f, 44f))
             val inset = ((ph - slot) / 2).coerceAtLeast(dpToPx(3f))
             body.setPadding(inset, 0, inset, 0)
@@ -1108,8 +1012,6 @@ class AurumIslandService : Service() {
         currentAccent = s.accentColor
         val metrics = resources.displayMetrics
         params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        // The card always opens centered, like a real full-player card, with
-        // its top edge exactly where the pill's top edge was.
         params.x = 0
         params.y = dpToPx(s.yDp)
             .coerceIn(0, (metrics.heightPixels - dpToPx(380f)).coerceAtLeast(0))
@@ -1129,8 +1031,6 @@ class AurumIslandService : Service() {
         gd.setStroke(dpToPx(1f), Color.argb(0x30, Color.red(accent), Color.green(accent), Color.blue(accent)))
     }
 
-    /** Soft 3-stop card gradient: dark top (melts into the camera), colored
-     *  middle, deeper bottom. */
     private fun setCardColors(bg: GradientDrawable, base: Int) {
         bg.orientation = GradientDrawable.Orientation.TOP_BOTTOM
         bg.setColors(
@@ -1142,8 +1042,6 @@ class AurumIslandService : Service() {
         )
     }
 
-    /** Art-adaptive card color: sampled from the cover, darkened until white
-     *  text is comfortably readable. */
     private suspend fun tintExpandedBackground(bitmap: Bitmap) {
         val swatchColor = withContext(Dispatchers.Default) {
             val palette = Palette.from(bitmap).generate()
@@ -1158,7 +1056,6 @@ class AurumIslandService : Service() {
         val fromColor = currentExpandedTint
         currentExpandedTint = tinted
         val view = expandedView ?: return
-        // While the card is morphing, the morph reads currentExpandedTint itself.
         if (cardAnimator?.isRunning == true) return
         val bg = view.background?.mutate() as? GradientDrawable ?: return
         ValueAnimator.ofArgb(fromColor, tinted).apply {
@@ -1172,16 +1069,12 @@ class AurumIslandService : Service() {
         }
     }
 
-    // ---- Overlay windows ---------------------------------------------------
-
     private fun overlayType(): Int =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else
             @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
 
-    /** Overlay params that may sit truly at the top (over status bar AND the
-     *  camera cutout) and always receive touches there. */
     private fun baseParams(extraFlags: Int = 0): WindowManager.LayoutParams {
         val p = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -1195,8 +1088,6 @@ class AurumIslandService : Service() {
             PixelFormat.TRANSLUCENT,
         )
         p.title = "AurumIsland"
-        // No OEM default add/remove window animation: some ROMs flash the whole
-        // (card-sized) window for a few frames when an overlay is removed.
         p.windowAnimations = R.style.AurumIslandWindowAnim
         p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -1218,18 +1109,10 @@ class AurumIslandService : Service() {
                         view.animate().scaleX(1f).scaleY(1f).setDuration(140L).start()
                 }
             }
-            false // never consume: the click must still fire
+            false
         }
     }
 
-    /**
-     * Pill touch:
-     *  - tap, a small wobble, a quick swipe down, or a system-cancelled quick
-     *    press  -> expand (forgiving on purpose: the pill lives in the
-     *    status-bar strip where fingers roll and the system may steal a gesture);
-     *  - press and hold -> drag to reposition, with a magnet onto the camera.
-     * A plain touch can never move the pill.
-     */
     private fun attachPillTouch(root: View, params: WindowManager.LayoutParams) {
         val tapSlop = dpToPx(TAP_SLOP_DP)
         val swipeDist = dpToPx(SWIPE_EXPAND_DP)
@@ -1246,8 +1129,8 @@ class AurumIslandService : Service() {
         var startY = 0
         var downTime = 0L
         var dragging = false
-        var handled = false   // expand already fired for this gesture
-        var wandered = false  // moved too far to still count as a tap
+        var handled = false
+        var wandered = false
         var snappedX = false
         var snappedY = false
         var pressJob: Job? = null
@@ -1262,7 +1145,6 @@ class AurumIslandService : Service() {
             var nx = (startX + (lastX - anchorX).toInt()).coerceIn(-maxX, maxX)
             var ny = (startY + (lastY - anchorY).toInt()).coerceIn(0, (m.heightPixels - pillH).coerceAtLeast(0))
 
-            // Magnet: camera hole if we know it, else screen center.
             val cam = findCameraCutout()
             val targetX = if (cam != null) (cam.exactCenterX() - m.widthPixels / 2f).roundToInt() else 0
             val nowX = abs(nx - targetX) < (if (snappedX) magnetOut else magnetIn)
@@ -1373,8 +1255,6 @@ class AurumIslandService : Service() {
     private fun addPillView(startHidden: Boolean = false) {
         if (pillView != null) return
         val view = LayoutInflater.from(this).inflate(R.layout.island_pill, null)
-        // Collapse fades the pill in; it must never be visible (even for one
-        // frame) before that fade starts, so it is transparent BEFORE attach.
         if (startHidden) view.alpha = 0f
         val snapshot = readPrefs()
         val params = baseParams()
@@ -1383,7 +1263,7 @@ class AurumIslandService : Service() {
         view.findViewById<ImageView>(R.id.island_pill_artwork)?.let { clipCircle(it) }
         applyArtworkTo(view)
 
-        view.setOnClickListener { expand() } // accessibility / keyboard path
+        view.setOnClickListener { expand() }
         attachPillTouch(view, params)
 
         try {
@@ -1391,8 +1271,6 @@ class AurumIslandService : Service() {
             pillView = view
             view.isHapticFeedbackEnabled = true
             if (hiddenForForeground) view.visibility = View.GONE
-            // On Android < 11 the cutout is only known once a window is up;
-            // re-align to the camera then (only if the user hasn't placed it).
             if (cachedCutout == null) {
                 for (delayMs in longArrayOf(200L, 700L)) {
                     view.postDelayed({
@@ -1426,7 +1304,6 @@ class AurumIslandService : Service() {
         params.width = cardWidth
         applyCardCustomization(view, params, snapshot)
 
-        // Keep the header clear of the camera hole when the card sits at the top.
         val basePad = dpToPx(CARD_BASE_TOP_PAD_DP)
         val cam = findCameraCutout()
         val topPad = if (cam != null && params.y < cam.bottom) {
@@ -1495,8 +1372,6 @@ class AurumIslandService : Service() {
             attachPressScale(b)
             b.setOnClickListener {
                 tick(b)
-                // Hand off to the system output switcher / Bluetooth picker and
-                // fold the card away; if nothing could be opened keep it up.
                 if (openOutputSwitcher()) collapse() else scheduleAutoCollapse()
             }
         }
@@ -1519,10 +1394,9 @@ class AurumIslandService : Service() {
                 val e = engine() ?: return@setOnClickListener
                 val target = !e.isCurrentSongLiked()
                 e.triggerLikeToggle()
-                setLikeIcon(view, target, animate = true) // optimistic
+                setLikeIcon(view, target, animate = true)
                 tick(likeBtn)
                 scheduleAutoCollapse()
-                // Dart flips the authoritative state a beat later; re-sync once.
                 likeSyncJob?.cancel()
                 likeSyncJob = scope.launch {
                     delay(1_500)
@@ -1531,7 +1405,6 @@ class AurumIslandService : Service() {
             }
         }
 
-        // Up-next tiles: tap plays that exact song.
         for ((i, id) in thumbIds().withIndex()) {
             view.findViewById<ImageView>(id)?.let { thumb ->
                 attachPressScale(thumb, 0.92f)
@@ -1539,7 +1412,7 @@ class AurumIslandService : Service() {
                     tick(thumb)
                     onUpNextTapped(i)
                 }
-                thumb.isClickable = false // enabled per slot in bindThumb
+                thumb.isClickable = false
             }
         }
 
@@ -1568,7 +1441,6 @@ class AurumIslandService : Service() {
             }
         )
 
-        // Tap on the card body, or anywhere outside it, collapses it.
         view.setOnClickListener { collapse() }
         view.setOnTouchListener { _, e ->
             if (e.actionMasked == MotionEvent.ACTION_OUTSIDE) {
@@ -1580,21 +1452,12 @@ class AurumIslandService : Service() {
         }
     }
 
-    // ---- Expand / collapse ------------------------------------------------
-
     private fun tick(view: View) {
         view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
     }
 
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
-    /**
-     * True morph: the fully laid-out card is revealed through a rounded-rect
-     * mask that grows from the exact pill rectangle to the full card (and back).
-     * Content is never squashed, corners stay round, and the card color fades
-     * from the pill's pure black into the art tint - so it reads as the pill
-     * itself stretching open. [from]/[to] are "openness" values (0 = pill, 1 = card).
-     */
     private fun animateOpenness(
         view: View,
         pillRect: RectF,
@@ -1627,11 +1490,6 @@ class AurumIslandService : Service() {
             m.rad = lerp(pillRadius, cardRadius, g)
             view.invalidateOutline()
             if (bg != null) {
-                // Opening: pill-black -> art tint over the first 55% (unchanged).
-                // Closing: keep the art tint the whole way down and only reach
-                // pill-black in the last ~12% of the shrink, when the card is
-                // already pill-sized. Before, the card turned black while it was
-                // still big -> the visible "black tint" while closing.
                 val k = if (closing) (g / 0.12f).coerceIn(0f, 1f)
                         else (g / 0.55f).coerceIn(0f, 1f)
                 setCardColors(bg, ColorUtils.blendARGB(Color.BLACK, currentExpandedTint, k))
@@ -1660,13 +1518,11 @@ class AurumIslandService : Service() {
         a.start()
     }
 
-    /** The card's resting shape: a plain rounded rect that follows its size. */
     private fun installRestOutline(view: View) {
         clipRounded(view, CARD_RADIUS_DP)
         view.invalidateOutline()
     }
 
-    /** Content rises + fades in row by row while the card opens. */
     private fun staggerIn(root: View) {
         val g = root as? ViewGroup ?: return
         val lift = dpToPx(10f).toFloat()
@@ -1724,7 +1580,6 @@ class AurumIslandService : Service() {
         addExpandedView()
         val ev = expandedView
         if (ev == null) {
-            // Card failed to attach: leave the pill exactly as it was.
             Log.w(TAG, "expand aborted: card view not attached")
             return
         }
@@ -1733,7 +1588,6 @@ class AurumIslandService : Service() {
         thumbFailed.clear()
         outgoingPill?.let { tick(it) }
 
-        // Nothing of the card may show before the morph has its first frame.
         hideChildren(ev)
         ev.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
@@ -1762,7 +1616,6 @@ class AurumIslandService : Service() {
                 return true
             }
         })
-        // Safety net: if the first frame never comes, never leave an invisible card.
         scope.launch {
             delay(800)
             if (!entranceDone && expandedView === ev) {
@@ -1776,8 +1629,6 @@ class AurumIslandService : Service() {
             pillView = null
             stopWaveBars()
             dyingViews.add(outgoingPill)
-            // The card starts as an exact black copy of the pill, so the pill
-            // can fade away underneath it without any visible seam.
             outgoingPill.animate()
                 .alpha(0f)
                 .setStartDelay(50L)
@@ -1825,9 +1676,6 @@ class AurumIslandService : Service() {
         if (outgoing != null) {
             dyingViews.add(outgoing)
             val finish = {
-                // Make the card fully transparent first and only detach the
-                // window on the next animation frame, so the compositor never
-                // shows a stale card-sized black buffer for a few ms.
                 outgoing.alpha = 0f
                 outgoing.postOnAnimation {
                     dyingViews.remove(outgoing)
@@ -1839,7 +1687,6 @@ class AurumIslandService : Service() {
             if (w <= 0 || h <= 0) {
                 finish()
             } else {
-                // Content leaves first, then the card shrinks back into the pill.
                 (outgoing as? ViewGroup)?.let { g ->
                     for (i in 0 until g.childCount) {
                         g.getChildAt(i).animate().cancel()

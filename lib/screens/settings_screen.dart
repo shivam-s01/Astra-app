@@ -31,23 +31,6 @@ import '../widgets/aurum_pressable.dart';
 import '../widgets/aurum_settings_tile.dart' show AurumStaggerItem;
 import '../services/aurum_image_cache.dart';
 
-// Settings — production-grade layout.
-//
-// Design rules this screen follows:
-//  • Large title that collapses into a slim pinned bar, with a back button.
-//  • One clean account card at the top (avatar, name, email — or a clear
-//    "Sign in" action for guests).
-//  • Three tidy groups (General / Playback / System). Rows use one
-//    consistent accent-tinted icon tile, a title, a one-line subtitle and a
-//    chevron — no per-row colours, no heavy shadows, just a hairline border.
-//  • Support is its own highlighted card, and a small version footer closes
-//    the page like every shipped app does.
-//  • No runtime-downloaded fonts (the old title used GoogleFonts, which
-//    fetches a font file over the network on first open and can flash).
-//  • Every colour comes from the active theme → Light / Dark / AMOLED /
-//    dynamic colour all stay consistent.
-//
-// Navigation targets, providers and localisation keys are unchanged.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -185,10 +168,6 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Collapsing title header — one manual interpolation drives font size,
-// padding and the bottom hairline, so nothing can fight anything else.
-// ─────────────────────────────────────────────────────────────────────────
 class _CollapsingTitleDelegate extends SliverPersistentHeaderDelegate {
   final String title;
   final double topPadding;
@@ -216,10 +195,9 @@ class _CollapsingTitleDelegate extends SliverPersistentHeaderDelegate {
   @override
   Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
     final range = maxExtent - minExtent;
-    // t = 1 expanded (large title) … t = 0 collapsed (small pinned title).
     final t = range == 0 ? 0.0 : (1 - (shrinkOffset / range)).clamp(0.0, 1.0);
-    final fontSize = 20 + (14 * t); // 20 → 34
-    final titleLeft = 20 + (36 * (1 - t)); // slides right to make room for back button
+    final fontSize = 20 + (14 * t);
+    final titleLeft = 20 + (36 * (1 - t));
 
     return Container(
       decoration: BoxDecoration(
@@ -278,9 +256,6 @@ class _CollapsingTitleDelegate extends SliverPersistentHeaderDelegate {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Account card — compact and clean. Tap opens the profile page.
-// ─────────────────────────────────────────────────────────────────────────
 class _AccountCard extends StatelessWidget {
   const _AccountCard();
 
@@ -390,7 +365,6 @@ class _Avatar extends StatelessWidget {
               : Icon(Icons.person_rounded, color: accent, size: 28),
         );
 
-    // Never show a stale photo while signed out.
     final hasPhoto = signedIn && url != null && url!.isNotEmpty;
 
     return Container(
@@ -422,9 +396,6 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Section label + grouped card + row.
-// ─────────────────────────────────────────────────────────────────────────
 class _SectionLabel extends StatelessWidget {
   final String label;
   const _SectionLabel(this.label);
@@ -557,9 +528,6 @@ class _SettingsRow extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Support card — its own highlighted block, not just another row.
-// ─────────────────────────────────────────────────────────────────────────
 class _SupportCard extends StatelessWidget {
   final String title;
   final String subtitle;
@@ -639,9 +607,6 @@ class _SupportCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Version footer — read once, cached for the rest of the session.
-// ─────────────────────────────────────────────────────────────────────────
 class _VersionFooter extends StatefulWidget {
   const _VersionFooter();
 

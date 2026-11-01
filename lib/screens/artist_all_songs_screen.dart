@@ -5,18 +5,7 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/artist_all_songs_screen.dart
-// PROJECT: Aurum Music
-// DESCRIPTION: Full "all songs" page for an artist — opened from the arrow
-// icon next to ArtistScreen's "Popular" header. Shows the artist's complete
-// topSongs list (already fetched by ArtistScreen — nothing is re-fetched
-// here), no 1/2/3 index numbers, no artificial preview cap. Same
-// scaffold/SliverAppBar/MiniPlayerSlot/cacheExtent treatment as every other
-// top-level list screen in the app (LikedScreen, LibraryScreen) so this
-// reads as a first-class screen, not a stripped-down afterthought.
-// =============================================================================
-
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../theme/aurum_theme.dart';
@@ -28,31 +17,33 @@ import '../utils/aurum_haptics.dart';
 class ArtistAllSongsScreen extends StatelessWidget {
   final String artistName;
   final List<Song> songs;
+  final ValueListenable<List<Song>>? liveSongs;
 
   const ArtistAllSongsScreen({
     super.key,
     required this.artistName,
     required this.songs,
+    this.liveSongs,
   });
 
   @override
   Widget build(BuildContext context) {
+    final live = liveSongs;
+    if (live == null) return _buildPage(context, songs);
+    return ValueListenableBuilder<List<Song>>(
+      valueListenable: live,
+      builder: (context, list, _) =>
+          _buildPage(context, list.length > songs.length ? list : songs),
+    );
+  }
+
+  Widget _buildPage(BuildContext context, List<Song> songs) {
     final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // SPOTIFY-STYLE PERSISTENT MINI PLAYER — same reasoning as every
-      // other screen pushed on top of MainShell (LikedScreen, ArtistScreen
-      // itself): without this the mini player would vanish the moment the
-      // user opens this list.
       bottomNavigationBar: const MiniPlayerSlot(),
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
-        // PERF (matches artist_screen.dart/home_screen.dart's identical
-        // fix): default Sliver cacheExtent (250px) is too small once this
-        // list can run into the hundreds of tracks — a fast fling would
-        // tear down and rebuild tiles just outside that tiny buffer,
-        // showing blank/jank frames. 600 keeps scrolling smooth on a huge
-        // catalog without a heavy first frame on low-end phones.
         cacheExtent: 600,
         slivers: [
           SliverAppBar(
@@ -99,9 +90,6 @@ class ArtistAllSongsScreen extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 24),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
-                  // No showIndex/displayIndex — plain artwork + title/
-                  // artist rows only, exactly like every other bare song
-                  // list in the app (Liked Songs, playlists).
                   (context, i) => SongTile(
                     song: songs[i],
                     queue: songs,

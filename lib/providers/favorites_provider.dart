@@ -5,16 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/providers/favorites_provider.dart
-// PROJECT: Astra Music
-// VERSION: 2.0.0 — RecommendationEngine Integration
-//
-// WHAT'S NEW IN v2:
-//   ✅ toggleFavorite() fires RecommendationEngine.onFavorited/onUnfavorited
-//   ✅ All existing API unchanged — fully backward compatible
-// =============================================================================
-
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
@@ -33,20 +23,11 @@ import '../widgets/premium_gate.dart';
 
 class FavoritesProvider extends ChangeNotifier {
   static const _boxName = 'aurum_favorites';
-  // PERF/SAFETY FIX (cold-start race): see followed_artists_provider.dart's
-  // matching comment. isFavorite() already reads the in-memory _favorites
-  // list (safe, defaults to []), but the mutation methods below touch
-  // _box directly — nullable + Completer keeps those crash-safe too.
-  // The window before init() finishes is small in practice but never
-  // fully zero, so it's guarded regardless.
   Box<Map>? _box;
   final Completer<Box<Map>> _boxReady = Completer<Box<Map>>();
   List<Song> _favorites = [];
   bool _isLoading = true;
 
-  /// Injected after init so FavoritesProvider can trigger auto-downloads
-  /// when the user favorites a song with "Auto-Download Liked Songs" on.
-  /// Set from main.dart after both providers are created.
   DownloadProvider? downloadProvider;
 
   List<Song> get favorites   => List.unmodifiable(_favorites);
@@ -54,10 +35,6 @@ class FavoritesProvider extends ChangeNotifier {
   bool isFavorite(String id) => _favorites.any((s) => s.id == id);
 
   Future<void> init() async {
-    // Guard against init() being called twice on the same instance (e.g.
-    // a stray second call from some future refactor) — Completer.complete()
-    // throws "Future already completed" the second time, which would
-    // otherwise crash the app instead of safely no-op-ing.
     if (_boxReady.isCompleted) return;
     final box = await Hive.openBox<Map>(_boxName);
     _box = box;
@@ -70,35 +47,11 @@ class FavoritesProvider extends ChangeNotifier {
     _isLoading = false;
     notifyListeners();
 
-    // PRODUCTION-SMOOTHNESS FIX ("Liked Songs tap is slower than Search
-    // tap, especially the very first tap of a session"): PlayerProvider's
-    // own _prewarmUpcoming() only ever fires AFTER a song from this list
-    // is already playing — so the very first tap into Liked Songs each
-    // session had zero prewarm benefit and paid the full resolve cost live,
-    // exactly the "search feels instant, everything else doesn't" gap this
-    // is meant to close. resolveStreamUrl()'s cache is keyed by song id and
-    // has no per-screen concept, so warming it here — the instant favorites
-    // load from disk, well before the user has navigated anywhere — means
-    // by the time they actually open Liked Songs and tap the first entry,
-    // its stream URL is very often already resolved and cached, same as if
-    // PlayerProvider had already been playing through this list.
-    // Only the first few — Liked Songs can be huge, and prewarming the
-    // entire list on every cold start would be neither fast nor
-    // lightweight. resolveStreamUrl() has its own in-flight de-dup and
-    // cache-hit short circuit, and prewarmYtStream() only fires for
-    // YouTube-sourced songs (Saavn already embeds its URL) and never
-    // throws, so this is safe fire-and-forget with no effect on init()'s
-    // own timing.
     for (final song in _favorites.take(5)) {
-      ApiService.prewarmYtStream(song); // no-op under Data Saver
+      ApiService.prewarmYtStream(song);
     }
   }
 
-  // ── Like requires a Google account ─────────────────────────────────
-  // Enforced HERE (the single entry point every heart/like button, the
-  // queue, the lock-screen heart etc. goes through) so no screen can
-  // forget the gate. Un-liking is always allowed — a guest who already
-  // has local likes is never stuck with them.
   bool _loginPromptOpen = false;
 
   Future<bool> _ensureSignedInToLike() async {
@@ -110,17 +63,11 @@ class FavoritesProvider extends ChangeNotifier {
     }
     if (signedIn) return true;
 
-    // One sheet at a time (rapid double-taps must not stack sheets).
     if (_loginPromptOpen) return false;
 
-    // Lock-screen / notification heart while the app isn't in front:
-    // there is nowhere to show the sheet, so do nothing (the caller
-    // re-syncs the heart icon back to "not liked").
     final state = WidgetsBinding.instance.lifecycleState;
     if (state != null && state != AppLifecycleState.resumed) return false;
 
-    // overlay.context sits below the Navigator, MaterialApp's
-    // Localizations and every Provider — safe for sheets + l10n.
     final ctx = navigatorKey.currentState?.overlay?.context;
     if (ctx == null || !ctx.mounted) return false;
 
@@ -139,16 +86,13 @@ class FavoritesProvider extends ChangeNotifier {
   }
 
   Future<void> toggleFavorite(Song song) async {
-    // Liking (not un-liking) needs sign-in. After a successful login the
-    // like goes straight through — no second tap needed.
     if (!isFavorite(song.id)) {
       if (!await _ensureSignedInToLike()) return;
-      if (isFavorite(song.id)) return; // liked meanwhile (e.g. cloud sync)
+      if (isFavorite(song.id)) return;
     }
     if (isFavorite(song.id)) {
       await _remove(song.id);
       AnalyticsService.instance.logFavorite(song, false);
-      // Strong negative signal — user un-favorited
       if (song.source != SongSource.local) {
         RecommendationEngine.onUnfavorited(song);
       }
@@ -158,7 +102,6 @@ class FavoritesProvider extends ChangeNotifier {
       if (song.source != SongSource.local) {
         RecommendationEngine.onFavorited(song);
       }
-      // Auto-download liked songs if setting is enabled
       final p = await SharedPreferences.getInstance();
       if (p.getBool('auto_download_liked') == true &&
           song.source != SongSource.local) {
@@ -183,10 +126,6 @@ class FavoritesProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Called by SyncService after pulling from Supabase. Writes locally
-  /// only — this song just came FROM the cloud, so mirroring it straight
-  /// back up would be a wasteful (and potentially loopy, if another
-  /// device is syncing at the same moment) round trip.
   Future<void> addFromRemote(Map<String, dynamic> data) async {
     final song = Song.fromJson(data);
     if (!isFavorite(song.id)) {
@@ -197,13 +136,6 @@ class FavoritesProvider extends ChangeNotifier {
     }
   }
 
-  /// Bulk-unlike, used by Liked Songs' multi-select mode ("Select All" +
-  /// "Unlike selected"). Removing one-by-one via toggleFavorite would fire
-  /// a Hive write + notifyListeners() + a RecommendationEngine signal per
-  /// song — fine for a single tap, but a jank spike when unliking dozens
-  /// at once on a low-end device. This batches every Hive delete first
-  /// and fires exactly one notifyListeners() at the end, same pattern as
-  /// _remove() but for many ids in one pass.
   Future<void> removeMany(Iterable<String> ids) async {
     final box = _box ?? await _boxReady.future;
     for (final id in ids) {
@@ -215,11 +147,6 @@ class FavoritesProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Wipes all liked songs — local only, called on sign-out so a fresh
-  /// sign-in (same or different account) starts from an empty library
-  /// instead of showing the previous account's likes. Does not touch
-  /// Supabase; that data belongs to the account and is simply left behind
-  /// until the user signs back in and SyncService pulls it down again.
   Future<void> clearAll() async {
     final box = _box ?? await _boxReady.future;
     await box.clear();

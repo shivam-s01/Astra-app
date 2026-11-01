@@ -9,21 +9,6 @@ import 'package:flutter/material.dart';
 import '../theme/aurum_theme.dart';
 import '../utils/aurum_motion.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AurumEmptyState — Premium empty-state widget
-// • Gold icon inside a soft glowing ring, gentle breathe + float animation
-// • Title + subtitle, optional action button
-// • Used anywhere a list/grid has nothing to show: Library, Search, Liked,
-//   Queue, Downloads, History, Playlists, etc.
-//
-// Usage:
-//   AurumEmptyState(
-//     icon: Icons.favorite_border_rounded,
-//     title: 'No liked songs yet',
-//     subtitle: 'Songs you like will show up here',
-//   )
-// ─────────────────────────────────────────────────────────────────────────────
-
 class AurumEmptyState extends StatefulWidget {
   final IconData icon;
   final String title;

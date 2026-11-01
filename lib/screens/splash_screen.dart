@@ -5,69 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/splash_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Cold-start intro animation — "ASTRA MUSIC" wordmark reveal,
-//   shown once, immediately after the native OS splash hands off to
-//   Flutter's first frame, before MainShell/AppLockScreen/OnboardingGate.
-//
-//   REWRITTEN FROM WEBVIEW TO PURE DART/FLUTTER (this version): the
-//   previous implementation rendered a validated HTML/CSS/SVG preview
-//   inside a WebView for pixel-fidelity to that preview. In practice this
-//   caused exactly the class of problems a WebView is known for in a
-//   cold-start-critical path: JS engine + WebView surface startup cost
-//   before the first animation frame could even begin (felt as a black
-//   gap before the animation "starts"), and CPU/GPU-heavy per-element
-//   `filter: blur()` on ~22 animated particle divs straining WebView's
-//   compositor on mid-range/OEM-skinned devices (felt as jank/lag during
-//   the animation itself, not smooth at all). Both problems are
-//   structural to using a WebView for this — not tunable away with
-//   timing or asset changes.
-//
-//   This version reimplements the same visual beats — radial glow,
-//   gradient "ASTRA" stroke-draw + fill + sheen sweep, "MUSIC" subtitle,
-//   expanding underline, ambient drifting particles — directly with
-//   Flutter's own AnimationController + CustomPainter, so every frame is
-//   a normal Flutter frame (Skia, same rendering path as the rest of the
-//   app) with zero JS engine, zero WebView surface, and zero extra
-//   compositor layer. This removes the black-gap-before-start problem
-//   entirely (there is no separate engine to spin up — the animation IS
-//   the first Flutter frame) and the mid-animation jank (no
-//   blur-filtered DOM particles; the few particles here are plain
-//   painted circles with opacity only, cheap on every device).
-//
-//   WHY THIS EXISTS / HISTORY: main.dart previously carried a Dart-side
-//   splash (`_SplashOnEveryEntry`) that was removed because it played
-//   AFTER the native OS splash finished, as a fully separate animation —
-//   producing a visible restart/discontinuity. That is the exact
-//   "awkward" complaint this file exists to fix properly: NOT by removing
-//   the animation, but by making the native splash a true zero-length
-//   handoff (already the case — see styles.xml's
-//   windowSplashScreenAnimationDuration="0" and MainActivity.kt's
-//   installSplashScreen() comment) so this widget is the ONLY animation
-//   the user ever sees, starting the instant Flutter's first frame paints.
-//   One continuous animation, no restart, no gap.
-//
-// WIRING:
-//   - main.dart's MaterialApp.home wraps its existing subtree with this
-//     widget: SplashScreen(child: _BlurShaderWarmup(child: AppLockScreen(...))).
-//   - Shown ONLY on a true cold start (static _played flag on the State's
-//     class, same survives-hot-reload/background-resume reasoning the old
-//     _SplashOnEveryEntry doc comment used) — Home button / recents
-//     reopen skips straight to `child` with zero delay or flicker.
-//   - Respects AudioPrefs.enableAnimationsNotifier: when the user has
-//     turned off animations app-wide, this skips straight to `child` with
-//     no motion at all, consistent with every other AurumMotion-gated
-//     animation in the app.
-//   - Uses AurumTheme.darkBg for the background, matching the rest of the
-//     app exactly (no separate hex value to keep in sync anymore).
-//   - The whole timeline runs on ONE AnimationController; once it
-//     completes plus a short settle hold, this widget starts its own
-//     smooth Flutter-side opacity fade into `child` — so the intro
-//     content is never hard-cut, it dissolves.
-// =============================================================================
-
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../theme/aurum_theme.dart';
@@ -77,10 +14,6 @@ class SplashScreen extends StatefulWidget {
   final Widget child;
   const SplashScreen({super.key, required this.child});
 
-  /// Becomes true once the intro overlay is completely gone (or was never
-  /// shown: animations off / already played this process). One-time UI
-  /// hints (e.g. the Home sign-in tip) wait for this so they never pop up
-  /// underneath or during the wordmark animation. Never goes back to false.
   static final ValueNotifier<bool> finishedNotifier = ValueNotifier<bool>(false);
 
   @override
@@ -89,28 +22,15 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
-  // Survives hot-reload and background/foreground cycles for the Dart
-  // VM's lifetime — same pattern the old _SplashOnEveryEntry doc comment
-  // used. Only a genuine force-close + relaunch resets the process and
-  // clears this, giving a fresh cold-start animation next time.
   static bool _played = false;
 
   bool _showSplash = false;
   bool _controllerCreated = false;
 
-  // Master timeline for the whole intro. Every beat below (glow, draw,
-  // fill, sheen, subtitle, underline) is expressed as a fraction of this
-  // single controller's 0..1 range, so the whole sequence is driven by
-  // one Ticker — cheap, and trivially keeps every beat's relative timing
-  // locked together regardless of device frame rate.
   late final AnimationController _timeline;
   late final AnimationController _fadeController;
   late final List<_Particle> _particles;
 
-  // Total intro length before the fade-out begins. Kept comfortably over
-  // 3s end-to-end (the earlier WebView version read as "too short" at
-  // ~2.6s) — glow+draw+fill+sheen+underline settle by ~2.4s, then an
-  // explicit hold keeps the finished wordmark on screen before fading.
   static const _timelineDuration = Duration(milliseconds: 3200);
   static const _fadeOutDuration = Duration(milliseconds: 420);
 
@@ -118,16 +38,6 @@ class _SplashScreenState extends State<SplashScreen>
   static const _violet = Color(0xFFA47BFF);
   static const _paleCyan = Color(0xFF8FF6E9);
   static const _paleViolet = Color(0xFFC9A6FF);
-  // FIX (splash awkward on light theme): this was a single hardcoded
-  // near-white (#DEDCE6), correct for the dark backdrop it was designed
-  // against but nearly invisible on AurumTheme.lightBg's cream background
-  // — the "MUSIC" subtitle effectively disappeared. The ASTRA wordmark's
-  // own cyan/violet gradient stays fixed (both hues already carry enough
-  // contrast against both light and dark), only this supporting text
-  // color needs to flip. Resolved per-build from handoffBg's own
-  // brightness (see build()) rather than a separate theme lookup, so it's
-  // guaranteed to always agree with whichever background is actually
-  // painting underneath it.
   static const _musicTextColorDark = Color(0xFFDEDCE6);
   static const _musicTextColorLight = Color(0xFF2A2733);
 
@@ -178,10 +88,6 @@ class _SplashScreenState extends State<SplashScreen>
     }
     _fadeController.forward().whenComplete(() {
       if (!mounted) return;
-      // Same reasoning as before: give `child` (MainShell/Home) a couple
-      // of real painted frames underneath before removing this layer
-      // entirely, so its own first frame has settled and there's no
-      // visible "bump" the instant the splash is gone.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) setState(() => _showSplash = false);
@@ -202,16 +108,6 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    // FIX (flash / full reload right after the splash ends): this used to
-    // `return widget.child` once the splash finished, but `Stack([child,
-    // overlay])` while it was playing. Those are two DIFFERENT widget types
-    // at the same slot, so the moment _showSplash flipped to false Flutter
-    // threw away the whole app subtree underneath (AppLockScreen ->
-    // OnboardingGate -> MainShell -> Home) and rebuilt it from scratch:
-    // dark placeholder frames from AppLock/Onboarding's "checking" state,
-    // Home re-running initState + cache hydrate + shimmer. That was the
-    // ~0.5s flash on Home. `child` now ALWAYS sits at Stack index 0, and
-    // only the overlay is added/removed, so the app is never remounted.
     return Stack(
       fit: StackFit.passthrough,
       children: [
@@ -223,8 +119,6 @@ class _SplashScreenState extends State<SplashScreen>
 
   Widget _buildOverlay(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    // Same bgOf(context) as the Scaffold underneath, so removing this
-    // layer never has a color to jump across (dynamic colour included).
     final handoffBg = AurumTheme.bgOf(context);
     final musicTextColor = ThemeData.estimateBrightnessForColor(handoffBg) ==
             Brightness.dark
@@ -259,13 +153,13 @@ class _SplashScreenState extends State<SplashScreen>
 }
 
 class _Particle {
-  final double startX; // 0..1 fraction of width
-  final double startYFactor; // 0..1 fraction of height (bottom-weighted)
+  final double startX;
+  final double startYFactor;
   final double size;
   final double dx;
   final double maxOpacity;
-  final double duration; // seconds, full drift loop
-  final double delay; // seconds
+  final double duration;
+  final double delay;
   final Color color;
 
   _Particle({
@@ -280,16 +174,6 @@ class _Particle {
   });
 }
 
-// Splits the master 3200ms timeline into the same relative beats the
-// original HTML used, scaled by the same factor (3.2/2.6) onto every
-// beat so relative timing matches the HTML version exactly, not just
-// approximately:
-//   glow:        0.12s -> 2.34s   (fade+scale in, stays)
-//   stroke draw: 0.19s -> 1.85s
-//   fill-in:     1.54s -> 2.15s
-//   sheen sweep: 1.91s -> 3.2s   (capped to timeline end, was 3.26s)
-//   subtitle:    1.66s -> 2.40s
-//   underline:   2.09s -> 2.95s   (then a settle hold to 3.2s)
 class _SplashContent extends StatelessWidget {
   final AnimationController timeline;
   final List<_Particle> particles;
@@ -324,17 +208,6 @@ class _SplashContent extends StatelessWidget {
     return Stack(
       alignment: Alignment.center,
       children: [
-        // Ambient particles, painted once via CustomPaint driven by the
-        // same timeline — no per-particle widgets, no blur filters, just
-        // plain painted circles with animated opacity/position. Cheap on
-        // every device, unlike the old blur-filtered DOM particle divs.
-        // FIX (smoothness polish): wrapped in RepaintBoundary so this
-        // layer's frequent repaints get their own GPU-cached compositor
-        // layer instead of forcing the wordmark/glow layers next to it to
-        // be re-rasterized as part of the same paint pass. Cheap and safe
-        // — three independent, isolated repaint surfaces instead of one
-        // shared one, which is what "top-level smooth" actually requires
-        // once per-frame CPU cost (fixed above) is no longer the bottleneck.
         Positioned.fill(
           child: RepaintBoundary(
             child: AnimatedBuilder(
@@ -351,7 +224,6 @@ class _SplashContent extends StatelessWidget {
             ),
           ),
         ),
-        // Soft radial glow behind the wordmark.
         RepaintBoundary(
           child: AnimatedBuilder(
             animation: timeline,
@@ -383,8 +255,6 @@ class _SplashContent extends StatelessWidget {
             },
           ),
         ),
-        // Wordmark column: ASTRA (stroke-draw -> gradient fill -> sheen),
-        // MUSIC subtitle, underline.
         RepaintBoundary(
           child: AnimatedBuilder(
             animation: timeline,
@@ -455,31 +325,6 @@ class _SplashContent extends StatelessWidget {
   }
 }
 
-/// Paints the "ASTRA" wordmark stroke-draw -> gradient-fill -> sheen-sweep
-/// sequence. Mirrors the original SVG's three-layer approach (stroke path,
-/// filled text, clipped sheen highlight) but as one CustomPainter — a
-/// single paint call per frame instead of separate composited SVG/DOM
-/// layers, which is what made the WebView version comparatively heavy.
-///
-/// FIX (janky/heavy animation, root cause): the previous version built a
-/// brand-new TextPainter — including a full ..layout() call, i.e. real
-/// text shaping/measurement — up to THREE times per paint() call (one
-/// `measureTp` just for centering, plus one each for the stroke and fill
-/// layers), and paint() runs on every single animation tick: 60 times a
-/// second for the full 3.2s timeline. That's ~180 text-shaping layout
-/// passes a second competing with the rest of the frame's raster work,
-/// which is exactly what reads as jank/heaviness on mid-range devices —
-/// nothing about the visuals themselves was heavy, the *shaping* was
-/// being redone for no reason every frame.
-///
-/// The text ("ASTRA"), its style, and its size never change during the
-/// animation — only drawT/fillT/sheenT (paint-time opacity/clip/shader
-/// values) do. So every TextPainter this class needs is now built ONCE,
-/// cached on the painter instance, and only rebuilt if `size` genuinely
-/// changes (e.g. a rotation/orientation change) via the didUpdateSize
-/// check in shouldRepaint. Steady-state frames now do zero layout calls —
-/// paint() only positions/clips/shades already-laid-out TextPainters,
-/// which is the actual cheap, smooth, top-tier-feeling path.
 class _WordmarkPainter extends CustomPainter {
   final double drawT;
   final double fillT;
@@ -489,11 +334,6 @@ class _WordmarkPainter extends CustomPainter {
   final Color paleCyan;
   final Color paleViolet;
 
-  // Cache is keyed by fontSize (the only input that can legitimately
-  // change what needs laying out) and lives for the lifetime of this
-  // painter instance's underlying RenderObject — Flutter reuses the same
-  // CustomPaint's painter identity across rebuilds within one screen size,
-  // so this survives across all ~192 frames of one splash playthrough.
   static double? _cachedFontSize;
   static TextPainter? _cachedMeasureTp;
   static TextPainter? _cachedStrokeTp;
@@ -515,7 +355,7 @@ class _WordmarkPainter extends CustomPainter {
   void _ensureLayout(Size size) {
     final fontSize = size.height * (118 / 160);
     if (_cachedFontSize == fontSize && _cachedMeasureTp != null) {
-      return; // Already laid out for this size — zero work this frame.
+      return;
     }
     const text = 'ASTRA';
     final gradient = LinearGradient(
@@ -551,11 +391,6 @@ class _WordmarkPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
     )..layout();
 
-    // Fill layer's opacity is baked into `color` in the old version, which
-    // forced a relayout every frame just to change opacity. Opacity is a
-    // pure paint-time property — laid out once at full white here, then
-    // modulated per-frame via saveLayer's paint alpha in paint() instead,
-    // which needs no relayout at all.
     final fillStyle = baseStyle.copyWith(
       foreground: Paint()
         ..shader = shader
@@ -581,10 +416,6 @@ class _WordmarkPainter extends CustomPainter {
     final offset = _cachedOffset!;
     final textRect = _cachedTextRect!;
 
-    // Layer 1: stroke outline "drawing on" — approximated by clipping the
-    // gradient-stroked text to a left-to-right reveal, which reads as the
-    // same left-to-right materialization as the original stroke-dasharray
-    // animation without needing per-glyph path extraction.
     if (drawT > 0) {
       canvas.save();
       canvas.clipRect(Rect.fromLTWH(
@@ -597,8 +428,6 @@ class _WordmarkPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // Layer 2: gradient fill fading in on top once the draw is done.
-    // Opacity applied at paint-time via saveLayer's alpha — no relayout.
     if (fillT > 0) {
       canvas.saveLayer(
         textRect.inflate(20),
@@ -608,12 +437,6 @@ class _WordmarkPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // Layer 3: diagonal sheen highlight sweeping left-to-right, clipped to
-    // the text's bounding box so it only ever shows up layered under the
-    // already-shaped glyphs painted above (matches the SVG clipPath idea
-    // closely enough — nothing outside real glyph coverage is visible
-    // regardless of this rectangular clip, since paint order puts the
-    // sheen beneath nothing wider than the glyphs themselves).
     if (sheenT > 0 && sheenT < 1 && fillT > 0.99) {
       canvas.save();
       canvas.clipRect(textRect);
@@ -644,9 +467,6 @@ class _WordmarkPainter extends CustomPainter {
   }
 }
 
-/// Plain painted particles — opacity + position only, no blur filters.
-/// Cheap to paint every frame even on weaker devices, unlike the previous
-/// WebView version's ~18-22 `filter: blur()` DOM elements.
 class _ParticlePainter extends CustomPainter {
   final List<_Particle> particles;
   final double elapsedSeconds;

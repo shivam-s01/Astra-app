@@ -5,24 +5,12 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/link_tv_screen.dart
-// DESCRIPTION: Settings -> Link TV. Approve a TV sign-in: scan the QR shown on
-//   the Astra TV (or type its code), confirm, done — no email/password on the
-//   TV. The phone hands the TV a fresh Google ID token through the
-//   tv_pair_approve() Supabase function; the TV signs in as the same user with
-//   its own session.
-// =============================================================================
-
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/auth_service.dart';
 
-/// Pulls the 8-char pairing code out of a scanned/pasted value: a bare code,
-/// astra://tv/CODE or https://astra.mmusic.workers.dev/tv/CODE. Returns null
-/// when it doesn't look like a TV code.
 String? parseTvCode(String? raw) {
   if (raw == null) return null;
   var s = raw.trim();
@@ -45,10 +33,8 @@ class LinkTvScreen extends StatefulWidget {
 class _LinkTvScreenState extends State<LinkTvScreen> {
   final TextEditingController _input = TextEditingController();
   MobileScannerController? _scanner;
-  // Camera is OFF until the user taps "Scan QR code" — opening this screen
-  // must never jump straight into the camera.
   bool _scanning = false;
-  String? _pendingCode; // scanned/typed, waiting for the user's Approve tap
+  String? _pendingCode;
   bool _busy = false;
   bool _done = false;
   String? _message;
@@ -73,8 +59,6 @@ class _LinkTvScreenState extends State<LinkTvScreen> {
     });
   }
 
-  /// Turns the camera fully off (widget removed first, controller disposed
-  /// after the frame so the preview never touches a disposed controller).
   void _stopScanner() {
     final c = _scanner;
     _scanner = null;
@@ -98,9 +82,6 @@ class _LinkTvScreenState extends State<LinkTvScreen> {
     for (final b in capture.barcodes) {
       final code = parseTvCode(b.rawValue);
       if (code != null) {
-        // Never auto-approve: the user must see the code and confirm, so a
-        // QR shown by someone else can't silently link THEIR TV to this
-        // account.
         if (!mounted) return;
         setState(() {
           _stopScanner();
@@ -169,7 +150,6 @@ class _LinkTvScreenState extends State<LinkTvScreen> {
     });
   }
 
-  // Shown instead of a live camera until the user asks for it.
   Widget _buildScanCard(TextTheme text, ColorScheme scheme) {
     return Container(
       width: double.infinity,

@@ -5,21 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/moods_genres_screen.dart
-// PROJECT: Aurum Music
-// DESCRIPTION: Real "Moods & Genres" experience — ekdam YouTube Music jaisa.
-//   Two screens:
-//     - MoodsGenresScreen: the full colorful category grid, straight from
-//       InnerTube's own FEmusic_moods_and_genres browse (real titles, real
-//       tile colors, real browseIds — see ApiService.fetchMoodsAndGenres).
-//     - MoodGenreDetailScreen: opened on tile tap, shows that category's
-//       real curated playlist/album shelves (ApiService.fetchMoodGenreCategory)
-//       and reuses the exact same playlist->MixScreen / album->AlbumScreen
-//       tap handling home_screen.dart's real shelves already use, so tapping
-//       a card here opens a genuinely real, fully-populated playlist.
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'dart:async';
 
@@ -39,9 +24,6 @@ import '../providers/player_provider.dart';
 import '../widgets/aurum_artwork.dart';
 import 'artist_screen.dart';
 
-// Neutral fallback tile colors, cycled only when InnerTube genuinely sends
-// no `solid` color for a tile (see MoodGenreCategory.color's doc comment) —
-// never overrides a real InnerTube color when one is present.
 const List<Color> _kFallbackTileColors = [
   Color(0xFF4A3B6B),
   Color(0xFF6B3B4A),
@@ -73,9 +55,6 @@ class _MoodsGenresScreenState extends State<MoodsGenresScreen> {
     try {
       await _loadInner();
     } catch (_) {
-      // Never leave the screen on an endless spinner if a cache read or
-      // artwork top-up throws: show the normal "couldn't load" state instead
-      // (an already-showing cached grid is left untouched).
       if (mounted && (_sections == null || _sections!.isEmpty)) {
         setState(() => _failed = true);
       }
@@ -83,9 +62,6 @@ class _MoodsGenresScreenState extends State<MoodsGenresScreen> {
   }
 
   Future<void> _loadInner() async {
-    // Cache-first: show a previous successful fetch instantly (no
-    // spinner) so the grid never feels like it's waiting on network,
-    // matching how the rest of this app's real shelves already behave.
     final cached = await MoodGenreCacheStore.load();
     if (cached != null && cached.isNotEmpty && mounted) {
       setState(() {
@@ -94,10 +70,6 @@ class _MoodsGenresScreenState extends State<MoodsGenresScreen> {
       });
     }
 
-    // Only hit the network again if there's nothing cached yet, or the
-    // cache has aged past its fresh window — an already-fresh cache
-    // means the grid the user is looking at right now IS the current
-    // data, so skip the redundant fetch entirely.
     final fresh = await MoodGenreCacheStore.isFresh();
     if (cached != null && cached.isNotEmpty && fresh) return;
 
@@ -107,9 +79,6 @@ class _MoodsGenresScreenState extends State<MoodsGenresScreen> {
     }
     if (!mounted) return;
     if (sections.isEmpty) {
-      // A failed/empty refresh shouldn't wipe an already-showing cached
-      // grid — only surface the "couldn't load" state if there was
-      // nothing cached to fall back on in the first place.
       if (cached == null || cached.isEmpty) {
         setState(() => _failed = true);
       }
@@ -291,11 +260,6 @@ class _MoodGenreTileCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Category detail — real curated playlist/album shelves for one tapped
-// mood/genre tile.
-// ─────────────────────────────────────────────────────────────────────────
-
 class MoodGenreDetailScreen extends StatefulWidget {
   final MoodGenreCategory category;
   final Color tileColor;
@@ -325,8 +289,6 @@ class _MoodGenreDetailScreenState extends State<MoodGenreDetailScreen> {
       widget.category.browseId,
       widget.category.params,
     );
-    // One patient retry: an 8s timeout / transient miss used to show
-    // "Couldn't load" for categories that actually have content.
     if (shelves.isEmpty && mounted) {
       shelves = await ApiService.fetchMoodGenreCategory(
         widget.category.browseId,
@@ -344,8 +306,6 @@ class _MoodGenreDetailScreenState extends State<MoodGenreDetailScreen> {
   Future<void> _openItem(HomeShelfItem item) async {
     AurumHaptics.selection();
     if (item.isArtist) {
-      // Artist cards carry a channel id (UC...), not a playlist id — they
-      // used to fall through to MixScreen below, which can't load one.
       AurumDepthRoute.to(
         context,
         ArtistScreen(
@@ -549,8 +509,6 @@ class _CategoryItemCard extends StatelessWidget {
   }
 }
 
-// Plain song list for shelves that are playable songs/videos rather than
-// playlist/album cards (common on language pages such as Tamil).
 class _CategorySongList extends StatelessWidget {
   final HomeShelf shelf;
   const _CategorySongList({required this.shelf});

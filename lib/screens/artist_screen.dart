@@ -5,12 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/artist_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Artist page — profile header, Top Songs list, Albums/Singles grid.
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'package:aurum_music/widgets/aurum_loader.dart';
 import 'package:flutter/material.dart';
@@ -35,9 +29,6 @@ import '../l10n/generated/app_localizations.dart';
 import '../utils/aurum_haptics.dart';
 
 class ArtistScreen extends StatefulWidget {
-  /// Either a pre-resolved id — 'yt_<channelId>' or 'saavn_<id>' — or just
-  /// an artistName to resolve (tries a real YouTube channel first, Saavn
-  /// only as fallback — see ApiService.resolveArtistId).
   final String? artistId;
   final String artistName;
 
@@ -52,21 +43,34 @@ class _ArtistScreenState extends State<ArtistScreen> {
   bool _loading = true;
   bool _failed = false;
 
-  // Single scroll controller drives BOTH the top bar fade-in and the
-  // pull-down stretch. Each value lives in its own ValueNotifier so a
-  // scroll tick rebuilds only the tiny widget that needs it (the top bar /
-  // the photo transform) — never the whole page, and nothing at all once
-  // the values are clamped (a notifier ignores repeated equal values).
   final ScrollController _scroll = ScrollController();
   final ValueNotifier<double> _barT = ValueNotifier<double>(0);
   final ValueNotifier<double> _stretch = ValueNotifier<double>(0);
+  final ValueNotifier<List<Song>> _liveSongs = ValueNotifier<List<Song>>(const []);
 
   @override
   void initState() {
     super.initState();
     AnalyticsService.instance.logScreen('Artist');
     _scroll.addListener(_onScroll);
+    final id = _normalizedId(widget.artistId);
+    if (id != null) {
+      final cached = ApiService.peekCachedArtist(id);
+      if (cached != null) {
+        _artist = cached;
+        _liveSongs.value = cached.topSongs;
+        _loading = false;
+      }
+    }
     _loadStreaming();
+  }
+
+  static String? _normalizedId(String? raw) {
+    final id = raw?.trim();
+    if (id == null || id.isEmpty || id == 'yt_') return null;
+    if (id.startsWith('yt_')) return id;
+    if (RegExp(r'^UC[0-9A-Za-z_-]{20,}$').hasMatch(id)) return 'yt_$id';
+    return id;
   }
 
   @override
@@ -75,62 +79,28 @@ class _ArtistScreenState extends State<ArtistScreen> {
     _scroll.dispose();
     _barT.dispose();
     _stretch.dispose();
+    _liveSongs.dispose();
     super.dispose();
   }
 
   void _onScroll() {
     if (!_scroll.hasClients) return;
     final o = _scroll.offset;
-    // Top bar starts appearing after ~40px and is fully in by ~130px.
     final t = ((o - 40) / 90).clamp(0.0, 1.0);
     if (_barT.value != t) _barT.value = t;
     final st = o < 0 ? -o : 0.0;
     if (_stretch.value != st) _stretch.value = st;
   }
 
-  // NOTE: this screen used to call ApiService.fetchArtist() (a single
-  // await for the entire 3-stage top-up chain) via a _load() method. See
-  // _loadStreaming() below for the progressive replacement — fetchArtist
-  // itself is untouched and still used elsewhere in the app.
-
-  // PROGRESSIVE ARTIST LOAD (2026-08-31, "sirf 33 songs aa rahe hai, bahut
-  // late" fix): fetchArtist() above waits for the ENTIRE 3-stage top-up
-  // chain (browse shelf -> uploads walk, up to 25 sequential paginated
-  // calls -> final-floor search) before the screen sees anything. On a
-  // slow connection the walk's own 14s deadline cuts it short, so the
-  // single result the screen got was already a thin partial count with no
-  // sign more could still arrive. This calls the streaming variant
-  // instead: browse's shelf paints in a couple seconds (same as before,
-  // now just visible immediately instead of hidden behind the slower
-  // stages), then the uploads and final-floor top-ups each grow the list
-  // live as they land, exactly like the home feed's progressive reveal.
   Future<void> _loadStreaming() async {
     setState(() {
-      _loading = true;
+      _loading = _artist == null;
       _failed = false;
     });
     try {
-      String? id = widget.artistId;
-      // Khaali / bina channel wali id ('yt_') ko "id nahi hai" maano aur naam
-      // se resolve karo — pehle ye seedha fail hoke "Couldn't load" deti thi.
-      if (id != null && (id.trim().isEmpty || id.trim() == 'yt_')) id = null;
+      String? id = _normalizedId(widget.artistId);
       id ??= await ApiService.resolveArtistId(widget.artistName);
       if (!mounted) return;
-      // FIX ("Couldn't load Hwasa" — a Saavn backend is disabled
-      // (`_saavnDisabled = true` in api_service.dart) dead end): a
-      // non-empty `id` here isn't necessarily usable. Any id that
-      // doesn't start with 'yt_' (a stale/bare 'saavn_'-prefixed id, or
-      // any other non-YT id, e.g. from a Saavn-sourced artist card,
-      // liked list, or follow made while Saavn was still live) walks
-      // straight into fetchArtist's/_fetchArtistStreaming's
-      // `_saavnDisabled` branch, which fails fast with null and no
-      // fallback — every such artist error out with "Couldn't load
-      // <name>" forever, even though we already have the artist's real
-      // NAME right here and a perfectly good InnerTube-based resolver
-      // (resolveArtistId, the same one used two lines up when `id` was
-      // null) that doesn't touch Saavn at all. Re-resolve by name
-      // whenever the id we ended up with isn't a 'yt_' id, exactly as if
-      // no id had been passed in to begin with.
       if (id != null && !id.startsWith('yt_')) {
         id = await ApiService.resolveArtistId(widget.artistName);
         if (!mounted) return;
@@ -138,26 +108,25 @@ class _ArtistScreenState extends State<ArtistScreen> {
       if (id == null || id.isEmpty) {
         setState(() {
           _loading = false;
-          _failed = true;
+          _failed = _artist == null;
         });
         return;
       }
       var gotAny = false;
-      // FIX ("bahut jyda songs aaye" — no artificial cap): default 100
-      // was a deliberate ceiling; ask for a much higher target so the
-      // walk keeps collecting until the artist's real upload catalog
-      // (or the walk's own maxPages/time budget) genuinely runs out,
-      // not an arbitrary round number.
-      await ApiService.fetchArtistStreaming(id, songCount: 200, onUpdate: (artist) {
+      await ApiService.fetchArtistStreaming(id,
+          songCount: 200, isCancelled: () => !mounted, onUpdate: (artist) {
         if (!mounted) return;
         gotAny = true;
+        _liveSongs.value = artist.topSongs;
         setState(() {
           _artist = artist;
           _loading = false;
         });
       });
       if (!mounted) return;
-      if (!gotAny) setState(() { _loading = false; _failed = true; });
+      if (!gotAny && _artist == null) {
+        setState(() { _loading = false; _failed = true; });
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -177,14 +146,55 @@ class _ArtistScreenState extends State<ArtistScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // SPOTIFY-STYLE PERSISTENT MINI PLAYER — see liked_screen.dart's
-      // matching comment for the full reasoning.
       bottomNavigationBar: const MiniPlayerSlot(),
       body: _loading
-          ? const Center(child: AurumMorphLoader(size: 56, contained: true))
+          ? _buildLoading(context)
           : _failed
               ? _buildError(context)
               : _buildContent(context, _artist!),
+    );
+  }
+
+  Widget _buildLoading(BuildContext context) {
+    final topPad = MediaQuery.of(context).padding.top;
+    return Stack(
+      children: [
+        Positioned(
+          top: topPad + 8,
+          left: 4,
+          child: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () {
+              AurumHaptics.selection();
+              Navigator.pop(context);
+            },
+          ),
+        ),
+        Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  widget.artistName,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AurumTheme.textPrimaryOf(context),
+                    fontSize: 30,
+                    fontWeight: FontWeight.w700,
+                    height: 1.1,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              const AurumMorphLoader(size: 44, contained: true),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -244,23 +254,13 @@ class _ArtistScreenState extends State<ArtistScreen> {
         CustomScrollView(
           controller: _scroll,
           physics: const BouncingScrollPhysics(),
-          // Keeps sections built a screen-and-a-bit ahead so a fast fling
-          // never shows a half-built page.
-          // (600, not 1200: 1200 built ~15 rows in the first frame on low-end.)
           cacheExtent: 600,
           slivers: [
-            // ONE hero block that scrolls away together with the page — no
-            // parallax, no pinned/collapsing app bar. The photo, name and
-            // buttons all move at exactly the same speed as the sections
-            // below, so nothing "slides ahead" of anything else.
             SliverToBoxAdapter(
               child: _buildHero(
                   context, artist, player, followed, isFollowing, heroH, topPad),
             ),
 
-        // FEATURE: "Latest Release" hero card. Picked from data already in
-        // memory (topAlbums + singles) — zero extra network calls, so the
-        // page opens exactly as fast as before.
         if (_pickLatestRelease(artist) case final latest?)
           SliverToBoxAdapter(
             child: _ArtistLatestReleaseCard(
@@ -273,18 +273,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
           ),
 
         if (artist.topSongs.isNotEmpty) ...[
-          // FEATURE ("main page pr bs 10 songs hi show kre aur trick
-          // click pr new page khule wala sb songs ho" — top-level
-          // parity): the section header itself carries the "open full
-          // list" affordance now (a plain forward-arrow icon button —
-          // same Echo-Nightly-matched treatment home_screen.dart already
-          // uses for every shelf's "see all", so this reads as one
-          // consistent app-wide pattern instead of a one-off). No inline
-          // expand/collapse and no per-tile 1/2/3 index numbers — just a
-          // clean 10-track preview here, with ArtistAllSongsScreen owning
-          // the complete, un-numbered list. Nothing is re-fetched: both
-          // the preview and the full page read from this same
-          // artist.topSongs list ArtistScreen already has in memory.
           _sectionHeader(
             context,
             l10n.asPopular,
@@ -295,6 +283,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                 ArtistAllSongsScreen(
                   artistName: artist.name,
                   songs: artist.topSongs,
+                  liveSongs: _liveSongs,
                 ),
               );
             },
@@ -340,15 +329,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
           _albumGrid(context, artist.singles),
         ],
 
-        // FEATURE ("Fans might also like" row — YT Music parity, "ekdam
-        // YouTube se data aaye ki awkward bhi na aaye"): artist.relatedArtists
-        // is ONLY ever populated from YT Music browse's own "Fans might
-        // also like" carousel (see _fetchArtistFromYtMusicBrowse's
-        // pageType-gated extraction) — never derived, searched, or
-        // guessed client-side. Empty for the Saavn-fallback path and any
-        // artist YT Music itself doesn't show this shelf for, so this row
-        // simply doesn't render rather than ever showing an invented or
-        // loosely-matched suggestion.
         if (artist.relatedArtists.isNotEmpty) ...[
           _sectionHeader(context, l10n.asFansAlsoLike),
           _relatedArtistsRow(context, artist.relatedArtists),
@@ -373,8 +353,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
           const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
         ),
-        // Top bar: invisible at the top, fades in (solid, no blur) with the
-        // artist's name after a small scroll.
         Positioned(
           top: 0,
           left: 0,
@@ -404,34 +382,20 @@ class _ArtistScreenState extends State<ArtistScreen> {
       height: heroH,
       child: Stack(
         fit: StackFit.expand,
-        // The stretched photo and the top scrim deliberately paint above the
-        // hero box while the page is pulled down - a hard clip here is what
-        // cut them off and left a gap/seam.
         clipBehavior: Clip.none,
         children: [
-          // Photo. Pulling past the top stretches it (anchored at the
-          // bottom) so there's never an empty gap above it.
           ValueListenableBuilder<double>(
             valueListenable: _stretch,
             builder: (context, st, child) => Transform.scale(
-              // STRETCH FIX: scale must be exactly 1 + st/heroH. The hero box
-              // moves down by `st` while the photo is anchored at its bottom,
-              // so this makes the photo's top land on the screen top. The old
-              // 0.9 factor left a dark gap above the photo.
               scale: 1 + (st / heroH),
               alignment: Alignment.bottomCenter,
               child: child,
             ),
-            // Own layer: the stretch only transforms a cached texture instead
-            // of re-painting the whole hero (photo, gradients, glass) per frame.
             child: RepaintBoundary(
               child: AurumArtwork(
                   url: artist.imageUrl, size: 700, borderRadius: 0),
             ),
           ),
-          // Soft dark strip so the back arrow stays readable on bright photos.
-          // STRETCH FIX: follows the SCREEN top (top: -st) instead of the hero
-          // box top, which moves down while pulling and drew a hard seam.
           ValueListenableBuilder<double>(
             valueListenable: _stretch,
             builder: (context, st, child) => Positioned(
@@ -454,7 +418,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
               ),
             ),
           ),
-          // Long, smooth fade into the page background (no tint, no blur).
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -627,8 +590,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
           height: topPad + 56,
           child: Stack(
             children: [
-              // IgnorePointer: the (invisible) bar must never swallow drags
-              // that start near the top of the screen.
               Positioned.fill(
                 child: IgnorePointer(
                   child: Opacity(
@@ -658,7 +619,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
                               sigma: 6,
                               borderRadius: BorderRadius.circular(20),
                               isDark: true,
-                              interactive: false,
                               child: SizedBox(
                                 width: 40,
                                 height: 40,
@@ -737,12 +697,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
                 ),
               ),
             ),
-            // ECHO-NIGHTLY MATCH ("trick jaisa mark" — a plain icon, no
-            // text): identical treatment to home_screen.dart's shelf
-            // "see all" — a bare circular icon button with a
-            // forward-arrow glyph, no fill, no outline, no extra text
-            // label. Only rendered when the caller actually has a full
-            // list to open.
             if (onSeeAll != null)
               Material(
                 color: Colors.transparent,
@@ -774,24 +728,10 @@ class _ArtistScreenState extends State<ArtistScreen> {
           scrollDirection: Axis.horizontal,
           physics: const BouncingScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          // PERF (low-end device smoothness): this row decodes album
-          // artwork over the network — without a cacheExtent, a fast
-          // swipe only builds/decodes images as they cross into the
-          // viewport, showing a blank frame for a beat on a slow device
-          // before the image pops in. Pre-building ~500 logical px of
-          // off-screen album covers on each side means they're already
-          // decoded by the time they scroll into view, matching the
-          // cacheExtent used on every other horizontal artwork list in
-          // the app (song carousels, the artist strip on Home).
           cacheExtent: 500,
           itemCount: albums.length,
           itemBuilder: (context, i) {
             final a = albums[i];
-            // PERF: isolate each album card into its own compositor
-            // layer — same reasoning as _SongGridCard on Home. Without
-            // this, every card in the row repaints/relayouts alongside
-            // its siblings on every scroll frame instead of being
-            // cached as its own independent layer.
             return RepaintBoundary(
               child: Padding(
               padding: const EdgeInsets.only(right: 12),
@@ -854,8 +794,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
           scrollDirection: Axis.horizontal,
           physics: const BouncingScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          // Same off-screen decode headroom as _albumGrid's cacheExtent —
-          // identical reasoning (smooth swipe on a low-end device).
           cacheExtent: 500,
           itemCount: artists.length,
           itemBuilder: (context, i) {
@@ -866,14 +804,12 @@ class _ArtistScreenState extends State<ArtistScreen> {
                 child: GestureDetector(
                   onTap: () {
                     AurumHaptics.light();
-                    // 'yt_' prefix matches Artist.id's own convention
-                    // (see _fetchArtistFromYtMusicBrowse's `'yt_$resolvedChannelId'`)
-                    // — RelatedArtist.id is the raw browse channelId, so
-                    // it needs the same prefix ArtistScreen/fetchArtist
-                    // expect everywhere else in the app.
                     AurumDepthRoute.to(
                       context,
-                      ArtistScreen(artistId: 'yt_${a.id}', artistName: a.name),
+                      ArtistScreen(
+                        artistId: a.id.startsWith('yt_') ? a.id : 'yt_${a.id}',
+                        artistName: a.name,
+                      ),
                     );
                   },
                   child: SizedBox(
@@ -908,19 +844,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
   }
 }
 
-/// FEATURE ("Top Songs ko Show all ke saath collapse karo" — YT Music
-/// parity): shows only the first 5 songs by default (YT Music's own
-/// "Popular" preview length), with a "Show all" row that expands to the
-/// full `songs` list in place. Purely a local UI toggle — `songs` is the
-/// same complete list ArtistScreen already fetched via fetchArtist(), so
-/// expanding never re-fetches or truncates data, it only changes how much
-/// of the already-fetched list is rendered.
-// FEATURE ("main page pr bs 10 songs hi show kre" / "1 2 3 number hata
-// do" — top-level parity): plain stateless preview now — no per-tile
-// index numbering (no showIndex/displayIndex), no inline expand/collapse
-// state to own. Just the first 10 tracks; the section header's arrow
-// icon (see _sectionHeader's onSeeAll) is what opens the complete,
-// still-un-numbered list on ArtistAllSongsScreen.
 class _ArtistTopSongsSection extends StatelessWidget {
   static const int _previewCount = 10;
   final List<Song> songs;
@@ -940,8 +863,6 @@ class _ArtistTopSongsSection extends StatelessWidget {
           curatedQueue: true,
         ),
         childCount: visibleCount,
-        // PERF: SongTile owns its RepaintBoundary and has no keep-alive
-        // state; skip the delegate's duplicates.
         addRepaintBoundaries: false,
         addAutomaticKeepAlives: false,
       ),
@@ -949,12 +870,6 @@ class _ArtistTopSongsSection extends StatelessWidget {
   }
 }
 
-/// Circular outline action button flanking the artist header's central
-/// shuffle button (radio/related on the left, follow on the right) —
-/// matches the reference screenshot's row exactly: transparent fill,
-/// visible border, same 56px size as the center shuffle button. Local +
-/// stateless: no per-instance AnimationController beyond what
-/// AurumPressable already provides, keeping this cheap to build.
 class _ArtistGlassButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
@@ -985,7 +900,6 @@ class _ArtistGlassButton extends StatelessWidget {
           sigma: 6,
           borderRadius: BorderRadius.circular(24),
           isDark: Theme.of(context).brightness == Brightness.dark,
-          interactive: false,
           child: SizedBox(
             width: 48,
             height: 48,
@@ -1005,10 +919,6 @@ class _ArtistGlassButton extends StatelessWidget {
   }
 }
 
-
-/// Newest release across albums + singles. The data only carries a release
-/// YEAR, so: highest year wins; on a tie, the first entry of its own shelf
-/// (YT Music lists shelves newest-first) is used, singles before albums.
 ArtistAlbum? _pickLatestRelease(Artist artist) {
   ArtistAlbum? best;
   int bestYear = -1;
@@ -1027,9 +937,6 @@ ArtistAlbum? _pickLatestRelease(Artist artist) {
   return bestYear < 0 ? null : best;
 }
 
-/// "Latest release" card: flat surface card, cover on the left, small
-/// letter-spaced label + title + "Album \u2022 2026" on the right. No blur,
-/// no gradient — cheap to paint, and it matches the page's calm look.
 class _ArtistLatestReleaseCard extends StatelessWidget {
   final ArtistAlbum album;
   final String label;

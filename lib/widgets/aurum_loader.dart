@@ -5,12 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// aurum_loader.dart
-// Astra Music — Loading System
-// Material 3 Fluid Morphing Indeterminate Progress Bar
-// Use everywhere: AurumM3Loader() for inline, AurumM3Loader(height:6) for thick bars.
-// Mini player progress bar stays as LinearProgressIndicator — intentional.
-
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -20,39 +14,10 @@ import 'package:aurum_music/providers/theme_provider.dart';
 import 'package:aurum_music/theme/aurum_theme.dart';
 export 'package:aurum_music/widgets/aurum_morph_loader.dart';
 
-// ══════════════════════════════════════════════════════════════════
-// DESIGN TOKENS
-// ══════════════════════════════════════════════════════════════════
-
-// (Hardcoded _C color tokens removed — colors now derive from the user's
-// live accent color via ThemeProvider, see AurumM3Loader.build() above.)
-
-// ══════════════════════════════════════════════════════════════════
-// AurumM3Loader — Material 3 Fluid Morphing Indeterminate Bar
-// ══════════════════════════════════════════════════════════════════
-//
-// Two segments travel across the track with independent easing
-// so they stretch and compress organically — exactly M3 spec motion.
-// Color: gold shimmer → purple glow, with bright head highlight.
-//
-// Usage:
-//   const AurumM3Loader()                      // fill parent width, 3px tall
-//   const AurumM3Loader(height: 6)             // thicker
-//   const AurumM3Loader(width: 120, height: 2) // fixed width
-//   const AurumM3Spinner()                     // icon-sized square slot
-//   const AurumM3Spinner(size: 20)
-
-// Nudges [color] away from [surface] when their perceived brightness is
-// too close to tell apart, so an indeterminate bar/glow never visually
-// disappears into whatever it's painted on top of. Leaves [color]
-// untouched when contrast is already fine — this only kicks in for
-// accent choices that would otherwise be a near-invisible bug.
 Color _ensureContrast(Color color, Color surface) {
   final colorLum = color.computeLuminance();
   final surfaceLum = surface.computeLuminance();
   if ((colorLum - surfaceLum).abs() > 0.25) return color;
-  // Push toward white on a dark surface, toward black on a light one —
-  // whichever direction guarantees separation from the surface.
   final target = surfaceLum > 0.5 ? Colors.black : Colors.white;
   return Color.lerp(color, target, 0.45)!;
 }
@@ -96,24 +61,7 @@ class _AurumM3LoaderState extends State<AurumM3Loader>
 
   @override
   Widget build(BuildContext context) {
-    // FIX — "loading bar is a fixed purple/pink, doesn't match my chosen
-    // accent color": this used to always paint with hardcoded _C.purple
-    // tokens. Now derives light/base/dark shades from the user's live
-    // accent color (same source as the nav bar and Settings → Appearance
-    // picker), so every M3 loading bar in the app matches whatever accent
-    // is actually selected.
     final rawAccent = context.select<ThemeProvider, Color>((tp) => tp.accentColor);
-    // FIX ("search bar goes theme-colored, can't see anything while
-    // typing"): this loader (shown right under the search bar during
-    // live search) always painted using the user's raw accent color with
-    // no check against what it's sitting on. If someone picks an accent
-    // close in tone to the card/background surface, the moving bar and
-    // its surrounding glow blend almost invisibly into the search bar —
-    // it reads as the whole bar "going theme-colored" with no visible
-    // contrast to tap or read against. Guard against that by nudging the
-    // accent away from the current surface color whenever contrast is
-    // too low, so the loader (and by extension the search bar it sits
-    // in) always stays clearly visible no matter which accent is chosen.
     final surface = AurumTheme.bgCardOf(context);
     final accent = _ensureContrast(rawAccent, surface);
     final accentLight = Color.lerp(accent, Colors.white, 0.30)!;
@@ -136,16 +84,12 @@ class _AurumM3LoaderState extends State<AurumM3Loader>
       ),
     );
 
-    // If a fixed width was given, just size to it directly.
     if (widget.width != null) {
       return RepaintBoundary(
         child: SizedBox(width: widget.width, height: widget.height, child: painter),
       );
     }
 
-    // No width given — fill whatever space is available (e.g. inside
-    // Center(), which otherwise hands us unbounded width and collapses
-    // a null-width SizedBox to 0px, making the bar invisible).
     return RepaintBoundary(
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -177,7 +121,6 @@ class _M3Painter extends CustomPainter {
     final w  = size.width;
     final br = math.min(r, h / 2);
 
-    // Track
     canvas.drawRRect(
       RRect.fromRectAndRadius(Rect.fromLTWH(0, 0, w, h), Radius.circular(br)),
       Paint()..color = base.withOpacity(0.10),
@@ -192,8 +135,6 @@ class _M3Painter extends CustomPainter {
       final rect  = Rect.fromLTWH(left, 0, right - left, h);
       final rrect = RRect.fromRectAndRadius(rect, Radius.circular(br));
 
-      // Bloom glow — matches the accent color so every loading indicator
-      // in the app reads as the same single accent color the user chose.
       canvas.drawRRect(
         RRect.fromRectAndRadius(rect.inflate(h), Radius.circular(br + h)),
         Paint()
@@ -201,7 +142,6 @@ class _M3Painter extends CustomPainter {
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, h * 2),
       );
 
-      // Solid accent bar (dark -> base -> light only)
       canvas.drawRRect(rrect, Paint()
         ..shader = ui.Gradient.linear(
           Offset(left, 0), Offset(right, 0),
@@ -209,7 +149,6 @@ class _M3Painter extends CustomPainter {
           [0.0, 0.5, 1.0],
         ));
 
-      // Bright head highlight
       final headW = math.min(h * 3, right - left);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
@@ -233,10 +172,6 @@ class _M3Painter extends CustomPainter {
       o.base != base || o.light != light || o.dark != dark;
 }
 
-// ══════════════════════════════════════════════════════════════════
-// AurumM3Spinner — drop-in for icon-sized loading slots
-// ══════════════════════════════════════════════════════════════════
-
 class AurumM3Spinner extends StatelessWidget {
   const AurumM3Spinner({super.key, this.size = 28.0});
   final double size;
@@ -247,10 +182,6 @@ class AurumM3Spinner extends StatelessWidget {
     child: Center(child: AurumM3Loader(width: size, height: 2.5)),
   );
 }
-
-// ══════════════════════════════════════════════════════════════════
-// AurumLoaderScreen — full-page loading screen (uses M3 bar now)
-// ══════════════════════════════════════════════════════════════════
 
 class AurumLoaderScreen extends StatelessWidget {
   const AurumLoaderScreen({super.key, this.onCompleted});

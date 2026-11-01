@@ -25,14 +25,6 @@ class SettingsLanguageScreen extends StatefulWidget {
 }
 
 class _SettingsLanguageScreenState extends State<SettingsLanguageScreen> {
-  // Which row is mid-switch, so its own tile can show a small spinner
-  // instead of its checkmark/circle — and every row gets briefly disabled
-  // — while the locale change propagates through MaterialApp's rebuild.
-  // That rebuild reflows every localized string in the whole app in one
-  // frame, which is real work on a low-end device; a spinner here means
-  // the tap always reads as "doing something" rather than looking frozen
-  // or, worse, inviting a second tap mid-rebuild that queues up a second
-  // full-app rebuild right behind the first.
   String? _switchingTo;
 
   final TextEditingController _searchController = TextEditingController();
@@ -53,18 +45,9 @@ class _SettingsLanguageScreenState extends State<SettingsLanguageScreen> {
   }
 
   Future<void> _select(Locale? locale) async {
-    if (_switchingTo != null) return; // already mid-switch, ignore
+    if (_switchingTo != null) return;
     AurumHaptics.selection();
     setState(() => _switchingTo = locale?.languageCode ?? 'system');
-    // A deliberate ~2s hold so the M3 morph spinner actually reads as
-    // "loading" rather than flashing for a single frame — the real
-    // locale swap below is near-instant on its own (it's an in-memory
-    // rebuild), so without this pause the row would just blink. This
-    // mirrors the same "always show *something* is happening" pattern
-    // used for the account/app-data operations elsewhere in Settings,
-    // just tuned to a longer, more deliberate duration since a language
-    // switch reflows every string in the app and deserves to feel like
-    // a real transition rather than an instant snap.
     await Future.delayed(const Duration(milliseconds: 2000));
     if (!mounted) return;
     await context.read<LocaleProvider>().setLocale(locale);
@@ -86,9 +69,6 @@ class _SettingsLanguageScreenState extends State<SettingsLanguageScreen> {
     final localeProvider = context.watch<LocaleProvider>();
     final currentCode = localeProvider.locale?.languageCode;
 
-    // "System default" only makes sense while browsing the full list —
-    // once someone's actively searching for a specific language, a row
-    // that isn't actually a language just adds noise above the results.
     final showSystemDefault = _query.isEmpty;
 
     final matches = kSupportedLocales.where((locale) {
@@ -116,13 +96,6 @@ class _SettingsLanguageScreenState extends State<SettingsLanguageScreen> {
                 fontWeight: FontWeight.w600)),
       ),
       body: ListView(
-        // Was missing BouncingScrollPhysics + the 100px bottom clearance
-        // every other settings screen uses — without them this list used
-        // Android's default ClampingScrollPhysics (hard-stops at the
-        // edges, no overscroll give) and its last row sat right at the
-        // very bottom edge instead of clearing the floating nav bar,
-        // which is what made this one screen feel "stuck" compared to
-        // the rest of Settings.
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
         children: [
@@ -136,11 +109,6 @@ class _SettingsLanguageScreenState extends State<SettingsLanguageScreen> {
               ),
             ),
           ),
-          // Search field — pointless friction for a 4-item list, genuinely
-          // useful once there are 16+ languages in unfamiliar scripts;
-          // this is the same reason Spotify/Apple Music both put a search
-          // bar at the top of their language pickers instead of asking
-          // someone to scroll and visually scan for their script.
           _LanguageSearchField(controller: _searchController),
           const SizedBox(height: 16),
           if (showSystemDefault) ...[
@@ -212,9 +180,6 @@ class _SettingsLanguageScreenState extends State<SettingsLanguageScreen> {
   }
 }
 
-/// Rounded search field matching the app's other search surfaces — flat
-/// fill, hairline border, leading search glyph, and a clear (×) button
-/// that only appears once there's text to clear.
 class _LanguageSearchField extends StatelessWidget {
   const _LanguageSearchField({required this.controller});
 
@@ -311,9 +276,6 @@ class _LanguageRow extends StatelessWidget {
     this.enabled = true,
   });
 
-  /// Real flag emoji (e.g. "🇮🇳") shown as the leading glyph. Null for
-  /// the "System default" row, which has no single flag to represent it
-  /// and instead falls back to [fallbackIcon].
   final String? flag;
   final IconData fallbackIcon;
   final String label;
@@ -331,11 +293,6 @@ class _LanguageRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
           children: [
-            // Flag chip — a soft rounded square behind the emoji so every
-            // row has a consistent leading footprint (flags come in
-            // different natural aspect ratios; the container normalizes
-            // that the same way Spotify/Apple Music badge their language
-            // rows with a fixed-size leading glyph slot).
             Container(
               width: 36,
               height: 36,

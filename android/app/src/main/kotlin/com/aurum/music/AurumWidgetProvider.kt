@@ -33,23 +33,7 @@ import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * Home-screen widget for Aurum — two sizes (compact "now playing" strip,
- * and a full version with prev/play-pause/next transport controls).
- *
- * ARTWORK: only a small rounded THUMBNAIL is loaded — no blurred
- * background bitmap, no HardwareRenderer/RenderEffect (that combo was
- * the confirmed root cause of the earlier "An error occurred when
- * loading widget" crash: RemoteViews only supports a fixed allowlist
- * of view classes, and this widget previously also used a bare <View>
- * tag, which isn't on that allowlist — that was the actual bug, fixed
- * by switching to FrameLayout/LinearLayout containers instead).
- * The thumbnail path here is deliberately minimal: one small bitmap,
- * one simple rounded-rect crop, Throwable-guarded end to end, with a
- * static placeholder shown immediately and swapped only on success.
- */
 open class AurumWidgetProvider : AppWidgetProvider() {
-
     companion object {
         private const val TAG = "AurumWidget"
 
@@ -60,25 +44,10 @@ open class AurumWidgetProvider : AppWidgetProvider() {
 
         private var lastArtworkUrl: String? = null
         private var lastThumbBitmap: Bitmap? = null
-        // Dynamic-background color computed from the current artwork.
-        // Cached alongside lastThumbBitmap/lastArtworkUrl (same lifetime,
-        // same invalidation point) so a widget resize/reconfigure that
-        // re-renders without a song change reapplies the same tint
-        // instead of momentarily flashing back to the static fallback.
         private var lastBgColor: Int? = null
 
-        /**
-         * Called from AurumMediaSessionService.onDestroy() so that once
-         * playback/the session is gone, the widget doesn't keep showing
-         * a stale cached thumbnail from whatever song was last playing —
-         * it should fall back to the plain "Aurum / Tap to play
-         * something" state, same as a fresh app install.
-         */
         fun clearArtworkCache() {
             lastArtworkUrl = null
-            // LOW-END DEVICE FIX: same reasoning as loadAndApplyThumbnail's
-            // replacement path — recycle before dropping the reference so
-            // the native bitmap memory is freed immediately.
             lastThumbBitmap?.let { if (!it.isRecycled) it.recycle() }
             lastThumbBitmap = null
             lastBgColor = null
@@ -174,17 +143,6 @@ open class AurumWidgetProvider : AppWidgetProvider() {
                 applyDynamicBackground(views, lastBgColor)
                 manager.updateAppWidget(id, views)
             } else {
-                // Song/artwork changed (or there's no cached bitmap yet) —
-                // explicitly clear the thumbnail back to the placeholder
-                // drawable right now. Without this, the ImageView keeps
-                // showing whatever bitmap the widget host already had
-                // for it (the PREVIOUS song's artwork) until the new
-                // download finishes, which is exactly the "thumbnail
-                // doesn't change with the song" bug. Dynamic background
-                // gets the same treatment for the same reason — otherwise
-                // the OLD song's color would sit behind the NEW song's
-                // title/artist text until the new artwork's palette
-                // finishes computing.
                 views.setImageViewResource(R.id.widget_artwork_thumb, R.drawable.widget_thumb_mask)
                 applyDynamicBackground(views, null)
                 manager.updateAppWidget(id, views)
@@ -245,35 +203,12 @@ open class AurumWidgetProvider : AppWidgetProvider() {
                     val thumb = withContext(Dispatchers.Default) {
                         roundedCrop(original, sizePx = 160, cornerRadiusPx = 22f)
                     }
-                    // Palette runs on the SAME downloaded bitmap, before it's
-                    // recycled below — no second network fetch or decode.
-                    // Already off the main thread (this whole block runs
-                    // inside withContext(Dispatchers.Default)/IO via the
-                    // launch above), and Palette.Builder.generate() (sync,
-                    // no listener) is itself just pixel math over a bitmap
-                    // already this small (inSampleSize=8'd in downloadBitmap),
-                    // so it's cheap enough to run inline here.
                     val bgColor = withContext(Dispatchers.Default) {
                         extractDominantColor(original)
                     }
-                    // LOW-END DEVICE FIX (2GB RAM target): `original` is
-                    // fully consumed by roundedCrop() by this point (it
-                    // only reads from it to build `square`/`scaled`
-                    // above) — recycling it here frees its native pixel
-                    // memory immediately rather than waiting for GC,
-                    // matching the same fix applied inside roundedCrop
-                    // for its own intermediates.
                     original.recycle()
                     if (thumb == null) return@launch
 
-                    // The bitmap this field held until now is about to be
-                    // replaced and dropped — recycle it before overwriting
-                    // so its native memory is freed immediately instead of
-                    // leaking for the rest of the app process's lifetime.
-                    // This field survives across every widget refresh for
-                    // as long as the app process lives, so a leak here
-                    // compounds continuously over a long session — exactly
-                    // the "gets laggier the longer you use it" symptom.
                     lastThumbBitmap?.let { if (!it.isRecycled) it.recycle() }
                     lastArtworkUrl = url
                     lastThumbBitmap = thumb
@@ -306,22 +241,6 @@ open class AurumWidgetProvider : AppWidgetProvider() {
             }
         }
 
-        /**
-         * Runs Palette over the already-downloaded artwork bitmap and picks
-         * one representative color to tint the widget background with.
-         *
-         * Vibrant-first, falling back through muted/dominant swatches:
-         * Palette's "dominant" swatch is literally the most common pixel
-         * color, which for album art is very often a near-black or
-         * near-white border/letterboxing — visually correct but useless as
-         * a background tint (everything would end up near-black). Vibrant
-         * (then LightVibrant/Muted/DarkMuted) approximates what Spotify/
-         * Apple Music actually show: a color that's clearly FROM the
-         * artwork without just being "whatever pixel there's most of".
-         * Falls back to null (caller keeps the static gradient) only if
-         * Palette finds nothing usable at all — a valid outcome for very
-         * flat/monochrome art, not an error.
-         */
         private fun extractDominantColor(bitmap: Bitmap): Int? {
             return try {
                 val palette = Palette.Builder(bitmap).maximumColorCount(16).generate()
@@ -337,15 +256,6 @@ open class AurumWidgetProvider : AppWidgetProvider() {
             }
         }
 
-        /**
-         * Applies (or clears) the artwork-derived tint on widget_dynamic_bg.
-         *
-         * Darkened the same way the in-app "now playing stage" backdrop
-         * treats its extracted color — text/controls sit directly on this
-         * background with no separate scrim layer here, so it has to stay
-         * dark enough for white text at full opacity to read clearly
-         * regardless of which swatch Palette picked.
-         */
         private fun applyDynamicBackground(views: RemoteViews, color: Int?) {
             if (color == null) {
                 views.setImageViewResource(R.id.widget_dynamic_bg, 0)
@@ -355,12 +265,6 @@ open class AurumWidgetProvider : AppWidgetProvider() {
             views.setImageViewBitmap(R.id.widget_dynamic_bg, solidRoundedBitmap(darkened))
         }
 
-        /**
-         * Scales channels toward black rather than alpha-blending over a
-         * fixed color, so the hue survives (a blend would pull every color
-         * toward the same grey) while staying legible under white text —
-         * same approach as the in-app dynamic-backdrop darkening.
-         */
         private fun darkenForBackground(color: Int, factor: Float = 0.55f): Int {
             val r = (Color.red(color) * factor).toInt().coerceIn(0, 255)
             val g = (Color.green(color) * factor).toInt().coerceIn(0, 255)
@@ -368,17 +272,6 @@ open class AurumWidgetProvider : AppWidgetProvider() {
             return Color.rgb(r, g, b)
         }
 
-        /**
-         * A single solid-color bitmap, rounded to match widget_gradient_card/
-         * widget_background_fallback's own corner radius so the tint doesn't
-         * show square corners poking out from behind the rounded card.
-         *
-         * Deliberately tiny (48x48, scaled up by the ImageView) — this is a
-         * flat fill, not a photo, so there's no detail lost by not matching
-         * the widget's actual pixel size, and it keeps this bitmap far under
-         * the RemoteViews per-update memory budget alongside the artwork
-         * thumbnail (see loadBitmap's note on the ~20MB cap).
-         */
         private fun solidRoundedBitmap(color: Int, sizePx: Int = 48, cornerRadiusPx: Float = 22f): Bitmap {
             val output = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(output)
@@ -400,25 +293,6 @@ open class AurumWidgetProvider : AppWidgetProvider() {
         }
 
         private fun roundedCrop(source: Bitmap, sizePx: Int, cornerRadiusPx: Float): Bitmap? {
-            // LOW-END DEVICE FIX (2GB RAM target — "app gets laggier the
-            // longer you use it"): `square` and `scaled` were intermediate
-            // bitmaps, dead the moment `output` is drawn from them below,
-            // but were never recycled — left for the GC to eventually
-            // reclaim on its own schedule instead of freeing the native
-            // bitmap memory immediately. This function runs on every home-
-            // screen widget artwork refresh for the life of the app
-            // process; on a memory-constrained device those un-recycled
-            // intermediates accumulate pressure that shows up as
-            // increasing GC pause frequency/duration over a long session —
-            // exactly the "smoothness degrades over time" symptom. Bitmap
-            // objects created via createBitmap/createScaledBitmap own real
-            // native (non-Dalvik-heap) pixel memory that .recycle() frees
-            // deterministically and immediately, rather than waiting on
-            // GC. `square` is only skipped if it's literally the same
-            // object as `source` (createBitmap can return the input
-            // unchanged when x=0,y=0 and the requested region already
-            // matches the source's full size) — recycling it in that case
-            // would recycle the caller's bitmap out from under them.
             return try {
                 val squareSize = minOf(source.width, source.height)
                 val x = (source.width - squareSize) / 2

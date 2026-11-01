@@ -5,16 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FILE: lib/widgets/jam_entry.dart
-// DESCRIPTION: Entry points to Astra Jam from the full players.
-//   • JamConnectIcon      — Spotify-Connect-style speaker glyph (vector, no image)
-//   • openJamPage         — opens the Jam page as a normal full page
-//   • showSleepOrJamSheet — the 2-choice sheet: Sleep timer / Jam
-//
-// Lightweight: one tiny CustomPainter, no blur, no animation, no images.
-// ═══════════════════════════════════════════════════════════════════════════
-
 import 'package:flutter/material.dart';
 
 import '../providers/player_provider.dart';
@@ -28,14 +18,11 @@ import '../utils/aurum_sheet.dart';
 import '../utils/aurum_transitions.dart' show AurumPageRoute;
 import 'aurum_pressable.dart';
 
-/// Opens the Jam page like any other page (slide-in, back arrow to return).
 void openJamPage(BuildContext context) {
   AurumHaptics.light();
   Navigator.of(context).push(AurumPageRoute(builder: (_) => const JamScreen()));
 }
 
-/// Jam glyph: two overlapping rings (listening together) with a small dot in
-/// the overlap. Original vector drawing — crisp at any size, costs nothing.
 class JamConnectIcon extends StatelessWidget {
   final double size;
   final Color color;
@@ -73,7 +60,6 @@ class _JamPainter extends CustomPainter {
   bool shouldRepaint(_JamPainter old) => old.color != color;
 }
 
-/// Sleep icon tap → two simple choices. The user picks what they want.
 Future<void> showSleepOrJamSheet(BuildContext context, PlayerProvider player) {
   final hi = Localizations.localeOf(context).languageCode == 'hi';
   String t(String en, String h) => hi ? h : en;

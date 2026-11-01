@@ -37,32 +37,13 @@ import 'aurum_snack.dart';
 import 'aurum_wide_thumb.dart';
 import 'premium_gate.dart';
 
-/// Single, shared song "3-dot" menu for the whole app.
-///
-/// Layout is measured 1:1 from the SimpMusic reference: small plain thumbnail
-/// + title/artist header, a divider, then a flat list of 47dp rows with a
-/// 24dp icon and a 16sp label. Colours come only from the active theme
-/// (Light / Dark / Dynamic) — nothing is ever derived from the artwork.
-///
-/// Replaces the three old implementations:
-///   • SongTile → _SongOptionsSheet
-///   • Full player → _PremiumOptionsSheet
-///   • Library → showAurumSongOptionsSheet
 Future<void> showAurumSongOptions(
   BuildContext context,
   Song song, {
-  /// Show player-only rows (Sleep Timer, Audio Effects). Turned on from the
-  /// full player; off in lists where they'd just be noise.
   bool showPlayerTools = false,
 
-  /// Clean YT Music-style track menu (wide thumbnail header, only the
-  /// everyday actions — no sleep timer / playback speed). Used by the Mix
-  /// screen's track rows.
   bool compact = false,
 
-  /// YouTube Music-style menu (Quick Picks): Play next, Add to queue,
-  /// Download, Add to liked songs, Save to playlist, Go to album/artist,
-  /// View song credits, Share, Not interested, Don't recommend artist.
   bool ytStyle = false,
   VoidCallback? onNotInterested,
   VoidCallback? onDontRecommendArtist,
@@ -86,8 +67,6 @@ Future<void> showAurumSongOptions(
   );
 }
 
-/// Playlist/mix-level 3-dot menu — exactly two actions (Add to queue,
-/// Share), same flat sheet chrome as the track menu.
 Future<void> showAurumPlaylistOptions(
   BuildContext context, {
   required List<Song> songs,
@@ -177,12 +156,10 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
     if (mounted) setState(() {});
   }
 
-  // ── helpers ────────────────────────────────────────────────────────────────
   void _close() => Navigator.of(context).pop();
 
   void _toast(String msg) => AurumSnack.show(widget.rootContext, msg);
 
-  /// Astra Jam: a guest can suggest this song to the host ("Suggest to host").
   List<Widget> _jamRows() {
     final jam = JamService.instance;
     if (!jam.inRoom || jam.isHost || widget.song.isLocal) return const [];
@@ -202,11 +179,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
   List<String> get _artists {
     final raw = widget.song.artist;
     if (raw.trim().isEmpty || raw == 'Unknown') return const [];
-    // Sirf safe separators pe split: ',', ' feat. ', ' ft. ', ' / ' (spaces ke
-    // saath). "AC/DC" ya "Ft Island" jaise naam tootte nahi.
-    // '&' wale naam ko poora bhi rakhte hain (band: "Simon & Garfunkel") —
-    // aur sirf jab channel id nahi hai tab parts bhi dete hain (duo credit:
-    // "A & B"). Channel id ho to YT ne ek hi artist diya hai, split nahi.
     final seen = <String>{};
     final out = <String>[];
     void add(String s) {
@@ -238,16 +210,11 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
   void _openArtist() {
     final names = _artists;
     if (names.isEmpty) return;
-    // Navigator sheet band hone se PEHLE capture — sheet pop hone ke baad
-    // list tile ka context stale ho sakta hai (Mix screen me list live
-    // update hoti hai), tab push chup-chaap fail hota tha. Album wala flow
-    // already aise hi karta hai.
     final nav = Navigator.of(widget.rootContext);
     if (names.length == 1) {
       _pushArtist(names.first, nav: nav);
       return;
     }
-    // Several artists → let the user pick one (still SimpMusic-flat list).
     _close();
     showAurumModalBottomSheet<void>(
       context: widget.rootContext,
@@ -289,8 +256,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
     );
   }
 
-  // Normalises titles/names for comparison: lowercase, drops bracketed
-  // suffixes like "(From "X")" / "[Remix]" and every non-alphanumeric.
   static String _albumKey(String s) => s
       .toLowerCase()
       .replaceAll(RegExp(r'[\(\[][^\)\]]*[\)\]]'), '')
@@ -315,9 +280,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
           .first
           .trim();
 
-      // Same-name albums are common (a movie soundtrack and an unrelated
-      // single can share a title), so a name-only match opens the wrong one.
-      // Search by album name AND album+artist, then verify by tracks below.
       final batches = await Future.wait([
         ApiService.searchAlbums(song.album, limit: 8),
         ApiService.searchAlbums(
@@ -326,7 +288,7 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
       ]);
       final rawName = song.album.trim().toLowerCase();
       bool sameName(String n) => albumKey.isEmpty
-          ? n.trim().toLowerCase() == rawName // non-Latin names normalise to ''
+          ? n.trim().toLowerCase() == rawName
           : _albumKey(n) == albumKey;
       final all = [
         for (final batch in batches)
@@ -340,8 +302,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
       ];
       final exactName = named.isNotEmpty;
       if (named.isEmpty && albumKey.isNotEmpty) {
-        // Slightly different titles ("X" vs "X Reloaded"): allow containment,
-        // still verified by tracks below.
         final seen2 = <String>{};
         named = [
           for (final a in all)
@@ -353,21 +313,15 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
         ];
       }
 
-      // Typed by inference (BrowseAlbum is not re-exported here) — no dynamic.
       final cands = named.take(4).toList();
       var pick = -1;
       if (cands.length == 1 && exactName) {
-        // Only one album carries this exact name: nothing to disambiguate, so
-        // skip the extra track fetch (saves data + a round-trip).
         pick = 0;
       } else if (cands.isNotEmpty) {
-        // Verify: the right album actually contains this song.
         final tracks = await Future.wait(cands.map((a) => ApiService
             .fetchAlbumSongs(a.collectionId)
             .timeout(const Duration(seconds: 7), onTimeout: () => <Song>[])
             .catchError((_) => <Song>[])));
-        // Containment only counts for reasonably long titles, so a short
-        // title like "Dil" can't match "Dilbar" in the wrong album.
         bool sameTitle(String k) {
           if (k.isEmpty || songKey.isEmpty) return false;
           if (k == songKey) return true;
@@ -379,7 +333,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
             pick = i;
           }
         }
-        // Not verifiable: only accept an album whose credited artist matches.
         if (pick < 0 && primaryArtist.isNotEmpty) {
           final pa = _albumKey(primaryArtist);
           for (var i = 0; i < cands.length; i++) {
@@ -503,7 +456,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
     );
   }
 
-  // ── build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -537,7 +489,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // ── Playback ──
             _Row(
               icon: Icons.sensors_rounded,
               label: 'Start radio',
@@ -563,7 +514,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
               },
             ),
             const _GroupDivider(),
-            // ── Library ──
             _Row(
               icon: Icons.library_add_outlined,
               label: l10n.fpSaveToPlaylist,
@@ -606,7 +556,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
               onTap: _download,
             ),
             const _GroupDivider(),
-            // ── Go to ──
             if (song.album.isNotEmpty)
               _Row(
                 icon: Icons.album_outlined,
@@ -635,7 +584,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
                 shareSong(widget.rootContext, song);
               },
             ),
-            // ── Feedback (YT Music: sabse neeche, alag group) ──
             if (canNotInterested || canHideArtist) const _GroupDivider(),
             if (canNotInterested)
               _Row(
@@ -861,10 +809,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
             onTap: _openSpeed,
           ),
           if (widget.showPlayerTools) ...[
-            // Cast entry point inside the full player's 3-dot menu (Spotify
-            // + edge-to-edge layouts both route here). Hidden only if Cast
-            // is unsupported on this device or the user set the icon to
-            // "hidden" in settings.
             ValueListenableBuilder<String>(
               valueListenable: AudioPrefs.castIconVisibilityNotifier,
               builder: (context, visibility, _) {
@@ -926,18 +870,6 @@ class _AurumSongOptionsSheetState extends State<AurumSongOptionsSheet> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sheet chrome — theme-only colours (Light / Dark / Dynamic).
-// ─────────────────────────────────────────────────────────────────────────────
-/// Neutral palette for the sheet.
-///
-/// The app's fixed dark theme is purple-tinted (0xFF201E2E) and its "muted"
-/// text is very dark (0xFF4A4A5E) — fine for the app, but the reference sheet
-/// is plain neutral grey. So:
-///   • Dynamic (Material You) → straight from the wallpaper ColorScheme
-///   • Dark                   → neutral grey, white text
-///   • Light                  → neutral white/grey, near-black text
-/// No per-song / artwork colour is ever involved.
 class _SheetPalette {
   final Color surface;
   final Color text;
@@ -957,8 +889,6 @@ class _SheetPalette {
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
-    // Dynamic detection: in Dynamic mode bgElevatedOf() returns the scheme's
-    // surfaceContainerHighest; in fixed themes it returns a hardcoded const.
     final isDynamic =
         AurumTheme.bgElevatedOf(context) == scheme.surfaceContainerHighest;
 
@@ -1005,14 +935,12 @@ class _SheetShell extends StatelessWidget {
       constraints: BoxConstraints(maxHeight: maxH),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          // Reference: one flat surface (#242424 in dark) — no tint, no blur.
           color: pal.surface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Grab handle — 58 x 4dp, sits 5dp from the top edge.
             Container(
               width: 58,
               height: 4,
@@ -1024,7 +952,6 @@ class _SheetShell extends StatelessWidget {
             ),
             if (header != null) ...[
               header!,
-              // Divider: 19.5dp side margins, 1dp.
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 19.5),
                 child: Divider(
@@ -1052,8 +979,6 @@ class _Header extends StatelessWidget {
   final String subtitle;
   final String artworkUrl;
   final bool wide;
-  // YT Music track menu: chhota square cover (48dp, 6dp radius) — wide
-  // crop gaane ke cover ko kaat deta tha.
   final bool square;
   const _Header({
     required this.title,
@@ -1065,14 +990,11 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Reference: thumbnail 43dp square at 17.5dp from the left edge, text
-    // starts 28dp after the thumbnail, block sits ~10dp above the divider.
     final pal = _SheetPalette.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(17.5, 0, 12, 12),
       child: Row(
         children: [
-          // Plain thumbnail only — no glow / tint / colour extraction.
           if (square)
             AurumArtwork(url: artworkUrl, size: 48, borderRadius: 6)
           else if (wide)
@@ -1118,7 +1040,6 @@ class _Header extends StatelessWidget {
   }
 }
 
-// Menu groups ke beech patla divider (playback / library / go-to / feedback).
 class _GroupDivider extends StatelessWidget {
   const _GroupDivider();
 
@@ -1150,8 +1071,6 @@ class _Row extends StatelessWidget {
     final pal = _SheetPalette.of(context);
     final color = enabled ? pal.text : pal.text.withValues(alpha: 0.42);
 
-    // Reference metrics: row pitch 47dp, 24dp icon centred 42.5dp from the
-    // left edge, label starts 77dp from the left edge, ~16sp semi-bold.
     return InkWell(
       onTap: enabled
           ? () {
@@ -1187,9 +1106,6 @@ class _Row extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Playback speed sheet — same chrome as the options sheet.
-// ─────────────────────────────────────────────────────────────────────────────
 class _SpeedSheet extends StatefulWidget {
   final double initial;
   final Future<void> Function(double) onChanged;

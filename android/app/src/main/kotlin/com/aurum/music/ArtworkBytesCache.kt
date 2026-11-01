@@ -10,13 +10,6 @@ package com.aurum.music
 import android.util.LruCache
 import java.net.URL
 
-/**
- * Shared in-memory cache of downloaded artwork bytes (max ~6 MB) used by the
- * Dynamic Island and the home-screen widget. Both used to download the same
- * thumbnail again on every song change / refresh with no cache at all, so the
- * same image was fetched several times per song. Memory only, freed with the
- * process; failures return null exactly like the old inline downloads did.
- */
 object ArtworkBytesCache {
     private val cache = object : LruCache<String, ByteArray>(6 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ByteArray): Int = value.size

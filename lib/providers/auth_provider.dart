@@ -5,14 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/providers/auth_provider.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Reactive wrapper around AuthService — exposes sign-in state
-//   to the widget tree via Provider. ProfileScreen and any gated UI watch
-//   this instead of touching Supabase/Google directly.
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -25,9 +17,6 @@ class AuthProvider extends ChangeNotifier {
   bool _isSigningIn = false;
   String? _lastError;
 
-  // Cheap wrapper around the shared static MethodChannel in
-  // NativeAudioEngine — not a second engine instance, just this
-  // provider's own handle for pushing sign-in state to Auto Sleep Guard.
   final NativeAudioEngine _engineBridge = NativeAudioEngine();
 
   bool get isSignedIn => AuthService.instance.isSignedIn;
@@ -39,11 +28,6 @@ class AuthProvider extends ChangeNotifier {
   String? get userId => AuthService.instance.currentUser?.id;
 
   void init() {
-    // Push the initial state immediately — the auth stream only fires on
-    // subsequent changes, so without this a cold start where the user is
-    // already signed in (restored session) would leave Auto Sleep Guard
-    // thinking nobody's signed in until the next auth event happens to
-    // fire, which might be never in that session.
     _engineBridge.autoSleepGuardSetSignedIn(isSignedIn);
     _sub = AuthService.instance.authStateChanges.listen((_) {
       _engineBridge.autoSleepGuardSetSignedIn(isSignedIn);

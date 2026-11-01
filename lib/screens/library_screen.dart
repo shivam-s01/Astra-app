@@ -5,27 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/library_screen.dart
-// PROJECT: Aurum Music
-// DESCRIPTION: Library — tabbed layout.
-//   Root screen shows a segmented tab row (Playlists / Songs / Artists /
-//   Albums), each with its own hero card ("Top Artist", "Featured Album",
-//   "Your Collection") plus a quick-access grid (Liked / Offline / Cached /
-//   Local Files / My Top 50) and a Recently Played rail underneath.
-//   Every tab reads from Aurum's real providers (PlaylistProvider,
-//   LibraryProvider, FollowedArtistsProvider, FollowedAlbumsProvider,
-//   FavoritesProvider, DownloadProvider, RecentlyPlayedProvider) — nothing
-//   here is placeholder/mock data.
-//
-//   Downstream destinations (PlaylistsScreen, PlaylistDetailScreen,
-//   LikedScreen, DownloadsScreen, _HistoryScreen, _LocalFilesScreen,
-//   _AlbumsScreen/_ArtistsScreen list bodies) are UNCHANGED below this
-//   block — only the root LibraryScreen widget and its small private
-//   helpers (_QuickChip/_CollectionItem/_CollectionRow/_CoverFan) were
-//   replaced, since those were only ever used by the old root layout.
-// =============================================================================
-
 import 'dart:math' as math;
 import 'dart:async';
 import 'dart:io';
@@ -86,32 +65,9 @@ import '../utils/aurum_haptics.dart';
 import '../utils/aurum_sheet.dart';
 import '../utils/aurum_motion.dart';
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Archive palette — a self-contained peach/brown scheme scoped to Library,
-// independent of AurumTheme's own dark/amoled/light/dynamic system. Every
-// color the new Library layout needs lives here so nothing on this screen
-// silently drifts if AurumTheme's palette changes elsewhere in the app.
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Library Root — tabbed shell
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-/// BACK COORDINATION between MainShell and the Library tab.
-///
-/// Library is a root tab (inside MainShell's IndexedStack), so it can't
-/// use its own PopScope to intercept system back — MainShell owns the root
-/// route. LibraryScreen registers a callback here that undoes exactly ONE
-/// inner step (Artists multi-select, or a sub-tab -> Library overview) and
-/// reports whether it did. MainShell calls it at the moment of the back
-/// press, so back walks: select-mode -> sub-tab -> Home -> exit, one level
-/// per press, never skipping a level.
 class LibraryBackScope {
   LibraryBackScope._();
 
-  // The State that currently owns Library's back handling. Tracked by
-  // owner (not just the callback) so a disposed old instance can never
-  // clear the handler a newer instance has since registered.
   static Object? _owner;
   static bool Function()? _handler;
 
@@ -127,7 +83,6 @@ class LibraryBackScope {
     }
   }
 
-  /// Undoes ONE inner step. Returns true if it handled the back press.
   static bool handleBack() => _handler?.call() ?? false;
 }
 
@@ -143,17 +98,10 @@ enum _LibTab { library, playlists, songs, artists, albums }
 class _LibraryScreenState extends State<LibraryScreen> {
   _LibTab _tab = _LibTab.library;
 
-  // true while the Artists tab has multi-select active (reported by
-  // _AurumArtistsTab through onSelectModeChanged below).
   bool _artistsSelecting = false;
 
-  // Bumped to make _AurumArtistsTab drop its own select mode when back is
-  // pressed — the tab owns that state, so it is asked, not reached into.
   final ValueNotifier<int> _exitArtistsSelect = ValueNotifier<int>(0);
 
-  // One step per press: exit multi-select first, then return from a
-  // sub-tab to the Library overview. Returns false when there is nothing
-  // left to undo, which lets MainShell continue to Home.
   bool _handleInnerBack() {
     if (_artistsSelecting) {
       _exitArtistsSelect.value++;
@@ -184,17 +132,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
       extendBody: true,
-      // FIX (duplicate mini player): LibraryScreen is always tab index 2
-      // inside MainShell's own IndexedStack (see main_shell.dart's
-      // `_screens` list) — it is never pushed as an independent route.
-      // MainShell's own bottomNavigationBar already renders the one real
-      // MiniPlayer for all 3 root tabs (Home/Search/Library). Giving this
-      // screen its own `MiniPlayerSlot()` on top of that stacked a SECOND,
-      // fully independent mini player (its own state, its own play/pause)
-      // directly above MainShell's, which is exactly the "2 mini players"
-      // bug. Root tab screens must NOT set their own bottomNavigationBar —
-      // only screens pushed via Navigator.push on top of MainShell (see
-      // MiniPlayerSlot's doc comment) need one.
       body: SafeArea(
         bottom: false,
         child: Column(
@@ -218,13 +155,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  // â”€â”€ Top bar: "Library" heading + settings gear â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // FIX (reverted to match the user's actual working design): this had been
-  // replaced with an "Aurum âš¡" brand row + 4 icon buttons (history/
-  // calendar/new-releases/settings) in a commit outside this chat — not
-  // something introduced by any fix here. The user's reference screenshots
-  // consistently show a plain "Library" heading (accent-colored, bold) with
-  // a single settings gear on the right, so that's what this restores.
   Widget _buildTopBar(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 12, 4),
@@ -249,18 +179,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  // â”€â”€ Segmented tab row: Library / Playlists / Songs / Artists / Albums â”€â”€â”€
-  // FIX ("awkward" tab row — each tab reading as its own separate floating
-  // card instead of one continuous strip): before, this ListView had no
-  // outer container at all, and _TabChip gave every UNSELECTED chip its
-  // own opaque bgSurfaceOf() card background — so with 5 tabs side by
-  // side, it looked like 5 disconnected white cards with visible gaps
-  // between them, rather than one pill-shaped segmented control with a
-  // single highlighted segment (the reference design). Wrapping the row
-  // in one soft tinted pill (accentOf at low opacity) and making
-  // unselected chips fully transparent (see _TabChip below) restores
-  // that continuous-strip look — only the selected tab gets a filled
-  // background now, everything else just sits on the shared pill.
   Widget _buildTabRow(BuildContext context) {
     final tabs = <_LibTab, String>{
       _LibTab.library: AppLocalizations.of(context)!.navLibrary,
@@ -275,21 +193,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       child: Container(
         height: 46,
         decoration: BoxDecoration(
-          // VISIBILITY FIX ("pill kahi visible nahi ho raha / dynamic
-          // theme mein dikhta hi nahi"): this used to be
-          // accentOf(context).withOpacity(0.08) — accentOf() is the
-          // wallpaper-derived Material You color when Dynamic Color mode
-          // is on (see AurumTheme.accentOf's doc comment), so on plenty
-          // of real wallpapers that color is pale/low-saturation, and 8%
-          // opacity on TOP of that made the whole pill nearly invisible
-          // against the scaffold background — exactly "kahi visible nahi
-          // ho raha". bgSurfaceOf() is a solid, always-adaptive surface
-          // tone (dark/light/AMOLED/dynamic all define it) with no
-          // opacity math riding on an unpredictable accent — it's
-          // guaranteed to sit a clear step above the background on every
-          // theme, then a thin accent-tinted border on top adds the
-          // "premium" definition without ever being the only thing
-          // making the pill visible.
           color: AurumTheme.bgSurfaceOf(context),
           borderRadius: BorderRadius.circular(23),
           border: Border.all(
@@ -304,17 +207,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
           ],
         ),
-        // FIX ("ek taraf ka ekdam ek kinare chala ja raha hai" / lopsided
-        // tab row): this used to be a horizontally-scrolling ListView —
-        // with 5 tabs at 16/12 padding each, their combined width
-        // overflowed most phone screens, so the row always started
-        // scrolled to one edge instead of sitting centered/balanced, and
-        // the oversized padding made each pill read as chunky/awkward
-        // rather than a tight native-style segmented control. A Row of
-        // Expanded segments instead divides the pill into 5 exactly equal
-        // slices that always fill the full width — nothing to scroll,
-        // nothing lopsided, and matches the compact segmented-control
-        // sizing the rest of the app uses.
         padding: const EdgeInsets.all(4),
         child: Row(
           children: [
@@ -339,15 +231,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget _buildTabBody(BuildContext context) {
     switch (_tab) {
       case _LibTab.library:
-        // FIX (self-recheck — "See all" under "Your Artists" used to push
-        // a WHOLE SECOND LibraryScreen via Navigator, but this screen has
-        // no back button/AppBar and no MiniPlayerSlot (see the big FIX
-        // comment on this State's own build() above — LibraryScreen is
-        // documented as ALWAYS the root tab, never pushed). Pushing it
-        // stranded the user on a screen with no visible way back and no
-        // mini player. Passing a callback that just flips this SAME
-        // State's own _tab is the correct fix — no navigation at all,
-        // since Artists is already one of this screen's own tabs.
         return _AurumLibraryOverviewTab(
           onSeeAllArtists: () => setState(() => _tab = _LibTab.artists),
         );
@@ -384,9 +267,6 @@ class _TopIconButton extends StatelessWidget {
         },
         child: Padding(
           padding: const EdgeInsets.all(9),
-          // FIX: match Home screen's settings icon color exactly
-          // (AurumTheme.textSecondaryOf(context)) instead of gold — Home
-          // and Library must look like the same app, not two palettes.
           child: Icon(icon, color: AurumTheme.textSecondaryOf(context), size: 19),
         ),
       ),
@@ -406,19 +286,6 @@ class _TabChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // VISIBILITY + POLISH FIX: unselected chips stay transparent so they
-    // sit directly on the shared pill from _buildTabRow (one continuous
-    // strip, not disconnected cards) - but their TEXT used to be
-    // accentOf(context) too, which on a pale/low-saturation dynamic-theme
-    // wallpaper could end up nearly as low-contrast as the pill itself
-    // was. textSecondaryOf() is guaranteed readable against bgSurfaceOf()
-    // on every theme (dark/light/AMOLED/dynamic), so unselected labels
-    // are always legible regardless of what accent color happens to be
-    // active. The selected chip gets the app's real accent gradient
-    // (accentGradientOf - the same dynamic-theme-aware gradient used
-    // elsewhere, not a flat fill) plus a matching soft glow shadow, so
-    // the active tab reads as a genuine premium highlight rather than a
-    // flat color block - "top level" instead of just "filled in".
     final gradient = selected ? AurumTheme.accentGradientOf(context) : null;
     return Material(
       color: Colors.transparent,
@@ -428,11 +295,6 @@ class _TabChip extends StatelessWidget {
         onTap: onTap,
         child: AnimatedContainer(
           duration: AurumMotion.durationOrZero(AurumMotion.short2),
-          // FIX (chip felt oversized/awkward vs the rest of the app):
-          // dropped from 16/12 to a tighter 8/9 - combined with the Row+
-          // Expanded layout above, this keeps every segment compact and
-          // evenly sized instead of the previous chunky, unevenly-scrolled
-          // pills.
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
           alignment: Alignment.center,
           decoration: BoxDecoration(
@@ -466,10 +328,6 @@ class _TabChip extends StatelessWidget {
     );
   }
 }
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// SONGS TAB — hero card summarizing the collection + song list.
-// Backed by LibraryProvider's real scanned device library (allSongs).
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _AurumSongsTab extends StatefulWidget {
   const _AurumSongsTab();
@@ -480,23 +338,16 @@ class _AurumSongsTab extends StatefulWidget {
 
 class _AurumSongsTabState extends State<_AurumSongsTab> {
   bool _newestFirst = true;
-  // Which subset of the library this tab is currently showing — mirrors
-  // the reference screenshot's "Liked / Downloaded / All Songs" chip row.
-  // "All Songs" is the same full-library view this tab always had.
   _SongsFilter _filter = _SongsFilter.liked;
 
   @override
   void initState() {
     super.initState();
     final lib = context.read<LibraryProvider>();
-    // No likes yet -> open on "All Songs" instead of an empty Liked list
-    // (only once favorites have actually finished loading).
     final fav = context.read<FavoritesProvider>();
     if (!fav.isLoading && fav.favorites.isEmpty) {
       _filter = _SongsFilter.all;
     }
-    // The device scan (and its storage-permission prompt) is only needed
-    // for "All Songs" - don't trigger it while showing Liked/Downloaded.
     if (_filter == _SongsFilter.all && !lib.hasLoaded) {
       WidgetsBinding.instance.addPostFrameCallback((_) => lib.load());
     }
@@ -505,21 +356,12 @@ class _AurumSongsTabState extends State<_AurumSongsTab> {
   @override
   Widget build(BuildContext context) {
     final lib = context.watch<LibraryProvider>();
-    // PERF (battery/heat): this tab used to context.watch() Favorites and
-    // Download providers outright. DownloadProvider notifies on every
-    // download percent, so while a song downloaded the whole Songs list
-    // (copy + reverse + duration fold over every song, then re-diff) re-ran
-    // ~100x per download. Now it only rebuilds when the liked/downloaded
-    // COUNT (or favorites loading flag) actually changes; the data itself
-    // is read once per build.
     context.select<FavoritesProvider, (int, bool)>(
         (f) => (f.favorites.length, f.isLoading));
     context.select<DownloadProvider, int>((d) => d.completed.length);
     final favorites = context.read<FavoritesProvider>();
     final downloads = context.read<DownloadProvider>();
 
-    // Storage scan / permission only matters for "All Songs" - Liked and
-    // Downloaded come from Favorites/Download providers.
     final needsScan = _filter == _SongsFilter.all;
 
     if (needsScan &&
@@ -548,8 +390,6 @@ class _AurumSongsTabState extends State<_AurumSongsTab> {
         songs = List<Song>.from(lib.allSongs);
         break;
     }
-    // LibraryProvider has no per-song "added" timestamp: scan order is
-    // already newest-ish first, so "oldest first" just reverses it.
     final ordered = _newestFirst ? songs : songs.reversed.toList();
 
     final totalSeconds = ordered.fold<int>(0, (sum, s) => sum + (s.duration ?? 0));
@@ -769,7 +609,6 @@ class _SortRow extends StatelessWidget {
   }
 }
 
-// â”€â”€ Hero card (used across Songs/Artists/Albums tabs) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _HeroActionCard extends StatelessWidget {
   final String? eyebrow;
   final String title;
@@ -907,7 +746,6 @@ class _HeroActionCard extends StatelessWidget {
   }
 }
 
-// â”€â”€ Song row (flat card) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _AurumSongRow extends StatelessWidget {
   final Song song;
   final List<Song> queue;
@@ -920,14 +758,7 @@ class _AurumSongRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // PERF: select -> this row rebuilds only when ITS liked state flips,
-    // not on every like/unlike of any song in the library.
     final isFav = context.select<FavoritesProvider, bool>((f) => f.isFavorite(song.id));
-    // FIX (same class of bug already fixed in _AurumArtistRow below —
-    // hardcoded Colors.white instead of a theme-aware surface color made
-    // rows unreadable on dark/AMOLED theme, where the row's own text is
-    // also light. Proactively fixing here too since it's the exact same
-    // pattern, not yet separately reported for Songs).
     return Material(
       color: AurumTheme.bgSurfaceOf(context),
       borderRadius: BorderRadius.circular(18),
@@ -1023,16 +854,10 @@ class _AurumSongRow extends StatelessWidget {
   }
 }
 
-// â”€â”€ Shared song options bottom sheet (Add/Remove Liked, Add to Playlist) â”€â”€â”€â”€
-// Extracted to a top-level function so any screen with a single Song in
-// hand can reuse the exact same working sheet instead of re-implementing
-// it — e.g. the Library overview's "Most Played" hero card's "more" button.
 void showAurumSongOptionsSheet(BuildContext context, Song song) {
-  // Shared SimpMusic-style sheet (lib/widgets/aurum_song_options_sheet.dart)
   showAurumSongOptions(context, song);
 }
 
-// â”€â”€ Shared empty/permission states â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _AurumEmptyState extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -1145,15 +970,8 @@ class _AurumPermissionState extends StatelessWidget {
     );
   }
 }
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// ARTISTS TAB — top-artist hero + "Artists" count
-// card + sort row + list. Backed by FollowedArtistsProvider (real saved/
-// followed artists — same data source the existing _ArtistsScreen used).
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _AurumArtistsTab extends StatefulWidget {
-  // Back-coordination hooks from LibraryScreen (see LibraryBackScope).
-  // Both optional so any other construction site keeps working unchanged.
   final ValueNotifier<int>? exitSelectSignal;
   final ValueChanged<bool>? onSelectModeChanged;
   const _AurumArtistsTab({this.exitSelectSignal, this.onSelectModeChanged});
@@ -1165,15 +983,10 @@ class _AurumArtistsTab extends StatefulWidget {
 class _AurumArtistsTabState extends State<_AurumArtistsTab> {
   bool _newestFirst = true;
 
-  // System back while multi-select is active: LibraryScreen bumps this
-  // signal, and we drop select mode here (we own that state).
   void _onExitSelectSignal() {
     if (_selectMode) _exitSelectMode();
   }
 
-  // Report the CURRENT select state upward after each frame in which it
-  // changed, so LibraryScreen/MainShell always know if back has a step to
-  // undo here. Deduped so it never spams.
   bool _lastReportedSelect = false;
   void _reportSelect() {
     if (_lastReportedSelect == _selectMode) return;
@@ -1199,17 +1012,10 @@ class _AurumArtistsTabState extends State<_AurumArtistsTab> {
   @override
   void dispose() {
     widget.exitSelectSignal?.removeListener(_onExitSelectSignal);
-    // Leaving the tab (or Library) must never leave a stale "select active"
-    // flag behind, or back would think there is still a step to undo.
     if (_lastReportedSelect) widget.onSelectModeChanged?.call(false);
     super.dispose();
   }
 
-  // MULTI-SELECT ("select pr all unfollow ka option rahe"): mirrors the
-  // same select-mode pattern added to Liked Songs below — a Set of
-  // selected artist ids plus a bool flag for whether the row checkboxes
-  // are showing at all, so a normal single long-press still opens the
-  // existing single-artist unfollow sheet unchanged.
   bool _selectMode = false;
   final Set<String> _selectedIds = {};
 
@@ -1297,9 +1103,6 @@ class _AurumArtistsTabState extends State<_AurumArtistsTab> {
 
   @override
   Widget build(BuildContext context) {
-    // Publish select-mode changes to LibraryScreen after the frame so back
-    // handling always knows whether there's a step to undo (no setState
-    // during build).
     if (_lastReportedSelect != _selectMode) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _reportSelect();
@@ -1323,25 +1126,6 @@ class _AurumArtistsTabState extends State<_AurumArtistsTab> {
       );
     }
 
-    // followed is already newest-first (see FollowedArtistsProvider.followed,
-    // which reverses Hive's insertion order) - oldest-first simply un-reverses.
-    //
-    // DEFENSIVE FIX ("artist follow ho raha hai lekin Library > Artists tab
-    // mein nahi dikh raha"): the icon on ArtistScreen flips instantly
-    // because toggleFollow() calls notifyListeners() right after the Hive
-    // write completes - that part was already correct. But this list used
-    // to be built straight from FollowedArtistsProvider.followed with no
-    // validation, so a single malformed entry (empty id from a rare
-    // edge-case artist resolve, or a duplicate id from two slightly
-    // different id formats for the same artist landing in the box) could
-    // previously produce visually-empty or duplicate-looking rows with no
-    // obvious sign why. Filtering out entries with an empty id/name and
-    // de-duplicating by id here means a genuinely corrupt entry never
-    // renders as a blank/broken row, and if the same artist got saved
-    // under two different id variants it shows once instead of twice or
-    // not at all depending on list order. This never hides a legitimately
-    // followed artist - it only cleans up entries that were never going
-    // to render correctly anyway.
     final seenArtistIds = <String>{};
     final base = followedProvider.followed.where((m) {
       final id = (m['id'] ?? '').toString();
@@ -1371,12 +1155,6 @@ class _AurumArtistsTabState extends State<_AurumArtistsTab> {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: _selectMode
-                // SELECTION BAR ("select pr all unfollow ka option rahe aur
-                // ... 3 dot aa jaye"): replaces the sort/subscribed row while
-                // active. Shows the live count, a "Select all" toggle, and
-                // the 3-dot menu carrying Unfollow selected / Select all /
-                // Deselect all — same idea as the Liked Songs selection bar
-                // below, kept visually consistent between the two screens.
                 ? Row(
                     children: [
                       Material(
@@ -1405,10 +1183,6 @@ class _AurumArtistsTabState extends State<_AurumArtistsTab> {
                         ),
                       ),
                       const Spacer(),
-                      // FIX (same "select all wala awkward" fix as Liked
-                      // Songs): Select all was buried inside this 3-dot
-                      // menu — now a direct one-tap toggle button, plus
-                      // a dedicated unfollow icon.
                       Builder(builder: (context) {
                         final allIds = ordered.map((m) => (m['id'] ?? '').toString()).toSet();
                         final allSelected = allIds.isNotEmpty &&
@@ -1509,18 +1283,6 @@ class _TopArtistAndCountRow extends StatefulWidget {
 }
 
 class _TopArtistAndCountRowState extends State<_TopArtistAndCountRow> {
-  // REAL "Play all" ("kuch bhe akward na rahe... fake button ui dummy na
-  // ho"): this used to just reopen ArtistScreen on tap — not actually
-  // playing anything, so it silently lied about what "Play all" does.
-  // ArtistScreen itself only knows an artist's songs AFTER its own async
-  // fetch resolves (Artist.topSongs), and that data was never available
-  // up here — the Library tab only caches id/name/imageUrl locally. So a
-  // genuine "Play all" has to do the same fetch this button promises,
-  // then hand the real song list to PlayerProvider — with a visible
-  // loading state while that network call is in flight (same one-shot
-  // ApiService.fetchArtist() call ArtistScreen's progressive loader is
-  // itself built on top of) and a real error surface if it fails, rather
-  // than a tap that always "succeeds" instantly by doing nothing.
   bool _resolving = false;
 
   Future<void> _playAll(String id, String name) async {
@@ -1561,37 +1323,6 @@ class _TopArtistAndCountRowState extends State<_TopArtistAndCountRow> {
     final id = (top['id'] ?? '').toString();
     final imageUrl = (top['imageUrl'] ?? '').toString();
 
-    // CRASH FIX ("Artists tab completely blank — no list, no empty state,
-    // no error card, even with the try/catch in place above"): this Row
-    // sits inside a SliverToBoxAdapter (via CustomScrollView), which gives
-    // its child UNBOUNDED height (the sliver's main axis is scroll-driven,
-    // not fixed). CrossAxisAlignment.stretch on a bare Row tells it to
-    // stretch children to fill the Row's cross axis — for a Row that's the
-    // vertical axis — and stretching to an unbounded/infinite height throws
-    // immediately ("RenderFlex children have non-zero flex but incoming
-    // height constraints are unbounded"). That's a LAYOUT-time exception,
-    // not a build-time one, so the try/catch around this widget's caller
-    // never catches it — the whole CustomScrollView's layout pass fails
-    // silently in release mode, taking the SliverAppBar/tab header down
-    // with it (matching exactly what was observed: nothing rendered at
-    // all, not even the empty state).
-    //
-    // Fix: wrap in IntrinsicHeight instead of removing stretch outright.
-    // IntrinsicHeight measures both children's natural height first and
-    // gives the Row a real, bounded height to work with — so stretch can
-    // still do its job (both cards still match each other's height, and
-    // the count card's inner spaceBetween Column still gets a bounded
-    // height to distribute across), just computed from actual content
-    // instead of an unbounded sliver constraint.
-    // DESIGN PASS (hero row looked flat/awkward — plain grey slab next to a
-    // plain grey slab, generic circle button, no depth cue that this is
-    // the standout "top" card): the artist card now carries the actual
-    // accent gradient (same gradient used for the Liked Songs title/play
-    // pill elsewhere in this file) with a soft glow shadow, a ring around
-    // the avatar, and a subtitle so it doesn't read as a bare button row.
-    // The count card gets a rounded icon chip instead of a bare arrow
-    // glyph so the two cards feel like a matched pair rather than one
-    // "real" card and one afterthought.
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1727,14 +1458,6 @@ class _TopArtistAndCountRowState extends State<_TopArtistAndCountRow> {
             child: Material(
               color: AurumTheme.bgElevatedOf(context),
               borderRadius: BorderRadius.circular(28),
-              // FIX ("fake button ui dummy na ho"): this card used to show
-              // a forward-arrow icon implying "tap to see the full list"
-              // but had no InkWell/onTap at all — a purely decorative
-              // affordance that did nothing when pressed. It now actually
-              // opens the full followed-artists list (_ArtistsScreen),
-              // which itself existed already in this file but had no
-              // caller anywhere — this was the one entry point meant to
-              // reach it.
               child: InkWell(
                 borderRadius: BorderRadius.circular(28),
                 onTap: () {
@@ -1794,12 +1517,6 @@ class _TopArtistAndCountRowState extends State<_TopArtistAndCountRow> {
 
 class _AurumArtistRow extends StatefulWidget {
   final Map<String, dynamic> artist;
-  // MULTI-SELECT support: when selectMode is true, tapping anywhere on the
-  // row toggles selection (and the play button is swapped for a checkbox)
-  // instead of navigating to the artist screen. Long-press with
-  // selectMode already false is what enters select mode (onEnterSelectMode)
-  // — the existing single-artist long-press unfollow sheet still fires
-  // when selectMode is false, unchanged from before.
   final bool selectMode;
   final bool selected;
   final VoidCallback? onEnterSelectMode;
@@ -1818,14 +1535,6 @@ class _AurumArtistRow extends StatefulWidget {
 }
 
 class _AurumArtistRowState extends State<_AurumArtistRow> {
-  // REAL per-row play button ("fake button ui dummy na ho"): this circular
-  // play icon used to just reopen ArtistScreen — identical to tapping the
-  // row itself — instead of actually playing anything. Same fix as the
-  // hero card above: fetch the artist's real songs first, show a small
-  // inline spinner while that's in flight, then hand them to
-  // PlayerProvider. A row this small has no room for a text label change
-  // like the hero card's "Loading…", so the icon itself swaps to a
-  // spinner instead.
   bool _resolving = false;
 
   Future<void> _playAll(String id, String name) async {
@@ -1864,18 +1573,6 @@ class _AurumArtistRowState extends State<_AurumArtistRow> {
     final name = (artist['name'] ?? '').toString();
     final imageUrl = (artist['imageUrl'] ?? '').toString();
 
-    // FIX ("artist follow karne pr Library mein show nhi hote" — root
-    // cause): this row's background was hardcoded `Colors.white.withOpacity(0.55)`
-    // instead of a theme-aware surface color. On Aurum's default dark/AMOLED
-    // theme the row text/icons (AurumTheme.textPrimaryOf, accentOf) are also
-    // light, so a near-opaque WHITE pill behind light text made every
-    // followed-artist row unreadable/near-invisible — it looked like nothing
-    // rendered, even though the provider/data layer was already saving and
-    // returning entries correctly (confirmed by the raw/filtered debug
-    // counts elsewhere in this tab). Every other row/card in this screen
-    // (playlist rows, hero cards, etc.) already uses AurumTheme.bgSurfaceOf/
-    // bgElevatedOf so it adapts to dark/AMOLED/light/dynamic — this was the
-    // one place still hardcoded, almost certainly a stray copy-paste.
     return Material(
       color: selected
           ? AurumTheme.accentOf(context).withOpacity(0.12)
@@ -1976,13 +1673,7 @@ class _AurumArtistRowState extends State<_AurumArtistRow> {
       ),
     );
   }
-
 }
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// ALBUMS TAB — featured-album hero + grid, plus a
-// list/grid toggle. Backed by FollowedAlbumsProvider (real saved albums —
-// same data source the existing _AlbumsScreen used).
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _AurumAlbumsTab extends StatefulWidget {
   const _AurumAlbumsTab();
@@ -2184,8 +1875,6 @@ class _FeaturedAlbumHeroState extends State<_FeaturedAlbumHero> {
       }
     }
 
-    // REAL play: mixes already hold their songs locally; albums are
-    // fetched the same way AlbumScreen does, then handed to the player.
     Future<void> play() async {
       if (_loading) return;
       AurumHaptics.light();
@@ -2445,9 +2134,6 @@ class _AurumAlbumRow extends StatelessWidget {
     final artworkUrl = (album['artworkUrl'] ?? '').toString();
     final isMix = album['isMix'] == true;
 
-    // FIX (same class of bug already fixed in _AurumArtistRow — hardcoded
-    // Colors.white instead of a theme-aware surface color made rows
-    // unreadable on dark/AMOLED theme).
     return Material(
       color: AurumTheme.bgSurfaceOf(context),
       borderRadius: BorderRadius.circular(18),
@@ -2511,17 +2197,8 @@ class _AurumAlbumRow extends StatelessWidget {
     );
   }
 }
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// LIBRARY TAB — the overview landing tab (ArchiveTune-style): hero "most
-// played" card, quick-access grid (Liked / Offline / Cached / Local Files /
-// My Top 50), Recently Played rail, and a small 2-item playlist preview
-// with a "See all" arrow into the full PlaylistsScreen.
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _AurumLibraryOverviewTab extends StatefulWidget {
-  // Lets the parent _LibraryScreenState switch its own _tab to Artists —
-  // see the FIX comment on _buildTabBody's _LibTab.library case above for
-  // why this replaced a Navigator.push to a second LibraryScreen.
   const _AurumLibraryOverviewTab({required this.onSeeAllArtists});
 
   final VoidCallback onSeeAllArtists;
@@ -2534,16 +2211,10 @@ class _AurumLibraryOverviewTabState extends State<_AurumLibraryOverviewTab> {
   @override
   Widget build(BuildContext context) {
     final favorites = context.watch<FavoritesProvider>();
-    // PERF: only the completed COUNT is shown here, so select it — a plain
-    // watch() rebuilt this whole artwork-heavy page on every download %.
     final downloadedCount =
         context.select<DownloadProvider, int>((d) => d.completed.length);
     final recentlyPlayed = context.watch<RecentlyPlayedProvider>();
     final playlists = context.watch<PlaylistProvider>();
-    // FEATURE ("Laibry mai Laibry option ke playlist ke niche artist
-    // section bhe laga do, see all pr sb artist follow page pr le
-    // jaye"): same FollowedArtistsProvider the dedicated Artists tab
-    // already reads from — no new data source, just a preview row here.
     final followedArtists = context.watch<FollowedArtistsProvider>();
 
     final likedCount = favorites.favorites.length;
@@ -2554,9 +2225,6 @@ class _AurumLibraryOverviewTabState extends State<_AurumLibraryOverviewTab> {
         : (recent.first.album.isNotEmpty ? recent.first.album : recent.first.title);
     final previewPlaylists =
         PlaylistProvider.pinnedFirst(playlists.playlists).take(2).toList();
-    // Same de-dupe/validity filter the Artists tab itself applies to
-    // FollowedArtistsProvider.followed, so this preview row never shows a
-    // malformed/duplicate entry the real tab would have hidden anyway.
     final seenPreviewArtistIds = <String>{};
     final previewArtists = followedArtists.followed.where((m) {
       final aid = (m['id'] ?? '').toString();
@@ -2576,14 +2244,6 @@ class _AurumLibraryOverviewTabState extends State<_AurumLibraryOverviewTab> {
             child: _HeroActionCard(
               eyebrow: hasRecent ? AppLocalizations.of(context)!.libraryMostPlayed : null,
               title: heroTitle,
-              // FIX (hardcoded "1 song" — pre-existing bug, not touched
-              // by intent): this used to read `hasRecent ? '1 song' : ...`
-              // literally always, regardless of the actual song. Nothing
-              // in RecentlyPlayedProvider tracks a per-song play COUNT
-              // (only a play timestamp — see _playedAtById), so a real
-              // count can't be shown honestly yet. Falls back to the
-              // artist name instead, which the data genuinely has —
-              // never displays a fabricated number.
               subtitle: hasRecent
                   ? (recent.first.artist.isNotEmpty ? recent.first.artist : AppLocalizations.of(context)!.libraryUnknownArtist)
                   : AppLocalizations.of(context)!.libraryStartPlayingToGrow,
@@ -2603,11 +2263,6 @@ class _AurumLibraryOverviewTabState extends State<_AurumLibraryOverviewTab> {
                         index: 0,
                         curatedQueue: true,
                       ),
-              // FIX (dead tap): was `() {}`. Now opens the same
-              // Add-to-Liked/Add-to-Playlist sheet every song row already
-              // uses (showAurumSongOptionsSheet), so the "..." on this
-              // hero card does something real and consistent with the
-              // rest of the app instead of nothing.
               onMoreTap: !hasRecent
                   ? null
                   : () => showAurumSongOptionsSheet(context, recent.first),
@@ -2640,12 +2295,6 @@ class _AurumLibraryOverviewTabState extends State<_AurumLibraryOverviewTab> {
                     ),
                   ),
                   const Spacer(),
-                  // FEATURE ("history laibry mai show hota hai kinare hi
-                  // see all ka button... click pr animation ke sath
-                  // history screen pr le jaye"): this rail only previews
-                  // the 10 latest plays; "See all" opens the full
-                  // _HistoryScreen (entire stored history) with the same
-                  // depth transition the Playlists "See all" uses.
                   GestureDetector(
                     onTap: () {
                       AurumHaptics.light();
@@ -2757,12 +2406,6 @@ class _AurumLibraryOverviewTabState extends State<_AurumLibraryOverviewTab> {
               ),
             ),
           ),
-        // FEATURE — "Your Artists" preview section, playlists ke niche.
-        // "See all" calls widget.onSeeAllArtists (passed in from
-        // _LibraryScreenState) which just flips this same screen's own
-        // _tab to Artists — no navigation, since Artists is already one
-        // of this screen's own tabs. Same FollowedArtistsProvider data
-        // the dedicated Artists tab itself reads from.
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
@@ -2831,10 +2474,6 @@ class _AurumLibraryOverviewTabState extends State<_AurumLibraryOverviewTab> {
   }
 }
 
-// â”€â”€ Compact circular artist card used by the Library-overview "Your
-// Artists" preview row above. Deliberately theme-aware (bgSurfaceOf/
-// textPrimaryOf/accentOf) — the exact hardcoded-white bug fixed in
-// _AurumArtistRow above is the one thing this must NOT repeat. â”€â”€
 class _AurumArtistPreviewCard extends StatelessWidget {
   final Map<String, dynamic> artist;
   const _AurumArtistPreviewCard({required this.artist});
@@ -2887,26 +2526,6 @@ class _AurumArtistPreviewCard extends StatelessWidget {
     );
   }
 }
-
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// PLAYLISTS TAB — the dedicated Playlists chip.
-//
-// FIX (feature parity with PlaylistsScreen / "See all"): this used to be a
-// bare list with no controls at all — no sort, no lock/reorder, no grid
-// toggle, no "+" create button, no tag filter row — while the exact same
-// data pushed via Library's "See all" (PlaylistsScreen below) had the full
-// toolbar. Two different UIs for the same playlist list meant users who
-// tapped the "Playlists" chip directly (the more common path) landed on a
-// visibly stripped-down screen and had to go find "See all" to get the real
-// one — confusing, and it looked broken/unfinished ("kaali kaali", bare).
-//
-// Now built from the SAME state/logic as _PlaylistsScreenState (sort order,
-// reorder lock, list/grid toggle, tag filter, create dialog, manage-tags
-// sheet) — just without PlaylistsScreen's own Scaffold/SliverAppBar/back
-// button/MiniPlayerSlot, since this already lives inside LibraryScreen's
-// own Scaffold as a tab body. Keeping only ONE Scaffold per screen avoids
-// nesting a second bottom-inset/mini-player context inside the first.
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _AurumPlaylistsTab extends StatefulWidget {
   const _AurumPlaylistsTab();
@@ -2972,7 +2591,6 @@ class _AurumPlaylistsTabState extends State<_AurumPlaylistsTab> {
           slivers: [
             const SliverToBoxAdapter(child: SizedBox(height: 10)),
 
-            // â”€â”€ Toolbar row: sort dropdown, lock, view toggle, add â”€â”€â”€â”€â”€â”€
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
@@ -3015,7 +2633,6 @@ class _AurumPlaylistsTabState extends State<_AurumPlaylistsTab> {
               ),
             ),
 
-            // â”€â”€ Tag filter row: "All" chip + one per tag, "Manage Tags" â”€
             SliverToBoxAdapter(
               child: SizedBox(
                 height: 44,
@@ -3052,7 +2669,6 @@ class _AurumPlaylistsTabState extends State<_AurumPlaylistsTab> {
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 8)),
 
-            // â”€â”€ Empty state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (visible.isEmpty)
               SliverFillRemaining(
                 hasScrollBody: false,
@@ -3081,9 +2697,6 @@ class _AurumPlaylistsTabState extends State<_AurumPlaylistsTab> {
                 sliver: SliverReorderableList(
                   itemCount: visible.length,
                   onReorder: (oldIndex, newIndex) {
-                    // Pinned playlists always sit on top and are not
-                    // draggable; unpinned ones can't be dropped above them
-                    // (it would just snap back).
                     final pinnedCount =
                         visible.where((p) => p.isPinned).length;
                     if (oldIndex < pinnedCount) return;
@@ -3160,15 +2773,6 @@ class _QuickAccessGrid extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: 14,
       crossAxisSpacing: 14,
-      // FIX (cards look "half filled" / awkward empty corner): 2.6 made
-      // each card very short and wide relative to its content (icon +
-      // 2 short text lines), so with mainAxisAlignment.center below, the
-      // content huddled in the middle with dead space above and below —
-      // never touching the card's own top/bottom edges. ArchiveTune's
-      // reference cards are close to square and their content visibly
-      // fills the whole card. 1.7 gives each card real height to work
-      // with; padding/spacing/font sizes below were increased to match
-      // and use that height, not just leave it empty.
       childAspectRatio: 1.7,
       children: [
         _QuickAccessCard(
@@ -3190,7 +2794,6 @@ class _QuickAccessGrid extends StatelessWidget {
           iconColor: AurumTheme.accentOf(context),
           title: AppLocalizations.of(context)!.libraryMyTop50,
           subtitle: AppLocalizations.of(context)!.libraryAllTime,
-          // Ranked by REAL play count (RecommendationEngine), not recency.
           onTap: () => AurumDepthRoute.to(context, const _TopSongsScreen()),
         ),
         _QuickAccessCard(
@@ -3238,22 +2841,11 @@ class _QuickAccessCard extends StatelessWidget {
           onTap();
         },
         child: Padding(
-          // FIX: was EdgeInsets.all(14) with mainAxisAlignment.center —
-          // content clumped in the card's middle instead of spreading
-          // across it like ArchiveTune's reference cards. Padding widened
-          // slightly and the Column now uses spaceBetween (icon badge
-          // pinned near the top, title+subtitle pinned near the bottom)
-          // so the content actually reaches toward the card's own edges
-          // instead of floating in a shrink-wrapped island in the center.
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // FIX: bare small Icon (size 20) read as an afterthought
-              // next to ArchiveTune's icon-in-a-circle badge. A soft
-              // tinted circular badge gives the icon real visual weight
-              // and a fixed anchor point at the top of the card.
               Container(
                 width: 40,
                 height: 40,
@@ -3272,10 +2864,6 @@ class _QuickAccessCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: AurumTheme.textPrimaryOf(context),
-                      // FIX: 14.5 â†’ 16.5 and 11.5 â†’ 13 to match
-                      // ArchiveTune's bolder, more legible card text —
-                      // the old sizes were part of why the cards read as
-                      // sparse/half-empty.
                       fontSize: 16.5,
                       fontWeight: FontWeight.w800,
                     ),
@@ -3383,10 +2971,6 @@ class _AurumPlaylistRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // FIX (same class of bug already fixed in _AurumArtistRow — hardcoded
-    // Colors.white instead of a theme-aware surface color made rows
-    // unreadable on dark/AMOLED theme). This is the Library-overview
-    // preview row AND the dedicated Playlists tab row — same class.
     return Material(
       color: AurumTheme.bgSurfaceOf(context),
       borderRadius: BorderRadius.circular(18),
@@ -3447,10 +3031,6 @@ class _AurumPlaylistRow extends StatelessWidget {
     );
   }
 }
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// PLAYLISTS SCREEN — full list of user playlists with custom-order drag
-// reorder, list/grid view toggle, tag filtering, and "Manage Tags".
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 enum _PlaylistSort { custom, name, dateAdded, mostPlayed }
 
@@ -3464,11 +3044,8 @@ class PlaylistsScreen extends StatefulWidget {
 class _PlaylistsScreenState extends State<PlaylistsScreen> {
   _PlaylistSort _sort = _PlaylistSort.custom;
   bool _gridView = false;
-  // Locks the drag handles so an accidental long-press doesn't reshuffle
-  // "Custom order" — matches the reference lock icon next to the sort
-  // dropdown. Starts locked; the user explicitly unlocks to reorder.
   bool _reorderLocked = true;
-  String? _activeTag; // null == "All"
+  String? _activeTag;
 
   String _sortLabel(_PlaylistSort s) {
     switch (s) {
@@ -3524,7 +3101,6 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
             physics: const BouncingScrollPhysics(),
             cacheExtent: 1200,
             slivers: [
-              // â”€â”€ App Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               SliverAppBar(
                 expandedHeight: 110,
                 floating: true,
@@ -3545,7 +3121,6 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                 ),
               ),
 
-              // â”€â”€ Toolbar row: sort dropdown, lock, view toggle, add â”€â”€â”€â”€â”€â”€
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
@@ -3588,7 +3163,6 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                 ),
               ),
 
-              // â”€â”€ Tag filter row: "All" chip + one per tag, "Manage Tags" â”€
               SliverToBoxAdapter(
                 child: SizedBox(
                   height: 44,
@@ -3625,7 +3199,6 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 8)),
 
-              // â”€â”€ Empty state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               if (visible.isEmpty)
                 SliverFillRemaining(
                   child: _EmptyPlaylists(
@@ -3651,9 +3224,6 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                 SliverReorderableList(
                   itemCount: visible.length,
                   onReorder: (oldIndex, newIndex) {
-                    // Pinned playlists always sit on top and are not
-                    // draggable; unpinned ones can't be dropped above them
-                    // (it would just snap back).
                     final pinnedCount =
                         visible.where((p) => p.isPinned).length;
                     if (oldIndex < pinnedCount) return;
@@ -3715,8 +3285,6 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   }
 }
 
-// â”€â”€ Sort dropdown chip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 class _SortDropdown extends StatelessWidget {
   final String label;
   final ValueChanged<_PlaylistSort> onSelected;
@@ -3767,8 +3335,6 @@ class _SortDropdown extends StatelessWidget {
   }
 }
 
-// â”€â”€ Generic round toolbar icon button (lock / add) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 class _ToolbarIconButton extends StatelessWidget {
   final IconData icon;
   final bool filled;
@@ -3804,8 +3370,6 @@ class _ToolbarIconButton extends StatelessWidget {
     );
   }
 }
-
-// â”€â”€ List/grid toggle (reused shape, own instance for Playlists tab) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _PlaylistViewToggle extends StatelessWidget {
   final bool gridView;
@@ -3868,8 +3432,6 @@ class _PlaylistViewToggleButton extends StatelessWidget {
   }
 }
 
-// â”€â”€ Tag filter chip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 class _TagFilterChip extends StatelessWidget {
   final IconData? icon;
   final String label;
@@ -3914,8 +3476,6 @@ class _TagFilterChip extends StatelessWidget {
   }
 }
 
-// â”€â”€ List row (list-view mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 class _PlaylistListRow extends StatefulWidget {
   final AurumPlaylist playlist;
   final int index;
@@ -3932,38 +3492,6 @@ class _PlaylistListRow extends StatefulWidget {
 }
 
 class _PlaylistListRowState extends State<_PlaylistListRow> {
-  // PERF FIX ("Playlists section mein jaate hi had se zyada lag/hang" —
-  // production bug, found on recheck): `ArtworkPaletteCache.warm(...)`
-  // used to be called directly inside this row's build() method (this
-  // was a StatelessWidget before). build() re-runs on every scroll frame
-  // that brings this row back into the sliver's visible range AND on
-  // every single Consumer<PlaylistProvider> rebuild above (any playlist
-  // renamed/added/reordered rebuilds the whole list, which rebuilds
-  // every visible row). warm() itself dedupes against an already-cached
-  // or already-in-flight URL, but that dedupe is still a Map lookup done
-  // once per row per rebuild — with N playlists on screen and the
-  // Consumer rebuilding on every provider change, that's O(N) redundant
-  // map lookups firing continuously during scrolling/reordering, on top
-  // of the real cost: while extraction for a given cover is still
-  // in-flight (queued behind ArtworkPaletteCache's own 3-concurrent-max
-  // gate — see that file's matching comment), every rebuild before it
-  // resolves re-enters warm(), re-adding load to the same contended
-  // queue instead of firing the request once and leaving it alone.
-  // Moving this to initState/didUpdateWidget (gated on the URL actually
-  // changing) means each playlist's cover extraction is requested
-  // exactly once per URL, no matter how many times this row rebuilds
-  // afterward for unrelated reasons (scrolling it in/out of view,
-  // sibling rows changing, provider updates) — identical to the pattern
-  // PlaylistColorCover (aurum_cover_color.dart) already uses correctly
-  // for this exact same cache.
-  // COLD-START LAG FIX: the palette warm-up used to run for EVERY playlist
-  // row the moment the list built (initState). Each warm() downloads +
-  // decodes the cover a second time (the row's own image already loads it)
-  // — on a cold start with many playlists that is dozens of extra network
-  // fetches and image decodes competing with the first frames of this very
-  // screen. The palette is only needed by the detail screen, so it is now
-  // warmed on tap, right before the route opens.
-
   void _warmCover() {
     final coverArt = widget.playlist.coverArt;
     if (coverArt != null && coverArt.isNotEmpty) {
@@ -4188,8 +3716,6 @@ class _PlaylistListRowState extends State<_PlaylistListRow> {
   }
 }
 
-// â”€â”€ Grid tile (grid-view mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 class _PlaylistGridTile extends StatefulWidget {
   final AurumPlaylist playlist;
   const _PlaylistGridTile({required this.playlist});
@@ -4199,15 +3725,6 @@ class _PlaylistGridTile extends StatefulWidget {
 }
 
 class _PlaylistGridTileState extends State<_PlaylistGridTile> {
-  // PERF FIX — same root cause and same fix as _PlaylistListRowState's
-  // matching comment above: ArtworkPaletteCache.warm() moved out of
-  // build() (where it re-fired on every scroll/provider rebuild) and
-  // into initState/didUpdateWidget, gated on the cover URL actually
-  // changing, so each playlist's cover extraction is only ever
-  // requested once per URL.
-  // (Cold-start lag fix — see _PlaylistListRowState: warm on tap, not for
-  // every tile when the grid builds.)
-
   void _warmCover() {
     final coverArt = widget.playlist.coverArt;
     if (coverArt != null && coverArt.isNotEmpty) {
@@ -4306,8 +3823,6 @@ class _PlaylistGridTileState extends State<_PlaylistGridTile> {
   }
 }
 
-// â”€â”€ Manage Tags bottom sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 class _ManageTagsSheet extends StatefulWidget {
   final PlaylistProvider pp;
   const _ManageTagsSheet({required this.pp});
@@ -4326,9 +3841,6 @@ class _ManageTagsSheetState extends State<_ManageTagsSheet> {
     super.dispose();
   }
 
-  // Confirm (✓): the typed playlist name gets pinned to the very top of the
-  // Playlists list and stays there in every sort mode, across restarts and
-  // devices. (This field used to be a no-op.)
   Future<void> _confirmPin() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
@@ -4526,18 +4038,6 @@ class _ManageTagsSheetState extends State<_ManageTagsSheet> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// IMPORT-PLAYLIST PROMO
-//
-// One-time, full-screen animated promo (≈2s, auto-closes, tap to skip) the
-// first time a person opens the Playlists screen, so they discover that
-// playlists can be imported from Spotify / YouTube. The WHEN-to-show logic
-// (once per install, waits for splash + a calm screen, never over a dialog)
-// lives in AurumCoachTip; the visuals live in aurum_promo_screen.dart.
-// Tapping the promo's "Import now" button opens the import flow (which asks
-// to sign in first when signed out).
-// ═══════════════════════════════════════════════════════════════════════════
-
 class _ImportCoachAnchor extends StatelessWidget {
   final Widget child;
   const _ImportCoachAnchor({required this.child});
@@ -4557,43 +4057,9 @@ class _ImportCoachAnchor extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PLAYLIST DETAIL SCREEN
-//
-// REDESIGN (2026-10-07, "playlist screen ekdam mix screen jaisa, SimpMusic
-// jaisa, first time stuck na aaye"): same full-bleed-artwork layout as
-// MixScreen — sharp square art that fades into the palette-tinted page,
-// centered title block, shuffle · Play · download row, track count, then
-// compact YT-Music-style rows (wide thumbnail + title/artist + 3-dot).
-// Every existing option is kept: gallery cover (add / change / remove),
-// rename + description, download playlist, delete, long-press multi-select
-// + bulk remove, per-row remove, drag-handle reorder.
-//
-// FIRST-OPEN STUTTER — root causes removed:
-//   1. The old header decoded the SAME 1200px cover twice (a blurred copy
-//      scaled 1.15x under sigma-18 ImageFiltered + a sharp copy) and put a
-//      pinned SliverAppBar + FlexibleSpaceBar + AurumGlassCollapseBar
-//      (a shader glass layer) on top. Blur + saveLayer + shader warm-up
-//      all landed inside the route-push transition. Now: ONE image decode,
-//      no blur, no pinned glass bar.
-//   2. Two nested AnimationControllers (screen + header) each called
-//      setState on EVERY tick of a 420ms palette fade, rebuilding the whole
-//      CustomScrollView (incl. the reorderable list) ~25 times while the
-//      route was still sliding in. Now the fade lives inside two tiny
-//      TweenAnimationBuilders (background + header fade) — the list never
-//      rebuilds for it.
-//   3. Cold-cache palette extraction used to start during the push
-//      transition. Now it waits until the route has settled.
-//   4. The action row watched DownloadProvider wholesale (rebuild on every
-//      progress tick); now a record-valued select rebuilds only when the
-//      done/total numbers actually change.
-// ═══════════════════════════════════════════════════════════════════════════
-
 const Color _kPlaylistFallbackGlow = Color(0xFF1A1630);
 const Duration _kPlaylistGlowDuration = Duration(milliseconds: 420);
 
-/// Deterministic, pleasant poster color for playlists with no artwork
-/// (empty playlist / song without art) — stable per playlist id.
 Color _playlistPosterColor(String id) {
   var h = 7;
   for (final u in id.codeUnits) {
@@ -4602,11 +4068,6 @@ Color _playlistPosterColor(String id) {
   return HSLColor.fromAHSL(1.0, (h % 360).toDouble(), 0.58, 0.42).toColor();
 }
 
-/// Source for the full-bleed header — the same upgradeForFullPlayer() 600px
-/// source MixScreen and AlbumScreen use for their headers. (This used to
-/// request a 1200px version on top of the list thumbnail: ~4x the download,
-/// decode and RAM, and on slower devices the sharper layer only landed a few
-/// seconds after the screen opened and faded in over the blurry thumbnail.)
 String _playlistHeaderArtUrl(String url) {
   if (url.isEmpty) return url;
   return AurumArtwork.upgradeForFullPlayer(url);
@@ -4632,23 +4093,11 @@ class PlaylistDetailScreen extends StatefulWidget {
 }
 
 class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
-  // -- Multi-select state --
   bool _selecting = false;
   final Set<String> _selectedIds = {};
 
-  // -- Reorder mode --
-  // Dragging is an explicit mode (menu -> "Reorder songs"), not an always-on
-  // handle: the immediate-drag handle sat in the thumb zone and hijacked
-  // vertical swipes meant for scrolling, and SliverReorderableList is
-  // heavier than a plain SliverList. Normal browsing now scrolls exactly
-  // like Mix / Artist.
   bool _reordering = false;
 
-  // -- Pull-down stretch (same approach as ArtistScreen) --
-  // Overscroll past the top stretches the header art (anchored at its
-  // bottom) so no empty layer ever shows above it. The value lives in its
-  // own notifier: a scroll tick repaints only the art transform, never the
-  // list, and nothing at all once the offset is back in range.
   final ScrollController _scroll = ScrollController();
   final ValueNotifier<double> _stretch = ValueNotifier<double>(0);
 
@@ -4673,12 +4122,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     super.dispose();
   }
 
-  // -- Palette glow --------------------------------------------------------
-  // Plain target color. The fade between targets is animated by
-  // _PlaylistAnimatedBg / _PlaylistHeaderFade (TweenAnimationBuilder), so
-  // changing this never drives per-frame rebuilds of the list.
   Color _glowTarget = _kPlaylistFallbackGlow;
-  String? _glowArt; // artwork key _glowTarget was resolved (or is resolving) for
+  String? _glowArt;
   bool _inited = false;
 
   @override
@@ -4686,8 +4131,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     super.didChangeDependencies();
     if (_inited) return;
     _inited = true;
-    // Warm the exact header image request before the header first builds
-    // (same idea as MixScreen._precacheHeaderArtwork).
     final pl = context.read<PlaylistProvider>().getById(widget.playlistId);
     if (pl != null) _precacheHeader(pl.coverArt ?? '');
   }
@@ -4709,10 +4152,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     precacheImage(provider, context).catchError((_) {});
   }
 
-  /// Resolves [_glowTarget] for the playlist's current artwork. Cache hit /
-  /// no artwork → assigned synchronously, so the very first frame already
-  /// paints the right color (no pop). Cold cache → resolved after the route
-  /// transition settles, then faded in.
   void _ensureGlow(AurumPlaylist pl) {
     final art = pl.coverArt ?? '';
     if (art == _glowArt) return;
@@ -4740,9 +4179,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     setState(() => _glowTarget = safe);
   }
 
-  /// Completes once this route's push animation has finished (or after a
-  /// 900ms safety cap), so heavy palette work never competes with the
-  /// slide-in frames.
   Future<void> _routeSettled() async {
     final anim = ModalRoute.of(context)?.animation;
     if (anim == null || anim.status == AnimationStatus.completed) return;
@@ -4758,7 +4194,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     try {
       await done.future.timeout(const Duration(milliseconds: 900));
     } on TimeoutException {
-      // Proceed anyway.
     } finally {
       anim.removeStatusListener(listener);
     }
@@ -4788,14 +4223,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       if (!_selectedIds.remove(songId)) {
         _selectedIds.add(songId);
       }
-      // Nothing left selected -> fall back out of select mode gracefully,
-      // same as most stock "select" UIs (Photos, Gmail, etc.).
       if (_selectedIds.isEmpty) _selecting = false;
     });
   }
 
-  // Gallery cover: add / change / remove. Same behaviour as before (tap the
-  // artwork, or the new photo button in the header toolbar).
   Future<void> _changeCover(AurumPlaylist pl) async {
     final provider = context.read<PlaylistProvider>();
     final l10n = AppLocalizations.of(context)!;
@@ -4855,8 +4286,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         final picked = await ImagePicker().pickImage(
           source: ImageSource.gallery,
           imageQuality: 92,
-          // Header art decodes at 1200px max (AurumArtwork's sharp-hero
-          // budget), so there is no benefit in keeping more pixels.
           maxWidth: 1200,
           maxHeight: 1200,
         );
@@ -4984,8 +4413,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final pl = pp.getById(widget.playlistId);
 
     if (pl == null) {
-      // "Playlist not found" state (e.g. deleted from another device
-      // mid-view) — keeps the MiniPlayerSlot like the loaded Scaffold.
       return Scaffold(
         backgroundColor: immersiveScaffoldBg(context, _glowTarget),
         bottomNavigationBar: const MiniPlayerSlot(),
@@ -4996,9 +4423,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       );
     }
 
-    // Guard: if songs were removed elsewhere (e.g. another device sync)
-    // while a selection was active, drop ids that no longer exist so the
-    // count/app-bar never shows a stale number.
     if (_selecting) {
       final validIds = pl.songs.map((s) => s.id).toSet();
       _selectedIds.removeWhere((id) => !validIds.contains(id));
@@ -5018,8 +4442,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final summary = '${songs.length} ${songs.length == 1 ? 'track' : 'tracks'}'
         '${duration.isNotEmpty ? ' • $duration' : ''}';
 
-    // Row keys must be unique even if a playlist holds the same song twice
-    // (YouTube imports are not de-duplicated): 2nd+ copy gets "#n" suffix.
     final rowKeys = List<String>.filled(songs.length, '');
     final indexByKey = <String, int>{};
     final seenIds = <String, int>{};
@@ -5033,21 +4455,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
     final scroll = CustomScrollView(
       controller: _scroll,
-      // No explicit physics: identical to MixScreen (platform default), so
-      // there is no bounce/empty layer when pulling down. The stretch below
-      // still covers any platform that does allow overscroll.
-      // PERF: 1200px built ~15+ rows (thumbs + prewarm timers) inside the
-      // route transition. 500 matches Mix/Artist: smooth flings, no
-      // open-time burst.
       cacheExtent: 500,
       slivers: [
-        // ── Header / Select-mode app bar ───────────────────────────────
         if (_selecting)
           _SelectModeAppBar(
             background: bg,
             selectedCount: _selectedIds.length,
-            // Selection is keyed by song id, and imports can contain the same
-            // id twice - compare against UNIQUE ids so "Select all" flips.
             totalCount: songs.map((s) => s.id).toSet().length,
             allSelected:
                 _selectedIds.length == songs.map((s) => s.id).toSet().length,
@@ -5082,7 +4495,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               onMore: () => _showPlaylistOptions(context, pl),
             ),
           ),
-          // ── Action row: shuffle · Play · download ────────────────────
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
@@ -5136,7 +4548,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             ),
           ),
 
-        // ── Songs ──────────────────────────────────────────────────────
         if (songs.isEmpty)
           SliverToBoxAdapter(
             child: Padding(
@@ -5187,13 +4598,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           SliverReorderableList(
             itemCount: songs.length,
             onReorder: (oldIdx, newIdx) {
-              if (_selecting) return; // reorder disabled while selecting
+              if (_selecting) return;
               context
                   .read<PlaylistProvider>()
                   .reorderSong(pl.id, oldIdx, newIdx);
             },
-            // Lift-and-settle drag proxy — always driven back to 0 on
-            // drop/cancel so an interrupted drag can't leave a ghost frame.
             proxyDecorator: (child, index, animation) {
               return AnimatedBuilder(
                 animation: animation,
@@ -5265,9 +4674,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 if (key is! ValueKey<String>) return null;
                 return indexByKey[key.value];
               },
-              // PERF: the row owns its RepaintBoundary and keeps no
-              // keep-alive state — the delegate's extra wrappers are pure
-              // overhead (same as MixScreen).
               addRepaintBoundaries: false,
               addAutomaticKeepAlives: false,
             ),
@@ -5289,14 +4695,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       },
       child: Scaffold(
         backgroundColor: bg,
-        // Persistent mini player, same as every other detail screen.
         bottomNavigationBar: const MiniPlayerSlot(),
         body: _PlaylistAnimatedBg(color: bg, child: scroll),
       ),
     );
 
-    // Dark mode: the header artwork runs under the status bar, so keep the
-    // system icons light. Light mode keeps the app's global style.
     if (!isDark) return scaffold;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light.copyWith(
@@ -5355,12 +4758,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final isLight = Theme.of(context).brightness == Brightness.light;
     showAurumModalBottomSheet(
       context: context,
-      // FIX — dynamic theme (Material You) coverage: was hardcoded to the
-      // fixed lightBgCard constant in light mode, so this sheet ignored
-      // the wallpaper-derived surface color the rest of the app now uses.
-      // bgCardOf(context) resolves from the live ColorScheme, so it's
-      // Dynamic-Color-aware and falls back to the same lightBgCard when
-      // Dynamic Color is off — dark mode's darkBgElevated is unchanged.
       backgroundColor:
           isLight ? AurumTheme.bgCardOf(context) : AurumTheme.darkBgElevated,
       shape: const RoundedRectangleBorder(
@@ -5389,13 +4786,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 _showRenameDialog(context, pl);
               },
             ),
-            // FEATURE ("playlist details mai download ka option, ekdam
-            // fast"): downloads every song in this playlist concurrently
-            // through the same DownloadProvider.download() path a single
-            // manual download already uses — same quality/WiFi settings,
-            // same Downloads screen, same offline playback. Hidden when
-            // the playlist is empty or already fully downloaded, same as
-            // Play/Shuffle above hiding for an empty playlist.
             if (pl.songs.isNotEmpty)
               Builder(builder: (ctx2) {
                 final dl = ctx2.watch<DownloadProvider>();
@@ -5501,18 +4891,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       ),
     );
     if (confirmed == true && context.mounted) {
-      // Pop first so the screen never flashes "Playlist not found" while
-      // the provider notifies and Hive/cover cleanup finishes.
       final pp = context.read<PlaylistProvider>();
       Navigator.pop(context);
       await pp.deletePlaylist(pl.id);
     }
   }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Select-mode app bar — replaces the artwork header while multi-selecting
-// ═══════════════════════════════════════════════════════════════════════════
 
 class _SelectModeAppBar extends StatelessWidget {
   final Color background;
@@ -5587,11 +4971,6 @@ class _SelectModeAppBar extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Animated page background — the ONLY thing that repaints during a palette
-// fade. `child` (the scroll view) is built once and reused every tick.
-// ═══════════════════════════════════════════════════════════════════════════
-
 class _PlaylistAnimatedBg extends StatelessWidget {
   final Color color;
   final Widget child;
@@ -5610,8 +4989,6 @@ class _PlaylistAnimatedBg extends StatelessWidget {
   }
 }
 
-/// Bottom fade of the header into the page background. Same color and the
-/// same tween timing as [_PlaylistAnimatedBg], so there is never a seam.
 class _PlaylistHeaderFade extends StatelessWidget {
   final Color bg;
   const _PlaylistHeaderFade({required this.bg});
@@ -5644,10 +5021,6 @@ class _PlaylistHeaderFade extends StatelessWidget {
     );
   }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Playlist header — full-bleed artwork, MixScreen proportions
-// ═══════════════════════════════════════════════════════════════════════════
 
 class _PlaylistHeader extends StatelessWidget {
   final AurumPlaylist playlist;
@@ -5685,14 +5058,8 @@ class _PlaylistHeader extends StatelessWidget {
       height: height,
       child: Stack(
         fit: StackFit.expand,
-        // The stretched art and the top scrim paint above the header box
-        // while the page is pulled down — a hard clip would cut them off.
         clipBehavior: Clip.none,
         children: [
-          // Layer 0 — artwork (tap = change cover) or generated poster.
-          // scale = 1 + st/height, bottom-anchored: the box moves down by
-          // st while the art grows upward by exactly st, so its top always
-          // lands on the screen top (no empty layer when pulling down).
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -5704,7 +5071,6 @@ class _PlaylistHeader extends StatelessWidget {
                   alignment: Alignment.bottomCenter,
                   child: child,
                 ),
-                // Own layer: the stretch only transforms a cached texture.
                 child: RepaintBoundary(
                   child: art.isNotEmpty
                       ? _PlaylistHeaderArt(url: art)
@@ -5714,9 +5080,6 @@ class _PlaylistHeader extends StatelessWidget {
             ),
           ),
 
-          // Layer 1 — top scrim so status bar + floating pills stay
-          // readable on bright covers. Follows the SCREEN top (top: -st),
-          // not the box top, so no seam while pulling.
           ValueListenableBuilder<double>(
             valueListenable: stretch,
             builder: (context, st, child) => Positioned(
@@ -5742,12 +5105,10 @@ class _PlaylistHeader extends StatelessWidget {
             ),
           ),
 
-          // Layer 2 — bottom fade into the page background.
           Positioned.fill(
             child: IgnorePointer(child: _PlaylistHeaderFade(bg: bg)),
           ),
 
-          // Title block — centered, on the faded bottom edge.
           Positioned(
             left: 24,
             right: 24,
@@ -5807,7 +5168,6 @@ class _PlaylistHeader extends StatelessWidget {
             ),
           ),
 
-          // Floating glass toolbar — back (left), cover + overflow (right).
           SafeArea(
             bottom: false,
             child: Padding(
@@ -5849,8 +5209,6 @@ class _PlaylistHeader extends StatelessWidget {
   }
 }
 
-/// Full-bleed cover: ONE image layer, ONE decode, no blur (same as the Mix
-/// and Album headers). A cover change cross-fades instead of popping.
 class _PlaylistHeaderArt extends StatelessWidget {
   final String url;
   const _PlaylistHeaderArt({required this.url});
@@ -5881,9 +5239,6 @@ class _PlaylistHeaderArt extends StatelessWidget {
   }
 }
 
-/// Header art for playlists with no cover: a rich vertical gradient with a
-/// soft highlight and a large queue glyph — fades into the same tinted
-/// background as a real cover.
 class _PlaylistPoster extends StatelessWidget {
   final Color color;
   const _PlaylistPoster({required this.color});
@@ -5942,8 +5297,6 @@ class _PlaylistPoster extends StatelessWidget {
   }
 }
 
-/// Floating header pill — same real Liquid Glass surface the mini player
-/// and MixScreen use. Fixed size + interactive off so it can never warp.
 class _PlGlassPill extends StatelessWidget {
   final Widget child;
   final double width;
@@ -5960,7 +5313,6 @@ class _PlGlassPill extends StatelessWidget {
         sigma: 6,
         borderRadius: BorderRadius.circular(_height / 2),
         isDark: true,
-        interactive: false,
         child: SizedBox(width: width, height: _height, child: child),
       ),
     );
@@ -5985,10 +5337,6 @@ class _PlGlassIconButton extends StatelessWidget {
     );
   }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Action row: shuffle · Play · download
-// ═══════════════════════════════════════════════════════════════════════════
 
 class _PlRoundButton extends StatelessWidget {
   final Widget child;
@@ -6092,9 +5440,6 @@ class _PlaylistActionRow extends StatelessWidget {
   }
 }
 
-/// Download button with live progress ring. Selects a (allDone, downloading,
-/// done, total) record so it rebuilds only when those values really change —
-/// not on every DownloadProvider notification.
 class _PlaylistDownloadButton extends StatelessWidget {
   final AurumPlaylist playlist;
   const _PlaylistDownloadButton({required this.playlist});
@@ -6155,11 +5500,6 @@ class _PlaylistDownloadButton extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Track row — MixScreen/YT Music style (wide thumbnail + title/artist + ⋮)
-// with playlist extras: multi-select checkbox + reorder drag handle.
-// ═══════════════════════════════════════════════════════════════════════════
-
 class _PlaylistTrackRow extends StatefulWidget {
   final Song song;
   final AurumPlaylist playlist;
@@ -6194,8 +5534,6 @@ class _PlaylistTrackRowState extends State<_PlaylistTrackRow> {
   @override
   void initState() {
     super.initState();
-    // Same staggered stream pre-warm SongTile does for YouTube songs, so a
-    // tap on a visible row starts playing without the resolve delay.
     if (widget.song.source == SongSource.youtube) {
       final delayMs = 120 + (widget.song.id.hashCode.abs() % 280);
       _prewarmTimer = Timer(Duration(milliseconds: delayMs), () {
@@ -6214,9 +5552,6 @@ class _PlaylistTrackRowState extends State<_PlaylistTrackRow> {
   @override
   Widget build(BuildContext context) {
     final song = widget.song;
-    // ONE selector per row (0 = idle, 1 = current/paused, 2 = playing)
-    // instead of two — halves the per-row listener work on every
-    // player tick that changes nothing for this row.
     final playState = context.select<PlayerProvider, int>((p) =>
         p.currentSong?.id != song.id ? 0 : (p.isPlaying ? 2 : 1));
     final isCurrent = playState != 0;
@@ -6261,8 +5596,6 @@ class _PlaylistTrackRowState extends State<_PlaylistTrackRow> {
                 padding: const EdgeInsets.fromLTRB(20, 9, 4, 9),
                 child: Row(
                   children: [
-                    // PERF: no per-row AnimatedSize in the normal list — one
-                    // less render object on every row.
                     if (widget.selecting)
                       Padding(
                         padding: const EdgeInsets.only(right: 12),
@@ -6329,7 +5662,6 @@ class _PlaylistTrackRowState extends State<_PlaylistTrackRow> {
                       ),
                     ),
                     if (widget.reordering)
-                      // Reorder mode only: handle is the sole drag trigger.
                       ReorderableDragStartListener(
                         index: widget.index,
                         child: SizedBox(
@@ -6406,10 +5738,6 @@ class _PlaylistCheck extends StatelessWidget {
     );
   }
 }
-
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Empty Playlists state
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _EmptyPlaylists extends StatelessWidget {
   final VoidCallback onCreateTap;
@@ -6507,10 +5835,6 @@ class _EmptyPlaylists extends StatelessWidget {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Create Playlist Dialog
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
 class _CreatePlaylistDialog extends StatefulWidget {
   final Song? initialSong;
   const _CreatePlaylistDialog({this.initialSong});
@@ -6522,9 +5846,6 @@ class _CreatePlaylistDialog extends StatefulWidget {
 class _CreatePlaylistDialogState extends State<_CreatePlaylistDialog> {
   final _nameCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
-  // Keyboard-focus timing (autofocus-during-dialog-entrance-animation
-  // bug) is handled centrally by AurumFocusField now — see that file for
-  // the full history. Don't re-add a FocusNode/autofocus here directly.
   bool _creating = false;
 
   @override
@@ -6540,18 +5861,6 @@ class _CreatePlaylistDialogState extends State<_CreatePlaylistDialog> {
     return AlertDialog(
       backgroundColor: AurumTheme.bgElevatedOf(context),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      // BUGFIX: "keyboard opens then closes instantly" (playlist create).
-      // The focus-timing fix above (waiting for the route's own enter
-      // animation before requesting focus) fixed the route-transition
-      // race, but this AlertDialog had no scrollable/resize handling at
-      // all — unlike the feedback dialog, which absorbs the keyboard via
-      // AnimatedPadding + SingleChildScrollView. Without that, the
-      // keyboard rising delivered an abrupt, un-animated layout change to
-      // the just-focused TextField instead of a smooth one, which could
-      // still read as an instant open-then-close. scrollable:true makes
-      // AlertDialog wrap its content in a SingleChildScrollView
-      // internally, so it resizes smoothly with the keyboard instead of
-      // fighting it.
       scrollable: true,
       title: Text(l10n.libraryNewPlaylist,
           style: TextStyle(
@@ -6620,13 +5929,11 @@ class _CreatePlaylistDialogState extends State<_CreatePlaylistDialog> {
             initialSong: widget.initialSong,
           );
     } catch (_) {
-      // Never leave the Create button dead behind a spinner.
       if (mounted) setState(() => _creating = false);
       return;
     }
     if (mounted) {
       Navigator.pop(context);
-      // Navigate directly to the new playlist
       AurumDepthRoute.to(
         context,
         PlaylistDetailScreen(playlistId: pl.id),
@@ -6635,22 +5942,6 @@ class _CreatePlaylistDialogState extends State<_CreatePlaylistDialog> {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Import Playlist Dialog (Spotify + YouTube)
-// ═══════════════════════════════════════════════════════════════════════════════
-//
-// One dialog for both services: paste a Spotify or YouTube / YouTube Music
-// playlist link and Astra detects which it is. Same chrome as
-// _CreatePlaylistDialog. Stages:
-//   idle     — paste field (+ Paste button, "Spotify/YouTube link detected")
-//   working  — progress bar: "Reading playlist…" then "Matching songs… 12/87"
-//   done     — only shown when something needs the person's attention
-//              (some songs not found / Spotify's 100-song cap). A clean
-//              import closes itself and opens the new playlist directly.
-// The playlist is saved the moment the import finishes, so closing the
-// summary never loses anything.
-
-/// Entry point used by the "import" button on both Playlists screens.
 Future<void> _showImportPlaylistDialog(BuildContext context) async {
   final l10n = AppLocalizations.of(context)!;
   PremiumGate.guard(
@@ -6671,8 +5962,6 @@ Future<void> _showImportPlaylistDialog(BuildContext context) async {
 enum _ImportStage { idle, working, done }
 
 class _ImportPlaylistDialog extends StatefulWidget {
-  /// Context of the screen that opened the dialog — still valid after the
-  /// dialog pops, so it's used for navigating to the new playlist.
   final BuildContext hostContext;
   const _ImportPlaylistDialog({required this.hostContext});
 
@@ -6778,8 +6067,6 @@ class _ImportPlaylistDialogState extends State<_ImportPlaylistDialog> {
         songs: result.songs,
         youtubeSynced: result.source == PlaylistImportSource.youtube,
       );
-      // Cancel tapped while saving: playlist is already stored, but don't
-      // navigate / flip stages behind the user's back.
       if (!mounted || cancel.isCancelled) return;
 
       final clean = result.unmatched.isEmpty && !result.possiblyTruncated;
@@ -6800,7 +6087,6 @@ class _ImportPlaylistDialogState extends State<_ImportPlaylistDialog> {
         _playlistId = playlist.id;
       });
     } on PlaylistImportCancelled {
-      // The Cancel button already put the dialog back to idle.
     } on PlaylistImportException catch (e) {
       if (!mounted || _cancel != cancel) return;
       setState(() {
@@ -7056,10 +6342,6 @@ class _ImportPlaylistDialogState extends State<_ImportPlaylistDialog> {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Rename Dialog
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
 class _RenamePlaylistDialog extends StatefulWidget {
   final AurumPlaylist playlist;
   const _RenamePlaylistDialog({required this.playlist});
@@ -7071,9 +6353,6 @@ class _RenamePlaylistDialog extends StatefulWidget {
 class _RenamePlaylistDialogState extends State<_RenamePlaylistDialog> {
   late TextEditingController _nameCtrl;
   late TextEditingController _descCtrl;
-  // Keyboard-focus timing (autofocus-during-dialog-entrance-animation
-  // bug) is handled centrally by AurumFocusField now — see that file for
-  // the full history. Don't re-add a FocusNode/autofocus here directly.
 
   @override
   void initState() {
@@ -7095,8 +6374,6 @@ class _RenamePlaylistDialogState extends State<_RenamePlaylistDialog> {
     return AlertDialog(
       backgroundColor: AurumTheme.bgElevatedOf(context),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      // BUGFIX: same keyboard-jolt fix as _CreatePlaylistDialog above —
-      // see the comment there for the full explanation.
       scrollable: true,
       title: Text(l10n.libraryEditPlaylist,
           style: TextStyle(
@@ -7150,11 +6427,6 @@ class _RenamePlaylistDialogState extends State<_RenamePlaylistDialog> {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// "Add to Playlist" bottom sheet — call this from anywhere (player, search, etc)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-/// Call this from player 3-dot menu or SongTile long-press.
 Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
   final pp = context.read<PlaylistProvider>();
   final isLight = Theme.of(context).brightness == Brightness.light;
@@ -7163,8 +6435,6 @@ Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
   await showAurumModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    // FIX — dynamic theme coverage: same lightBgCard-hardcode gap as the
-    // sheets above.
     backgroundColor:
         isLight ? AurumTheme.bgCardOf(context) : AurumTheme.darkBgElevated,
     shape: const RoundedRectangleBorder(
@@ -7179,7 +6449,6 @@ Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
             maxChildSize: 0.85,
             builder: (_, scrollCtrl) => Column(
               children: [
-                // Handle
                 Container(
                   width: 36,
                   height: 4,
@@ -7189,7 +6458,6 @@ Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                // Title
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
                   child: Row(
@@ -7223,7 +6491,6 @@ Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
                 Divider(
                     color: AurumTheme.textMutedOf(context).withOpacity(0.1),
                     height: 1),
-                // New playlist button
                 ListTile(
                   leading: Container(
                     width: 44,
@@ -7249,21 +6516,6 @@ Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
                       requiresLoginOnly: true,
                       onAllowed: () {
                         Navigator.pop(ctx);
-                        // FIX (root cause of "playlist won't open / keyboard
-                        // doesn't open" when creating from this sheet):
-                        // popping this bottom sheet and immediately calling
-                        // showDialog ran both routes' enter/exit
-                        // transitions at the same time. _CreatePlaylistDialog
-                        // already waits for its OWN route animation to
-                        // complete before requesting focus, but that
-                        // detection is far more reliable when there isn't a
-                        // second route transition (this sheet closing)
-                        // simultaneously in flight on the same Navigator.
-                        // A post-frame callback (a real frame-boundary
-                        // guarantee, not a timing guess) lets the sheet's
-                        // pop fully register first, so the create dialog
-                        // opens into a calm navigator stack instead of a
-                        // mid-transition one.
                         WidgetsBinding.instance.addPostFrameCallback((_) {
                           if (!context.mounted) return;
                           showDialog(
@@ -7276,7 +6528,6 @@ Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
                     );
                   },
                 ),
-                // Existing playlists
                 Expanded(
                   child: pp.playlists.isEmpty
                       ? Center(
@@ -7286,7 +6537,6 @@ Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
                       : ListView.builder(
                           controller: scrollCtrl,
                           physics: const BouncingScrollPhysics(),
-                          // PERF: pop-in fix for the playlist picker list.
                           cacheExtent: 600,
                           itemCount: pp.playlists.length,
                           itemExtent: 72,
@@ -7361,10 +6611,6 @@ Future<void> showAddToPlaylistSheet(BuildContext context, Song song) async {
   );
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Reusable text field
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
 class _AurumTextField extends StatelessWidget {
   final TextEditingController controller;
   final String label;
@@ -7411,12 +6657,6 @@ class _AurumTextField extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// Top Songs Screen -- ranked by REAL play count (RecommendationEngine._plays,
-// incremented on every onSongStarted), not by recency. See "My top 50" tile's
-// onTap comment above for why this replaced reusing _HistoryScreen.
-// ============================================================================
-
 class _TopSongsScreen extends StatelessWidget {
   const _TopSongsScreen();
 
@@ -7424,17 +6664,6 @@ class _TopSongsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<RecentlyPlayedProvider>(
       builder: (context, rp, _) {
-        // Song objects aren't stored inside RecommendationEngine itself
-        // (it only tracks ids + counts, kept intentionally lightweight --
-        // see its _maxTrackedSongs pruning comment). Resolving each
-        // ranked id back to a full Song via the history list it already
-        // holds in memory -- a song that's been played enough to rank in
-        // a Top 50 will almost always still be present there (history
-        // holds up to 200 entries; RecommendationEngine tracks up to
-        // 500), and any id that genuinely fell out of both is simply
-        // skipped rather than shown broken.
-        // History only keeps ~200 songs, so also resolve through liked and
-        // downloaded songs (history last = freshest metadata wins).
         final byId = <String, Song>{
           for (final d in context.read<DownloadProvider>().completed)
             d.song.id: d.song,
@@ -7580,10 +6809,6 @@ class _TopSongsScreen extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         child: Row(
                           children: [
-                            // Rank number badge -- top 3 pick up the
-                            // accent color/weight so the "most played"
-                            // handful visually stand out, matching how
-                            // Spotify Wrapped's Top Songs list reads.
                             SizedBox(
                               width: 32,
                               child: Text(
@@ -7625,10 +6850,6 @@ class _TopSongsScreen extends StatelessWidget {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// History Screen — time-grouped, animated, play all / shuffle
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
 class _HistoryScreen extends StatefulWidget {
   const _HistoryScreen();
   @override
@@ -7656,9 +6877,6 @@ class _HistoryScreenState extends State<_HistoryScreen>
     super.dispose();
   }
 
-  // â”€â”€ Time label helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // Buckets use the REAL played-at timestamp (RecentlyPlayedProvider
-  // .playedAtFor), so "Yesterday" really means yesterday.
   static String _groupLabel(int? playedAtMs, AppLocalizations l10n) {
     if (playedAtMs == null) return l10n.libraryHistoryOlder;
     final now = DateTime.now();
@@ -7683,15 +6901,11 @@ class _HistoryScreenState extends State<_HistoryScreen>
 
         return Scaffold(
           backgroundColor: AurumTheme.bgOf(context),
-          // SPOTIFY-STYLE PERSISTENT MINI PLAYER — see liked_screen.dart's
-          // matching comment for the full reasoning.
           bottomNavigationBar: const MiniPlayerSlot(),
           body: CustomScrollView(
             physics: const BouncingScrollPhysics(),
-            // PERF FIX — see LibraryScreen's matching cacheExtent comment above.
             cacheExtent: 1200,
             slivers: [
-              // â”€â”€ App Bar â”€â”€
               SliverAppBar(
                 expandedHeight: 120,
                 floating: false,
@@ -7750,7 +6964,6 @@ class _HistoryScreenState extends State<_HistoryScreen>
                 ),
               ),
 
-              // â”€â”€ Empty state â”€â”€
               if (history.isEmpty)
                 SliverFillRemaining(
                   child: Center(
@@ -7784,7 +6997,6 @@ class _HistoryScreenState extends State<_HistoryScreen>
                   ),
                 )
               else ...[
-                // â”€â”€ Stats + action bar â”€â”€
                 SliverToBoxAdapter(
                   child: FadeTransition(
                     opacity: _headerFade,
@@ -7798,7 +7010,6 @@ class _HistoryScreenState extends State<_HistoryScreen>
                               fontSize: 13),
                         ),
                         const Spacer(),
-                        // Play All
                         AurumPressable(
                           onTap: () {
                             context.read<PlayerProvider>().playSong(
@@ -7834,7 +7045,6 @@ class _HistoryScreenState extends State<_HistoryScreen>
                           ),
                         ),
                         const SizedBox(width: 8),
-                        // Clear
                         AurumPressable(
                           onTap: () async {
                             final confirmed = await showDialog<bool>(
@@ -7875,10 +7085,6 @@ class _HistoryScreenState extends State<_HistoryScreen>
                               await context
                                   .read<RecentlyPlayedProvider>()
                                   .clearHistory();
-                              // Also wipe cloud-side, same reasoning as
-                              // settings_privacy_screen's Clear History —
-                              // otherwise a future sync silently restores
-                              // what was just cleared.
                               unawaited(
                                   SyncService.instance.clearRemoteHistory());
                             }
@@ -7909,7 +7115,6 @@ class _HistoryScreenState extends State<_HistoryScreen>
                   ),
                 ),
 
-                // â”€â”€ Grouped song list â”€â”€
                 SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (context, i) {
@@ -7963,30 +7168,11 @@ class _HistoryScreenState extends State<_HistoryScreen>
   }
 }
 
-// â”€â”€ Animated history list item â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// FIX (thumbnail appears to jump/re-enter while scrolling): see the
-// matching _seenStaggeredItems fix in search_screen.dart — identical
-// root cause here. A ListView scrolling a history row off-screen and
-// back tears down and rebuilds this State (Flutter disposes off-screen
-// list children), re-running initState() and replaying the 0.06-offset
-// slide-in from scratch every time. Tracking which items have already
-// animated once per session fixes it.
-//
-// FIX (on top of the above): keyed by song id (itemKey) rather than raw
-// list position. History reorders whenever a song is replayed — it jumps
-// back to the top of the list, shifting every other item's index down by
-// one. With a position-only key, that shift could make an already-seen
-// song look "new" at its shifted index (replaying its entrance animation
-// for no reason) while a genuinely new item lands on an index some other
-// song had already claimed as seen (wrongly skipping its animation).
-// Keying by the song's own id avoids both.
 final _seenHistoryItems = <String>{};
 
 class _AnimatedHistoryItem extends StatefulWidget {
   final int index;
   final Widget child;
-  // Stable identity for the underlying history entry (its song id).
-  // Falls back to the raw index if not provided.
   final String? itemKey;
   const _AnimatedHistoryItem({required this.index, required this.child, this.itemKey});
 
@@ -8040,16 +7226,6 @@ class _AnimatedHistoryItemState extends State<_AnimatedHistoryItem>
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Local Files Screen (unchanged)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Local/offline songs screen, now with an in-place search bar (reference:
-// ArchiveTune's "Local" screen shows a search icon in its top bar that
-// opens a search field scoped to just this list). StatefulWidget purely to
-// hold the TextEditingController + query string — LibraryProvider itself
-// stays the single source of truth for the actual song list, this only
-// filters what's already loaded, same as SongTile below already does with
-// its own local queue/index math.
 class _LocalFilesScreen extends StatefulWidget {
   const _LocalFilesScreen();
 
@@ -8072,10 +7248,6 @@ class _LocalFilesScreenState extends State<_LocalFilesScreen> {
 
   void _openSearch() {
     setState(() => _searching = true);
-    // Same "wait a frame, then focus" pattern search_screen.dart's own
-    // field uses — requesting focus in the same frame the field is first
-    // built can silently attach the IME connection without actually
-    // raising the keyboard.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _searchFocusNode.requestFocus();
     });
@@ -8090,10 +7262,6 @@ class _LocalFilesScreenState extends State<_LocalFilesScreen> {
     FocusScope.of(context).unfocus();
   }
 
-  // Case-insensitive match against title, artist, and album — the three
-  // fields a person would actually type when hunting for a specific local
-  // file (matches how search_screen.dart's own online search already
-  // reasons about "what a query could mean").
   List<Song> _filtered(List<Song> songs) {
     if (_query.trim().isEmpty) return songs;
     final q = _query.trim().toLowerCase();
@@ -8110,10 +7278,6 @@ class _LocalFilesScreenState extends State<_LocalFilesScreen> {
     final lib = context.watch<LibraryProvider>();
     final filtered = _filtered(lib.allSongs);
 
-    // BACK FIX: system/gesture back used to pop this whole screen even
-    // while the search field was open (only the toolbar arrow closed
-    // search first). Now back closes search first, then leaves the screen —
-    // identical to what the toolbar arrow already did.
     return PopScope(
       canPop: !_searching,
       onPopInvokedWithResult: (didPop, _) {
@@ -8121,8 +7285,6 @@ class _LocalFilesScreenState extends State<_LocalFilesScreen> {
       },
       child: Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // SPOTIFY-STYLE PERSISTENT MINI PLAYER — see liked_screen.dart's
-      // matching comment for the full reasoning.
       bottomNavigationBar: const MiniPlayerSlot(),
       appBar: AppBar(
         backgroundColor: AurumTheme.bgOf(context),
@@ -8246,24 +7408,8 @@ class _LocalFilesScreenState extends State<_LocalFilesScreen> {
                       : ListView.builder(
                           physics: const BouncingScrollPhysics(),
                           padding: const EdgeInsets.only(bottom: 100),
-                          // PERF: pop-in fix for the full local-songs list.
                           cacheExtent: 1000,
                           itemCount: filtered.length,
-                          // SIZE FIX ("thumbnail bahut chhota" then "thoda
-                          // sa aur chhota" — SongTile's cover art went
-                          // 50â†’64â†’58px app-wide): row height follows —
-                          // 20 vertical padding + the artwork box
-                          // AurumStackedArtwork draws at size+8 headroom
-                          // (58+8=66) = 86. itemExtent has to match
-                          // ListView.builder's actual row height or Flutter
-                          // clips/overflows every tile to the stale value.
-                          //
-                          // NOTE: only applied when NOT searching — a
-                          // filtered list can be short enough that a fixed
-                          // itemExtent times a small itemCount leaves the
-                          // rest of the screen blank, which reads fine
-                          // either way, so this is really just preserving
-                          // the exact unfiltered behavior untouched.
                           itemExtent: _query.trim().isEmpty ? 86 : null,
                           itemBuilder: (_, i) => SongTile(
                               song: filtered[i],
@@ -8276,12 +7422,6 @@ class _LocalFilesScreenState extends State<_LocalFilesScreen> {
   }
 }
 
-// â”€â”€ Search field used inside _LocalFilesScreen's AppBar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Deliberately its own small widget (not inlined) so the AnimatedSwitcher-
-// less swap between title Text and this field in the AppBar stays simple —
-// same visual language (rounded, gold-on-focus border) as
-// search_screen.dart's main search bar, just compact enough to sit in an
-// AppBar's title slot instead of taking a full screen section.
 class _LocalSearchField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -8333,35 +7473,6 @@ class _LocalSearchField extends StatelessWidget {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Downloads Screen (unchanged, kept public for NavigatorKey usage in main.dart)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// PRODUCTION-GRADE PASS ("ekdam Echo Nightly jaisa feel, ekdam lightweight,
-// low-end pe makkhan chale"): this screen previously showed a percent as
-// plain text and nothing else — no visual progress, no storage summary, no
-// transition animation when a download finishes or is removed. Three
-// changes below, each picked specifically because it's cheap on a low-end
-// device, not just because it looks nicer:
-//   1. A thin circular progress RING around the artwork (CustomPainter,
-//      one arc draw — costs nothing like a shader/blur would) replaces the
-//      flat opacity+spinner combo, same premium-app language as Spotify/
-//      YT Music/Echo Nightly's own download indicators.
-//   2. A storage-summary header ("12 songs Â· 84 MB") using fileSizeBytes,
-//      which DownloadItem already tracks — zero new state, just a fold
-//      over data already being persisted.
-//   3. AnimatedSwitcher + AnimatedList-style implicit transitions so a
-//      download finishing (moves from "Downloading" to "Downloaded") or a
-//      delete doesn't jump-cut the list — a short fade/slide, same 220ms
-//      timing already used everywhere else in the app for consistency.
-// â”€â”€ Downloads: Downloaded / In progress tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Reference (ArchiveTune screenshot): two tabs under the "Downloads" title —
-// "Downloaded" (a checkmark-circle icon above the label) and "In progress"
-// (a download-arrow icon above the label), each tab a full-width flex half,
-// selected tab in gold text with a gold underline beneath it, unselected
-// tab dimmed. Replaces the earlier single continuous scroll (Downloading
-// section stacked above Downloaded section) — that layout technically
-// worked but read as flat/lifeless next to the reference's clearer split,
-// and gave "in progress" items no per-song pause control, only cancel.
 class DownloadsScreen extends StatefulWidget {
   const DownloadsScreen({super.key});
 
@@ -8370,18 +7481,11 @@ class DownloadsScreen extends StatefulWidget {
 }
 
 class _DownloadsScreenState extends State<DownloadsScreen> {
-  int _tabIndex = 0; // 0 = Downloaded, 1 = In progress
+  int _tabIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    // Fresh push (or re-push) of this screen — treat this as a brand new
-    // "initial build" session. Every _DownloadTileEntrance alive during
-    // the upcoming first frame will read true and skip its own fade
-    // (AurumDepthRoute's page transition already covers that moment);
-    // this flips to false right after that first frame paints, so any
-    // row appearing later plays the fade normally. See
-    // _DownloadsSessionGate's own comment for the full reasoning.
     _DownloadsSessionGate.isInitialBuild = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _DownloadsSessionGate.isInitialBuild = false;
@@ -8408,8 +7512,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
     return Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // SPOTIFY-STYLE PERSISTENT MINI PLAYER — see liked_screen.dart's
-      // matching comment for the full reasoning.
       bottomNavigationBar: const MiniPlayerSlot(),
       body: SafeArea(
         bottom: false,
@@ -8442,9 +7544,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 ),
               ),
             ),
-            // Storage summary strip — only meaningful once something is
-            // actually downloaded, so it's skipped entirely on the empty
-            // state (no dead "0 songs Â· 0 MB" row to greet a new user).
             if (completed.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
@@ -8494,7 +7593,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   }
 }
 
-// â”€â”€ Tab row: "Downloaded" / "In progress", underline indicator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _DownloadsTabRow extends StatelessWidget {
   final int index;
   final int inProgressCount;
@@ -8605,7 +7703,6 @@ class _DownloadsTab extends StatelessWidget {
   }
 }
 
-// â”€â”€ "Downloaded" tab body â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _DownloadedList extends StatelessWidget {
   final List<DownloadItem> completed;
   const _DownloadedList({required this.completed});
@@ -8638,7 +7735,6 @@ class _DownloadedList extends StatelessWidget {
   }
 }
 
-// â”€â”€ "In progress" tab body â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _InProgressList extends StatelessWidget {
   final List<DownloadItem> items;
   const _InProgressList({required this.items});
@@ -8717,11 +7813,6 @@ class _DownloadsEmptyState extends StatelessWidget {
   }
 }
 
-// â”€â”€ "In progress" row: artwork, title/artist, live progress bar, â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// pause/resume + cancel buttons. Reference (ArchiveTune screenshot) shows
-// exactly this: a rounded card per song, a filled pill "%" + "B/s" line, a
-// thin progress track beneath, and two circular action buttons — pause
-// (or resume, once paused) and an X to cancel.
 class _InProgressCard extends StatelessWidget {
   final DownloadItem item;
   const _InProgressCard({required this.item});
@@ -8860,18 +7951,6 @@ class _RoundIconButton extends StatelessWidget {
   }
 }
 
-// PRODUCTION-GRADE PROGRESS RING ("download songs bhe ekdam top level ka,
-// Echo Nightly style"): replaces the old opacity+small-spinner combo with
-// a real determinate ring showing actual download progress, same visual
-// language as Spotify/YT Music's own download indicators. Deliberately a
-// CustomPainter drawing one arc rather than Flutter's own
-// CircularProgressIndicator — same visual result, but a single Canvas.drawArc
-// call per repaint is cheaper than the animation/paint machinery
-// CircularProgressIndicator carries (built for material-spec ripple +
-// indeterminate-mode support this use case doesn't need), and it repaints
-// only when `progress` actually changes (driven by DownloadProvider's own
-// notifyListeners, already throttled to once per whole percent — see
-// download_provider.dart) rather than ticking every frame.
 class _DownloadProgressRing extends StatelessWidget {
   final String artworkUrl;
   final double progress;
@@ -8892,10 +7971,6 @@ class _DownloadProgressRing extends StatelessWidget {
               child: AurumArtwork(url: artworkUrl, size: 48, borderRadius: 8),
             ),
           ),
-          // Soft scrim so the ring reads clearly over busy album art,
-          // same purpose as the old Opacity(0.4) wash — just tuned
-          // slightly lighter since the ring itself now carries most of
-          // the "this is downloading" signal.
           Container(
             width: 48,
             height: 48,
@@ -8957,9 +8032,6 @@ class _RingPainter extends CustomPainter {
     }
   }
 
-  // Only repaint when the actual progress value changes — not on every
-  // rebuild of the parent tile (e.g. theme/locale changes elsewhere in
-  // the tree), keeping this genuinely cheap on a long downloading list.
   @override
   bool shouldRepaint(covariant _RingPainter oldDelegate) =>
       oldDelegate.progress != progress ||
@@ -8967,32 +8039,6 @@ class _RingPainter extends CustomPainter {
       oldDelegate.progressColor != progressColor;
 }
 
-// LIGHTWEIGHT ENTRANCE ("naya download list mein aaye to smooth aaye, page
-// khulte hi sab tiles pe apna alag fade na chale — glitch jaisa lagta
-// tha"): the earlier version played this fade/slide on EVERY tile the
-// instant it built — including the very first frame the whole screen
-// appears on. That collided with AurumDepthRoute's own page-level
-// fade+slide-up transition (see aurum_transitions.dart) running at the
-// exact same moment: two independent opacity animations stacked on top of
-// each other, starting at slightly different instants, reads as a
-// glitch/stutter rather than something intentional — this tile-level fade
-// was invisible under the page's much bigger fade for most of the
-// transition, then popped in abruptly right at the end, which is exactly
-// the "animation isn't working / feels off" behavior reported.
-//
-// Fix: a row present on the very first build of the list (i.e. the screen
-// just opened) skips its own animation entirely — the page transition
-// already sells that moment, nothing more is needed. A row that appears
-// LATER, while you're already sitting on this screen (a download finishing
-// and moving from "Downloading" into "Downloaded"), still gets the
-// fade/slide-in — which is what this was actually built for.
-//
-// Deliberately NOT an AnimationController/SingleTickerProviderStateMixin
-// either way — that would mean one live ticker per row, real per-frame
-// cost on a long list (50+ downloads) for something that only ever needs
-// to play once. TweenAnimationBuilder has no persistent vsync subscription
-// at all: it runs its 220ms tween once and is fully inert — zero ticker,
-// zero rebuild — the moment it completes.
 class _DownloadTileEntrance extends StatefulWidget {
   final Widget child;
   const _DownloadTileEntrance({super.key, required this.child});
@@ -9002,11 +8048,6 @@ class _DownloadTileEntrance extends StatefulWidget {
 }
 
 class _DownloadTileEntranceState extends State<_DownloadTileEntrance> {
-  // Captured once, in initState, against DownloadsScreen's own
-  // `_isInitialBuild` flag (see that State below) — true for every row
-  // still being built during the screen's first frame (skip: page
-  // transition already covers it), false for a row created afterward
-  // (play the fade: this is a genuinely new arrival mid-session).
   late final bool _skipAnimation;
 
   @override
@@ -9034,36 +8075,12 @@ class _DownloadTileEntranceState extends State<_DownloadTileEntrance> {
   }
 }
 
-// Tiny frame-identity gate — lets every tile ask "was I born on the same
-// frame the screen itself first appeared?" without each row needing its
-// own timestamp/comparison plumbing. `screenOpenedFrame` is stamped once
-// in DownloadsScreen's build (first call only); `currentFrame` is
-// Flutter's own monotonically increasing frame counter, already tracked
-// by the engine for every frame regardless of this feature — reading it
-// costs nothing extra.
-// Session-identity gate — every _DownloadTileEntrance checks
-// `isInitialBuild` in its own initState (see that class above) to decide
-// whether to skip its fade. `isInitialBuild` starts true and flips to
-// false via a single addPostFrameCallback scheduled by DownloadsScreen's
-// own State the first (and only the first) time it builds — every tile
-// alive during that first frame reads `true` and skips its animation
-// (the page-push transition already covers that moment); anything
-// created afterward reads `false` and plays the fade normally. Reset to
-// true in DownloadsScreen.initState so re-opening the screen (a fresh
-// push) is correctly treated as a new "initial build" again, not a
-// continuation of whatever session came before.
 class _DownloadsSessionGate {
   static bool isInitialBuild = true;
 }
 
 class _DownloadTile extends StatelessWidget {
   final DownloadItem item;
-  // FIX (Shivam feedback): tapping a downloaded song used to call
-  // playSong(offlineSong) with no queue/index, so Up Next stayed empty
-  // instead of showing the rest of the downloaded songs, and nothing
-  // pushed FullPlayerScreen so the player never opened. `queue` is the
-  // full list of completed DownloadItems (passed from DownloadsScreen)
-  // and `queueIndex` is this tile's position in it.
   final List<DownloadItem>? queue;
   final int? queueIndex;
   const _DownloadTile({required this.item, this.queue, this.queueIndex});
@@ -9074,12 +8091,6 @@ class _DownloadTile extends StatelessWidget {
     final song = item.song;
     final isLight = Theme.of(context).brightness == Brightness.light;
 
-    // Echo Nightly-exact: same live 3-bar equalizer badge every other
-    // list (Search, Home, Mix, Library sections, Liked) already shows
-    // via SongTile/AurumStackedArtwork — Downloads previously used a
-    // bare AurumArtwork here with no now-playing indicator at all, the
-    // one place in the app a currently-playing offline song gave no
-    // visual feedback that it was the active track.
     final isCurrentSong = context.select<PlayerProvider, bool>(
       (p) => p.currentSong?.id == song.id,
     );
@@ -9130,8 +8141,6 @@ class _DownloadTile extends StatelessWidget {
           : PopupMenuButton<String>(
               icon: Icon(Icons.more_vert_rounded,
                   color: AurumTheme.textMutedOf(context), size: 20),
-              // FIX — dynamic theme coverage: same lightBgCard-hardcode gap
-              // as the sheets above, on this download-row popup menu.
               color:
                   isLight ? AurumTheme.bgCardOf(context) : AurumTheme.darkBgCard,
               onSelected: (value) {
@@ -9155,14 +8164,6 @@ class _DownloadTile extends StatelessWidget {
                     value: 'delete', child: Text(l10n.libraryRemoveDownload)),
               ],
             ),
-      // FIX (same class as song_tile.dart/search_screen.dart's InkWell/
-      // ListTile fix — "cold start pe kisi bhi title tap karo, grey/white
-      // layer aa jaata hai"): Downloads list ListTile had no explicit
-      // splash/highlight color, same unthemed Material default as the
-      // other fixed tiles. Offline/downloaded songs are exactly the case
-      // most likely to resolve near-instantly on tap, giving the least
-      // natural time for the ripple to fade normally before the next
-      // frame — same theme-correct, low-opacity fix closes it here too.
       splashColor: (isLight ? Colors.black : Colors.white).withValues(alpha: 0.06),
       focusColor: (isLight ? Colors.black : Colors.white).withValues(alpha: 0.04),
       hoverColor: (isLight ? Colors.black : Colors.white).withValues(alpha: 0.04),
@@ -9173,16 +8174,11 @@ class _DownloadTile extends StatelessWidget {
           final dl = context.read<DownloadProvider>();
           final offlineSong = dl.offlineSongFor(song.id) ?? song;
 
-          // Build the Up Next queue out of every OTHER downloaded song too,
-          // resolving each to its offline version, so playback naturally
-          // continues through the rest of the downloads list.
           final offlineQueue = (queue ?? [item])
               .map((d) => dl.offlineSongFor(d.song.id) ?? d.song)
               .toList();
           final resolvedIndex = queueIndex ?? 0;
 
-          // SPOTIFY-STYLE FIX ("kahi se bhi full player na khule"): tap
-          // now only starts playback — mini player is the tap feedback.
           context.read<PlayerProvider>().playSong(
                 offlineSong,
                 queue: offlineQueue,
@@ -9195,8 +8191,6 @@ class _DownloadTile extends StatelessWidget {
   }
 }
 
-// â”€â”€ Albums screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 class _AlbumsScreen extends StatelessWidget {
   const _AlbumsScreen();
 
@@ -9207,12 +8201,9 @@ class _AlbumsScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // SPOTIFY-STYLE PERSISTENT MINI PLAYER — see liked_screen.dart's
-      // matching comment for the full reasoning.
       bottomNavigationBar: const MiniPlayerSlot(),
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
-        // PERF FIX — see LibraryScreen's matching cacheExtent comment above.
         cacheExtent: 1200,
         slivers: [
           SliverAppBar(
@@ -9317,12 +8308,6 @@ class _FollowedAlbumTile extends StatelessWidget {
     final artworkUrl = (album['artworkUrl'] ?? '').toString();
     final isMix = album['isMix'] == true;
 
-    // PERF: see the matching note on SongTile — isolates each grid cell
-    // into its own compositor layer so scrolling a long saved-albums grid
-    // doesn't repaint neighboring cells unnecessarily. Safe to wrap here:
-    // AurumPressable's own tap-scale animation happens inside it, and the
-    // Hero transition already snapshots this subtree during flight
-    // regardless of any RepaintBoundary around it.
     return RepaintBoundary(
       child: AurumPressable(
       onTap: () {
@@ -9335,7 +8320,7 @@ class _FollowedAlbumTile extends StatelessWidget {
               mixId: id,
               mixName: name,
               artworkUrl: artworkUrl,
-              emoji: '', // no-emoji requirement — MixScreen renders an Icon fallback now
+              emoji: '',
               songs: songs,
             ),
           );
@@ -9360,21 +8345,6 @@ class _FollowedAlbumTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               child: Hero(
                 tag: isMix ? 'mix_art_$id' : 'album_art_$id',
-                // FIX (glitch/snap in mix & album grid artwork during
-                // navigation): the default Hero flightShuttleBuilder tries
-                // to morph BOTH the from-widget and to-widget's own
-                // decoration (ClipRRect radius, Material, shadow) across
-                // the flight, WHILE AurumPageRoute's page-level
-                // SlideTransition is simultaneously moving the whole
-                // destination screen underneath it. Those two independent
-                // transforms fighting for the same frames is what reads
-                // as a snap/glitch right as the flight ends and the
-                // artwork hands off to the destination screen's own
-                // (still-sliding) layout. A simple ScaleTransition on just
-                // the destination widget — same fix already applied to
-                // the full player's artwork Hero — sidesteps the double-
-                // animation entirely: one clean scale, no decoration morph
-                // to fight the page slide.
                 flightShuttleBuilder: (context, animation, direction, from, to) {
                   return Material(
                     color: Colors.transparent,
@@ -9489,11 +8459,6 @@ class _ArtistsScreen extends StatefulWidget {
 }
 
 class _ArtistsScreenState extends State<_ArtistsScreen> {
-  // Same multi-select pattern as _AurumArtistsTab's Library tab version —
-  // kept identical (select on long-press, 3-dot menu with Select all /
-  // Deselect all / Unfollow selected) so the two "artists list" surfaces
-  // in the app behave exactly the same way, per "sb kuch same working
-  // ho... balance mai rhna chahiye".
   bool _selectMode = false;
   final Set<String> _selectedIds = {};
 
@@ -9584,8 +8549,6 @@ class _ArtistsScreenState extends State<_ArtistsScreen> {
     final l10n = AppLocalizations.of(context)!;
     final followed = context.watch<FollowedArtistsProvider>().followed;
 
-    // BACK FIX: system back used to pop the whole screen while multi-select
-    // was active. Now it exits select mode first (same as the X button).
     return PopScope(
       canPop: !_selectMode,
       onPopInvokedWithResult: (didPop, _) {
@@ -9593,12 +8556,9 @@ class _ArtistsScreenState extends State<_ArtistsScreen> {
       },
       child: Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // SPOTIFY-STYLE PERSISTENT MINI PLAYER — see liked_screen.dart's
-      // matching comment for the full reasoning.
       bottomNavigationBar: const MiniPlayerSlot(),
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
-        // PERF FIX — see LibraryScreen's matching cacheExtent comment above.
         cacheExtent: 1200,
         slivers: [
           SliverAppBar(
@@ -9623,9 +8583,6 @@ class _ArtistsScreenState extends State<_ArtistsScreen> {
             ),
             actions: _selectMode
                 ? [
-                    // Direct select-all toggle + dedicated unfollow icon
-                    // — same fix as Liked Songs / the other Artists tab
-                    // (buried 3-dot menu replaced with a one-tap action).
                     Builder(builder: (context) {
                       final allIds = followed.map((m) => (m['id'] ?? '').toString()).toSet();
                       final allSelected = allIds.isNotEmpty &&
@@ -9760,8 +8717,6 @@ class _ArtistsScreenState extends State<_ArtistsScreen> {
 
 class _FollowedArtistTile extends StatelessWidget {
   final Map<String, dynamic> artist;
-  // Same selection contract as _AurumArtistRow above — kept in sync so
-  // both artist-list surfaces behave identically.
   final bool selectMode;
   final bool selected;
   final VoidCallback? onEnterSelectMode;
@@ -9791,11 +8746,6 @@ class _FollowedArtistTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         child: InkWell(
           borderRadius: BorderRadius.circular(18),
-          // FIX (same class as song_tile.dart's InkWell fix — "grey/white
-          // layer on tap, cold start"): no explicit splash/highlight
-          // color meant Flutter's unthemed Material default, which can
-          // read as a stray light flash if cold-start CPU contention
-          // delays the ripple's fade-out or lands mid-rebuild.
           splashColor: (Theme.of(context).brightness == Brightness.dark
                   ? Colors.white
                   : Colors.black)
@@ -9968,13 +8918,9 @@ class _ComingSoonScreen extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // SPOTIFY-STYLE PERSISTENT MINI PLAYER: pushed via Navigator.push
-      // from Library, so it needs its own MiniPlayerSlot — see
-      // liked_screen.dart's matching comment for the full explanation.
       bottomNavigationBar: const MiniPlayerSlot(),
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
-        // PERF FIX — see LibraryScreen's matching cacheExtent comment above.
         cacheExtent: 1200,
         slivers: [
           SliverAppBar(

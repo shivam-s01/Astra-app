@@ -36,10 +36,6 @@ class _LatestBuild {
 class UpdateService {
   static const _repo = 'shivam-s01/Aurum-app';
 
-  /// SECURITY: an APK URL (from check.json or the Releases API) is only
-  /// trusted if it is https and points at THIS repo's release downloads.
-  /// Anything else (tampered check.json, other host, http) is ignored.
-  /// The OS additionally refuses any APK not signed with our key.
   static bool _isTrustedApkUrl(String url) {
     final u = Uri.tryParse(url);
     if (u == null || u.scheme != 'https') return false;
@@ -53,46 +49,26 @@ class UpdateService {
     }
     return true;
   }
-  // Exact same two-call pattern Musify uses (gokadzev/Musify):
-  // 1) check.json on the 'update' branch via raw.githubusercontent.com
-  //    — no auth, no rate limit — just to compare version numbers.
-  // 2) Only if that shows a newer version, THEN call the GitHub
-  //    Releases API (unauthenticated, 60 req/hour shared per IP) to
-  //    fetch the changelog body. This second call only ever fires for
-  //    the (rare) subset of launches where an update actually exists,
-  //    not on every single launch — so it stays far under the limit
-  //    Musify itself has shipped at scale with.
   static const _checkUrl =
       'https://raw.githubusercontent.com/$_repo/update/check.json';
   static const _releasesUrl =
       'https://api.github.com/repos/$_repo/releases/latest';
   static const _channel = MethodChannel('com.aurum.music/media_store');
 
-  // Persisted dismiss: "Later" hides the popup for 12 hours, tracked
-  // per-version so a newer release always breaks through the cooldown.
   static const _prefsDismissedVersion = 'update_dismissed_version';
   static const _prefsDismissedAt = 'update_dismissed_at_millis';
   static const Duration _snoozeDuration = Duration(hours: 12);
 
-  /// [silent] suppresses the "no update" UI (used for background/launch
-  /// checks). [force] bypasses the 12h snooze (used for the manual
-  /// Settings "Check for Update" tap, so the user always gets a fresh
-  /// answer when they explicitly ask).
   static Future<void> checkForUpdate(
     BuildContext context, {
     bool silent = true,
     bool force = false,
   }) async {
-    // Play Store builds are updated by Play, never from GitHub APKs.
     if (kPlayBuild) return;
     try {
       final info = await PackageInfo.fromPlatform();
       final currentBuild = int.tryParse(info.buildNumber) ?? 0;
 
-      // Primary: check.json (raw.githubusercontent.com — no rate limit).
-      // Fallback: Releases API (tag "build<N>" + apk asset). Either one
-      // answering is enough, so a missing/stale check.json or a CDN hiccup
-      // can't break the update flow anymore.
       final latest = await _fetchLatest();
 
       if (latest == null) {
@@ -112,7 +88,6 @@ class UpdateService {
 
       if (!force && await _isSnoozed(versionLabel)) return;
 
-      // Changelog is best-effort — popup must show even without it.
       var highlights = const <ChangelogSection>[];
       try {
         final res = await http
@@ -146,8 +121,6 @@ class UpdateService {
     'User-Agent': 'AstraMusic-Updater',
   };
 
-  /// Tries check.json (2 attempts), then the Releases API. Returns null
-  /// only if every source failed.
   static Future<_LatestBuild?> _fetchLatest() async {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
@@ -187,12 +160,6 @@ class UpdateService {
           }
         }
         if (build != null && apk.isNotEmpty) {
-          // The tag is the raw build number, but the phone's PackageInfo
-          // reports the real versionCode, which Flutter's --split-per-abi
-          // raises by an ABI offset (check.json already carries the real
-          // one). Add the same offset here so both sources compare against
-          // the installed build identically — otherwise a build less than
-          // ~33 min newer would be missed when this fallback is used.
           final offset = apk.contains('arm64-v8a')
               ? 2000
               : apk.contains('armeabi-v7a')
@@ -225,12 +192,6 @@ class UpdateService {
     await prefs.setInt(_prefsDismissedAt, DateTime.now().millisecondsSinceEpoch);
   }
 
-  /// Turns a GitHub release body into a structured, categorized
-  /// changelog for the popup — groups bullets under their "## Heading"
-  /// section instead of flattening everything into one undifferentiated
-  /// list. Caps at 3 sections and 3 bullets per section so the dialog
-  /// stays compact and scannable (a Spotify-style "what's new" card
-  /// reads as organized, not as a wall of text).
   static List<ChangelogSection> _parseHighlights(String body) {
     if (body.trim().isEmpty) return const [];
 
@@ -256,9 +217,6 @@ class UpdateService {
       }
       final bulletMatch = RegExp(r'^[-*•]\s*(.+)$').firstMatch(line);
       if (bulletMatch != null) {
-        // A bullet before any heading (e.g. a hand-written release with
-        // no "## " sections) still needs a home — group those under a
-        // generic title rather than dropping them silently.
         currentTitle ??= 'Changes';
         currentItems.add(bulletMatch.group(1)!.trim());
       }
@@ -277,35 +235,9 @@ class UpdateService {
   }) {
     showDialog(
       context: context,
-      // FIX ("gray/dark screen stuck permanently, only app restart clears
-      // it" — production bug): this was barrierDismissible: false, on the
-      // reasoning that a user shouldn't accidentally miss an update
-      // prompt. But that trade only makes sense if the dialog CONTENT is
-      // guaranteed to render — if _UpdateDialog's build ever throws
-      // (malformed highlights from a release body, a null/empty url, a
-      // BackdropFilter/GPU hiccup on a given device, anything), Flutter
-      // has already inserted the barrier route before builder() runs, so
-      // a throw there leaves exactly the barrierColor scrim on screen
-      // with no content and no tap-to-dismiss — permanently, since
-      // barrierDismissible:false blocks the one recovery path a plain
-      // barrier normally has. That matches "sirf restart se jaata hai"
-      // exactly: nothing short of killing the process clears a route
-      // that's on the stack but was never popped and can't be tapped
-      // away. Missing an update prompt once is a trivial inconvenience
-      // (it re-checks next launch); a permanently stuck unresponsive
-      // screen is not. Back-gesture/tap-outside is now always a valid
-      // escape hatch regardless of what happens inside the dialog.
       barrierDismissible: true,
       barrierColor: Colors.black.withOpacity(0.6),
       builder: (dialogContext) {
-        // FIX (same bug, second half): if _UpdateDialog itself throws
-        // during build despite the above, catch it here rather than
-        // letting the exception propagate up through showDialog's own
-        // builder — an uncaught throw here still leaves the barrier
-        // route on the stack with nothing painted for its content slot.
-        // Falling back to an empty, auto-dismissing SizedBox means the
-        // absolute worst case is "the update prompt silently didn't
-        // show this launch" instead of "app is stuck until restart".
         try {
           return _UpdateDialog(
             version: version,
@@ -351,41 +283,9 @@ class UpdateService {
     }
   }
 
-  // FIX ("update install/uninstall jaisa lagta hai"): installApk() above
-  // only confirms the PackageInstaller session was STARTED — the real
-  // outcome (user confirmed the update prompt and it succeeded, they
-  // dismissed it, or it failed) arrives later via this native→Dart
-  // callback, since a session can be waiting on a user tap for several
-  // seconds. Callers (currently just _UpdateDialog) register here to
-  // reflect the actual result instead of assuming success the instant
-  // installApk's method call returns.
   static void Function(bool success, String message)? onInstallResult;
 
   static void wireInstallResultHandler() {
-    // FIX ("updates jaana band ho gaya sabke liye" — regression from the
-    // silent-install change): this handler runs on _channel
-    // ('com.aurum.music/media_store'), which THE SAME static channel
-    // object every other service (LocalMusicService, DiagnosticLogService,
-    // AudioPrefs, NativeRelatedVideos, and checkForUpdate/installApk right
-    // here) also calls invokeMethod on. setMethodCallHandler only affects
-    // INCOMING calls (native→Dart) — it does not block outgoing
-    // invokeMethod calls made by those other services, so this by itself
-    // was never the cause of updates failing to reach users.
-    //
-    // The real risk was narrower but real: if this callback ever threw
-    // (a malformed/unexpected `call.arguments` shape, or literally any
-    // other method someone adds to this channel in the future landing
-    // here unhandled), the exception propagates back through the
-    // platform channel machinery as an uncaught error. That doesn't
-    // crash invokeMethod callers immediately, but on some Flutter engine
-    // versions an uncaught platform-channel handler exception can leave
-    // the channel's isolate-side dispatcher in a bad state for
-    // *subsequent* calls on that same channel — which would silently
-    // break every other media_store call after it, including the ones
-    // checkForUpdate's installApk() depends on. Hardened below so this
-    // handler can never throw, no matter what arrives on this channel:
-    // only ever reacts to the one method it knows about, everything else
-    // (including malformed args) is ignored rather than crashing.
     _channel.setMethodCallHandler((call) async {
       try {
         if (call.method != 'onInstallResult') return null;
@@ -511,8 +411,6 @@ class _UpdateDialogState extends State<_UpdateDialog> with SingleTickerProviderS
     super.initState();
     _entryCtrl = AnimationController(vsync: this, duration: AurumMotion.medium2);
     _entryCtrl.forward();
-    // Real install outcome arrives asynchronously from the native
-    // PackageInstaller; a hard failure lands here while the dialog is up.
     UpdateService.onInstallResult = (success, message) {
       if (!mounted) return;
       if (!success) {
@@ -565,7 +463,6 @@ class _UpdateDialogState extends State<_UpdateDialog> with SingleTickerProviderS
         ),
         onReceiveProgress: (received, total) {
           if (!mounted) return;
-          // ~8 repaints/second max so the download never janks the UI.
           final now = DateTime.now();
           if (now.difference(_lastUiTick).inMilliseconds < 120 && received != total) return;
           _lastUiTick = now;
@@ -609,8 +506,6 @@ class _UpdateDialogState extends State<_UpdateDialog> with SingleTickerProviderS
       });
     }
   }
-
-  // ── Pieces ────────────────────────────────────────────────────────────
 
   Widget _header(BuildContext context, Color accent, Color onAccent, Color textP) {
     return Row(
@@ -764,7 +659,6 @@ class _UpdateDialogState extends State<_UpdateDialog> with SingleTickerProviderS
     const red = Color(0xFFE86B6B);
 
     return PopScope(
-      // No accidental dismiss while a download/install is in flight.
       canPop: !_downloading,
       child: FadeTransition(
         opacity: curved,

@@ -5,28 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/support_developer_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: "Support developer" page — reached from the very bottom of
-//   Settings. Radial-equalizer emblem, Instagram link, and an "I'll help"
-//   button that opens the UPI donation page.
-//
-//   This is a SEPARATE screen. The existing Astra Plus (PremiumScreen) and
-//   every route that points to it are NOT touched.
-//
-//   PERFORMANCE
-//   • ONE AnimationController (24 s seamless loop) drives everything.
-//   • Motion lives in CustomPainters (`repaint:`) — the widget tree is never
-//     rebuilt per frame. No BackdropFilter / blur layers.
-//   • Every animated layer sits in its own RepaintBoundary.
-//   • Respects Settings -> Appearance -> Animations and the OS
-//     "remove animations" flag (freezes on a nice still frame).
-//
-//   THEME: all colour comes from AurumTheme helpers, so every preset,
-//   Material You and light/dark mode matches. Body text inherits the app font.
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -50,9 +28,9 @@ class SupportDeveloperScreen extends StatefulWidget {
 
 class _SupportDeveloperScreenState extends State<SupportDeveloperScreen>
     with TickerProviderStateMixin {
-  late final AnimationController _clock; // ambient loop
-  late final AnimationController _enter; // staggered entrance
-  late final AnimationController _burst; // tap-the-emblem pulse
+  late final AnimationController _clock;
+  late final AnimationController _enter;
+  late final AnimationController _burst;
   late final List<Animation<double>> _rv;
   bool _reduce = false;
 
@@ -87,7 +65,7 @@ class _SupportDeveloperScreenState extends State<SupportDeveloperScreen>
       if (_enter.value == 0) _enter.forward();
     } else {
       _clock.stop();
-      _clock.value = 0.22; // pleasant frozen frame
+      _clock.value = 0.22;
       _enter.value = 1.0;
     }
   }
@@ -104,7 +82,7 @@ class _SupportDeveloperScreenState extends State<SupportDeveloperScreen>
   Future<void> _open(String url, {bool inApp = false}) async {
     AurumHaptics.light();
     final uri = Uri.parse(url);
-    if (uri.scheme != 'https') return; // only web links, never intent:/file:
+    if (uri.scheme != 'https') return;
     try {
       if (inApp && await launchUrl(uri, mode: LaunchMode.inAppBrowserView)) return;
       if (await canLaunchUrl(uri)) {
@@ -236,7 +214,6 @@ class _SupportDeveloperScreenState extends State<SupportDeveloperScreen>
     );
   }
 
-  // ── Emblem: radial equalizer + ripples + scalloped badge ────────────────
   Widget _emblem(Color a, Color b, Color c) {
     const s = 236.0;
     return Semantics(
@@ -257,7 +234,6 @@ class _SupportDeveloperScreenState extends State<SupportDeveloperScreen>
                   painter: _EmblemPainter(clock: _clock, burst: _burst, a: a, b: b),
                 ),
               ),
-              // Slow-rotating scalloped badge (cached layer, GPU rotation).
               RepaintBoundary(
                 child: RotationTransition(
                   turns: _clock,
@@ -306,7 +282,6 @@ class _SupportDeveloperScreenState extends State<SupportDeveloperScreen>
     );
   }
 
-  // ── Card: handle pill + Instagram ───────────────────────────────────────
   Widget _card(Color card, Color a, Color b, Color txt, Color muted) {
     return CustomPaint(
       foregroundPainter: _HairlinePainter(a: a, b: b, radius: 28),
@@ -418,7 +393,6 @@ class _SupportDeveloperScreenState extends State<SupportDeveloperScreen>
         style: TextStyle(color: muted, fontSize: 14.5, height: 1.4),
       );
 
-  // ── "I'll help" → opens the UPI donation page ───────────────────────────
   Widget _helpButton(Color a, Color b, Color c, Color on) {
     return Semantics(
       button: true,
@@ -501,11 +475,6 @@ class _SupportDeveloperScreenState extends State<SupportDeveloperScreen>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Painters
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Gradient hairline border.
 class _HairlinePainter extends CustomPainter {
   _HairlinePainter({required this.a, required this.b, required this.radius});
   final Color a, b;
@@ -536,8 +505,6 @@ class _HairlinePainter extends CustomPainter {
   bool shouldRepaint(_HairlinePainter o) => o.a != a || o.b != b;
 }
 
-/// 12-petal scalloped badge (same silhouette as the Astra app icon) in the
-/// live theme accent. Static — rotation is a GPU transform.
 class _BadgePainter extends CustomPainter {
   _BadgePainter({required this.a, required this.b, required this.c});
   final Color a, b, c;
@@ -570,7 +537,6 @@ class _BadgePainter extends CustomPainter {
   bool shouldRepaint(_BadgePainter o) => o.a != a || o.b != b || o.c != c;
 }
 
-/// Radial equalizer ring + expanding sound ripples + orbiting spark.
 class _EmblemPainter extends CustomPainter {
   _EmblemPainter({
     required this.clock,
@@ -587,11 +553,10 @@ class _EmblemPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size s) {
     final t = clock.value;
-    final k = 1.0 + 1.6 * math.sin(math.pi * burst.value); // tap boost
+    final k = 1.0 + 1.6 * math.sin(math.pi * burst.value);
     final c = s.center(Offset.zero);
     final maxR = s.width / 2;
 
-    // Ripples (3, evenly phased, 3 s period)
     final rp = Paint()..style = PaintingStyle.stroke;
     for (int i = 0; i < 3; i++) {
       final p = (t * 8 + i / 3) % 1.0;
@@ -602,7 +567,6 @@ class _EmblemPainter extends CustomPainter {
       canvas.drawCircle(c, r, rp);
     }
 
-    // Radial equalizer bars
     final bp = Paint()
       ..strokeCap = StrokeCap.round
       ..strokeWidth = 3.2;
@@ -623,7 +587,6 @@ class _EmblemPainter extends CustomPainter {
       );
     }
 
-    // Orbiting spark
     final ang = _tau * 2 * t - math.pi / 2;
     final orb = Offset(c.dx + math.cos(ang) * 98, c.dy + math.sin(ang) * 98);
     canvas.drawCircle(orb, 5, Paint()..color = b.withValues(alpha: 0.25));
@@ -634,7 +597,6 @@ class _EmblemPainter extends CustomPainter {
   bool shouldRepaint(_EmblemPainter o) => o.a != a || o.b != b;
 }
 
-/// Instagram glyph (brand gradient tile) — drawn in code, no asset needed.
 class _InstagramPainter extends CustomPainter {
   const _InstagramPainter();
 
@@ -681,8 +643,6 @@ class _Fly {
   final int speed;
 }
 
-/// Full-screen ambient background: aurora orbs, two flowing waves, rising
-/// fireflies. Seamless 24 s loop (all frequencies are integers).
 class _AuroraPainter extends CustomPainter {
   _AuroraPainter({
     required this.clock,

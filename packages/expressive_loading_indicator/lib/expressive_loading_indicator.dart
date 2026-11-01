@@ -1,12 +1,3 @@
-// Port of Android's LoadingIndicator
-// Source: androidx/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/LoadingIndicator.kt
-// Copyright (c) 2024 The Android Open Source Project
-// Licensed under the Apache License, Version 2.0
-//
-// Dart port by Tamim Arafat
-// Copyright (c) 2025 Tamim Arafat
-// Licensed under MIT License
-
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -15,17 +6,9 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/semantics.dart';
 import 'package:material_new_shapes/material_new_shapes.dart';
 
-/// A Material Design loading indicator.
-///
-/// This version of the loading indicator morphs between its [polygons] shapes.
-/// ![Loading indicator image](https://developer.android.com/images/reference/androidx/compose/material3/loading-indicator.png)
 class ExpressiveLoadingIndicator extends ProgressIndicator {
-  /// A list of [RoundedPolygon]s for the sequence of shapes this loading indicator
-  /// will morph between. The loading indicator expects at least two items in that list.
   final List<RoundedPolygon>? polygons;
 
-  /// Defines minimum and maximum sizes for an [ExpressiveLoadingIndicator].
-  /// If null, then the [ProgressIndicatorThemeData.constraints] will be used. Otherwise, defaults to a minimum width and height of 48 pixels.
   final BoxConstraints? constraints;
 
   const ExpressiveLoadingIndicator({
@@ -59,7 +42,7 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
     minHeight: 48.0,
     maxWidth: 48.0,
     maxHeight: 48.0,
-  ); // default from kotlin source
+  );
 
   late final List<RoundedPolygon> _polygons;
 
@@ -68,7 +51,7 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
   static const double _fullRotation = 360.0;
 
   static const double _quarterRotation = _fullRotation / 4;
-  static const double _activeSize = 38; // based on source spec
+  static const double _activeSize = 38;
 
   late final List<Morph> _morphSequence;
 
@@ -126,7 +109,6 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
                 final globalRotationDegrees =
                     _globalRotationController.value * _fullRotation;
 
-                // calculate total rotation (clockwise, matching Kotlin implementation)
                 final totalRotationDegrees =
                     morphProgress * _quarterRotation +
                     _morphRotationTargetAngle +
@@ -177,7 +159,6 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
 
     _morphController = AnimationController.unbounded(vsync: this);
 
-    // continuous linear rotation
     _globalRotationController = AnimationController(
       duration: const Duration(milliseconds: _globalRotationDurationMs),
       vsync: this,
@@ -196,7 +177,6 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
       if (i + 1 < polygons.length) {
         morphs.add(Morph(polygons[i], polygons[i + 1]));
       } else if (circularSequence) {
-        // morph from last shape back to first shape
         morphs.add(Morph(polygons[i], polygons[0]));
       }
     }
@@ -204,18 +184,6 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
     return morphs;
   }
 
-  /// Calculates a scale factor that will be used when scaling the provided [RoundedPolygon]s into a
-  /// specified sized container.
-  ///
-  /// Since the polygons may rotate, a simple [RoundedPolygon.calculateBounds] is not enough to
-  /// determine the size the polygon will occupy as it rotates. Using the simple bounds calculation may
-  /// result in a clipped shape.
-  ///
-  /// This function calculates and returns a scale factor by utilizing the
-  /// [RoundedPolygon.calculateMaxBounds] and comparing its result to the
-  /// [RoundedPolygon.calculateBounds]. The scale factor can later be used when calling [processPath].
-  ///
-  /// Port of Kotlin implementation.
   double _calculateScaleFactor(List<RoundedPolygon> polygons) {
     var scaleFactor = 1.0;
 
@@ -232,8 +200,6 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
       final scaleX = boundsWidth / maxBoundsWidth;
       final scaleY = boundsHeight / maxBoundsHeight;
 
-      // We use max(scaleX, scaleY) to handle cases like a pill-shape that can throw off the
-      // entire calculation.
       scaleFactor = math.min(scaleFactor, math.max(scaleX, scaleY));
     }
 
@@ -241,10 +207,8 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
   }
 
   void _startAnimations() {
-    // infinite global rotation
     _globalRotationController.repeat();
 
-    // periodic morph cycle
     _morphTimer = Timer.periodic(
       const Duration(milliseconds: _morphIntervalMs),
       (_) => _startMorphCycle(),
@@ -256,14 +220,11 @@ class _ExpressiveLoadingIndicatorState extends State<ExpressiveLoadingIndicator>
   void _startMorphCycle() {
     if (!mounted) return;
 
-    // move to next morph in sequence
     _currentMorphIndex = (_currentMorphIndex + 1) % _morphSequence.length;
 
-    // accumulate rotation target
     _morphRotationTargetAngle =
         (_morphRotationTargetAngle + _quarterRotation) % _fullRotation;
 
-    // Reset and start morph animation
     _morphController
       ..value = 0.0
       ..animateWith(_morphAnimationSpec);
@@ -275,9 +236,6 @@ class _MorphPainter extends CustomPainter {
   final double progress;
   final Color color;
 
-  /// A scale factor that will be taken into account uniformly when the [path] is
-  /// scaled (i.e. the scaleX would be the [size] width x the scale factor, and the scaleY would be
-  /// the [size] height x the scale factor)
   final double scaleFactor;
 
   _MorphPainter({
@@ -308,13 +266,7 @@ class _MorphPainter extends CustomPainter {
         oldDelegate.scaleFactor != scaleFactor;
   }
 
-  /// Process a given path to scale it and center it inside the given size.
-  ///
-  /// [path] takes a [Path] that was generated by a _normalized_ [Morph] or [RoundedPolygon].
-  /// [size] takes a [Size] that the provided [path] is going to be scaled and centered into.
   Path _processPath(Path path, Size size) {
-    // a [Matrix] that would be used to apply the scaling. Note that any provided
-    // matrix will be reset in this function.
     final Matrix4 scaleMatrix = Matrix4.diagonal3Values(
       size.width * scaleFactor,
       size.height * scaleFactor,
@@ -322,7 +274,6 @@ class _MorphPainter extends CustomPainter {
     );
     final Path scaledPath = path.transform(scaleMatrix.storage);
 
-    // Translate the path so that its center aligns with the center of the container.
     final Rect bounds = scaledPath.getBounds();
     final Offset translation =
         Offset(size.width / 2, size.height / 2) - bounds.center;

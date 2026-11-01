@@ -19,10 +19,6 @@ import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
-
-    // Kept as an application-context field — the constructor parameter
-    // itself isn't visible from the method-call handler defined later in
-    // this class, and Auto Sleep Guard's methods (below) need a Context.
     private val appContext: Context = context.applicationContext
 
     companion object {
@@ -33,10 +29,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
         private const val MEDIA_VOLUME_EVENT_CHANNEL = "com.aurum.music/media_volume"
         private const val CAST_STATE_EVENT_CHANNEL = "com.aurum.music/cast_state"
         private const val CAST_ROUTES_EVENT_CHANNEL = "com.aurum.music/cast_routes"
-        // DIAGNOSTIC (heating investigation) — see onOffloadStatus in
-        // AurumAudioEngine.kt. Temporary channel so offload status is
-        // visible on-device without adb; safe to remove once the heating
-        // root cause is confirmed and a permanent fix lands.
         private const val OFFLOAD_EVENT_CHANNEL = "com.aurum.music/offload_status"
     }
 
@@ -49,44 +41,13 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
     private val callbackChannel = MethodChannel(messenger, METHOD_CHANNEL)
 
     init {
-        // Publish the engine BEFORE the service can possibly start, so
-        // AurumMediaSessionService.onCreate() always finds a non-null
-        // sharedEngine (see the defensive stopSelf() fallback there).
         AurumMediaSessionService.sharedEngine = engine
 
         engine.onPlaybackError = { message, silent ->
             errorSink?.success(mapOf("message" to message, "silent" to silent))
         }
-        // NOTE: we do NOT manually call startForegroundService() here.
-        //
-        // Media3's MediaSessionService promotes itself to a foreground
-        // service automatically — internally, whenever the MediaSession's
-        // player starts actually playing, MediaSessionService calls
-        // startForeground() itself via its MediaNotificationManager,
-        // using the notification built from the player's current
-        // MediaMetadata (see AurumMediaSessionService, which does not
-        // override onUpdateNotification — that's what leaves this default
-        // behavior in place).
-        //
-        // The PREVIOUS version of this code called
-        // ContextCompat.startForegroundService(...) manually on every
-        // queue change, racing Media3's own foreground promotion: Android
-        // requires startForeground() within ~5s of startForegroundService()
-        // being called, but a manual call here could fire before playback
-        // (and therefore Media3's own notification) was actually ready,
-        // producing an intermittent
-        // android.app.ForegroundServiceDidNotStartInTimeException crash —
-        // exactly the "keeps stopping" / no background playback / no lock
-        // screen controls symptom this fixes. Removing the manual call
-        // lets Media3 own the entire foreground lifecycle, which is the
-        // documented/supported pattern.
-        engine.onQueueChanged = { /* no-op — Media3 handles foreground promotion internally */ }
+        engine.onQueueChanged = {  }
 
-        // Reverse channel: notification/lock-screen heart tap → Dart's
-        // FavoritesProvider.toggleFavorite(). Dart is expected to call
-        // setCurrentSongLiked() back once the toggle completes so the icon
-        // reflects the authoritative (persisted) state rather than an
-        // optimistic native-side flip.
         engine.onLikeToggleRequested = { songId ->
             callbackChannel.invokeMethod("onLikeToggleRequested", mapOf("songId" to songId))
         }
@@ -123,11 +84,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
             override fun onCancel(args: Any?) { errorSink = null }
         })
 
-        // DIAGNOSTIC (heating investigation) — see OFFLOAD_EVENT_CHANNEL
-        // above. Fires once per track init with whether hardware audio
-        // offload was actually granted (vs. silent main-CPU decode
-        // fallback), so it can be checked from an in-app overlay with no
-        // PC/adb needed.
         EventChannel(messenger, OFFLOAD_EVENT_CHANNEL).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(args: Any?, sink: EventChannel.EventSink) {
                 engine.onOffloadStatus = { offloaded, encoding, sampleRate ->
@@ -141,9 +97,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
             override fun onCancel(args: Any?) { engine.onOffloadStatus = null }
         })
 
-        // Live audio-output-device-list updates (Bluetooth connect/
-        // disconnect, wired headset plug/unplug) so the picker sheet
-        // updates itself without the user closing and reopening it.
         EventChannel(messenger, OUTPUT_DEVICES_EVENT_CHANNEL).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(args: Any?, sink: EventChannel.EventSink) {
                 engine.outputManager.onDevicesChanged = {
@@ -158,18 +111,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
             }
         })
 
-        // ── Live system media volume ─────────────────────────────────
-        // FEATURE ("volume badane ka option live update nahi hota, phone
-        // button se badhau to bhi wahi rehta hai" — 2026-09-07): fires
-        // whenever STREAM_MUSIC volume changes from ANY source (hardware
-        // volume keys, another app, this app's own setMediaVolume) —
-        // AurumAudioOutputManager's BroadcastReceiver already listens for
-        // AudioManager.VOLUME_CHANGED_ACTION (see that class), this just
-        // wires its callback to a sink the same way OUTPUT_DEVICES_EVENT_
-        // CHANNEL above does for device changes — onListen/onCancel
-        // starts/stops the callback exactly when the Dart-side stream
-        // actually has a subscriber, same lifecycle discipline as every
-        // other EventChannel in this file.
         EventChannel(messenger, MEDIA_VOLUME_EVENT_CHANNEL).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(args: Any?, sink: EventChannel.EventSink) {
                 engine.outputManager.onVolumeChanged = {
@@ -185,23 +126,11 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
             }
         })
 
-        // ── Chromecast: state stream + session handoff ──────────────
-        // onStateChanged covers device-available/connecting/connected
-        // transitions (drives the cast button's icon). The actual
-        // playback handoff (local <-> CastPlayer) happens in
-        // onSessionStarted/onSessionEnded below, which fire specifically
-        // when a session becomes ready to receive media / stops being
-        // able to, per Media3's SessionAvailabilityListener contract.
         EventChannel(messenger, CAST_STATE_EVENT_CHANNEL).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(args: Any?, sink: EventChannel.EventSink) {
                 engine.castManager.onStateChanged = {
                     sink.success(engine.castManager.describeState())
                 }
-                // BATTERY FIX: LAN discovery now runs only while a screen
-                // with the cast button is actually visible (this channel
-                // only has a live listener then), instead of for the
-                // manager's entire lifetime — see discoveryCallback's doc
-                // in AurumCastManager for the full story.
                 engine.castManager.startCastStateDiscovery()
                 sink.success(engine.castManager.describeState())
             }
@@ -211,11 +140,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
             }
         })
 
-        // Custom Cast device picker's live route list — onListen/onCancel
-        // double as "picker sheet opened/closed" signals, starting and
-        // stopping the battery-costlier active scan exactly while the
-        // sheet is actually visible (see AurumCastManager.startRouteDiscovery's
-        // doc for why active scan shouldn't run all the time).
         EventChannel(messenger, CAST_ROUTES_EVENT_CHANNEL).setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(args: Any?, sink: EventChannel.EventSink) {
                 engine.castManager.onRoutesChanged = { routes ->
@@ -236,33 +160,12 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
             val cp = engine.castManager.castPlayer
             if (cp != null) {
                 scope.launch {
-                    // Resolve the FULL queue (not just the songs local
-                    // ExoPlayer had already loaded) before handing off —
-                    // otherwise skipping to a song CastPlayer's own
-                    // internal queue navigation reaches, but that was
-                    // never resolved on the phone, would have no stream
-                    // URL at all and silently fail to play once cast
-                    // gets there. This mirrors how local playback lazily
-                    // resolves ahead-of-time via maybeAutoExtendQueue,
-                    // just done eagerly here since CastPlayer can't call
-                    // back into Dart/HybridStreamResolver itself.
                     val fullQueue = engine.currentFullQueueForCast(resolver)
-                    // Guard against a slow resolve (many songs / slow
-                    // network) landing after the user has already
-                    // disconnected or started a NEW cast session in the
-                    // meantime — applying a stale queue snapshot at that
-                    // point would incorrectly restart/hijack whatever is
-                    // playing now.
                     if (myGeneration != castHandoffGeneration) return@launch
                     val startIndex = engine.currentCastStartIndexInFullQueue()
                     val startPositionMs = engine.currentLocalPositionMs()
                     if (fullQueue.isNotEmpty()) {
                         val mediaItems = fullQueue.map { (song, url) ->
-                            // Relay every URL through the phone's local
-                            // server first — see AurumCastManager.relayUrlForCast
-                            // and AurumCastRelayServer's class doc for why this
-                            // is required (Cast receivers can't attach the
-                            // browser User-Agent JioSaavn/YouTube CDNs need).
                             val relayedUrl = engine.castManager.relayUrlForCast(url)
                             engine.castManager.buildCastMediaItem(
                                 mediaId = song.id,
@@ -279,23 +182,13 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                         cp.play()
                     }
                 }
-                // Silence local playback now that the receiver has the
-                // queue — leaves position/queue state intact so ending
-                // the cast session can resume locally without a stutter.
                 engine.pauseLocalForCastHandoff()
             }
             engine.refreshState()
         }
 
         engine.castManager.onSessionEnded = {
-            ++castHandoffGeneration // invalidates any in-flight resolve from onSessionStarted above
-            // Copy the receiver's last known position back onto the local
-            // player before resuming, so ending a cast session (device
-            // turned off, user tapped disconnect, wifi drop) hands back
-            // to the phone at the same spot rather than wherever local
-            // playback happened to be paused at — this is the
-            // "seamless" half of the handoff, matching how Spotify/YT
-            // Music resume locally when a cast session drops.
+            ++castHandoffGeneration
             val lastCastPositionMs = engine.castManager.castPlayer?.currentPosition
             if (lastCastPositionMs != null && lastCastPositionMs > 0) {
                 engine.seek(lastCastPositionMs)
@@ -326,25 +219,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     engine.playQueue(songs, startIndex)
                     result.success(null)
                 }
-                // FIX ("UI stuck showing isLoading=true / isPlaying=false
-                // while audio genuinely plays in background"): engine.
-                // refreshState() already existed (used internally for cast
-                // handoff, see onSessionStarted/onSessionEnded above) but
-                // was never reachable from Dart — there was no MethodChannel
-                // case for it at all. That meant the Dart-side resync call
-                // (PlayerProvider.didChangeAppLifecycleState /
-                // _loadingWatchdog) had nothing real to invoke and could
-                // only guess-and-clear the stuck flag locally, never
-                // actually re-reading ExoPlayer's true current state. If a
-                // Player.Listener callback (onIsPlayingChanged/
-                // onPlaybackStateChanged) is ever coalesced or dropped by
-                // ExoPlayer internally — ExoPlayer really is playing, it
-                // just never re-fired the callback that triggers pushState()
-                // — this is the only way to recover without waiting for
-                // the next natural transition (next song, seek, etc). This
-                // just re-reads activePlayer's live fields and re-emits a
-                // NativeEngineState immediately; it is not a resolve/replay,
-                // so it's safe to call at any time, repeatedly.
                 "refreshState" -> {
                     engine.refreshState()
                     result.success(null)
@@ -354,17 +228,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     result.success(null)
                 }
                 "addToQueue" -> {
-                    // FIX: previously fired engine.addToQueue() (a plain
-                    // fun launching its own unawaited coroutine) and
-                    // returned success immediately — Dart's `await`
-                    // resolved before the native media-item list actually
-                    // updated. addToQueue is now suspend + queueMutex-
-                    // serialized (see AurumAudioEngine); calling it here
-                    // inside scope.launch and only replying success AFTER
-                    // it completes means Dart's await genuinely waits for
-                    // the native queue to be in its final state — closing
-                    // the race that let a fast-following moveQueueItem
-                    // (playNext()) desync queueSongs from the real player.
                     val song = parseSong(call.argument<Map<String, Any?>>("song")!!)
                     scope.launch {
                         engine.addToQueue(song)
@@ -401,16 +264,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                 "skipToNext" -> { engine.skipToNext(); result.success(null) }
                 "skipToPrevious" -> { engine.skipToPrevious(); result.success(null) }
                 "skipToQueueItem" -> {
-                    // FIX: previously called engine.skipToQueueItem() (a
-                    // fire-and-forget fun that launches its own internal
-                    // coroutine under queueMutex) and replied success
-                    // IMMEDIATELY — Dart's await resolved before the native
-                    // seek/queueMutex-protected mutation actually finished.
-                    // That meant Dart could treat a skip as "done" and let
-                    // the NEXT tap/state-read race in while the real engine
-                    // was still mid-seek on the OLD queue snapshot, landing
-                    // on the wrong song. Now awaits full completion the
-                    // same way addToQueue/removeFromQueue/moveQueueItem do.
                     scope.launch {
                         engine.skipToQueueItemAwaitable(call.argument<Int>("index") ?: 0)
                         result.success(null)
@@ -462,8 +315,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                 "applyAudioEffects" -> {
                     val bassBoost = call.argument<Boolean>("bassBoost") ?: false
                     val volNorm = call.argument<Boolean>("volumeNormalization") ?: false
-                    // Dart sends gains already converted to millibels (see
-                    // NativeAudioEngine.applyAudioEffects — dB * 100).
                     @Suppress("UNCHECKED_CAST")
                     val bandGainsMb = (call.argument<List<Any>>("bandGainsMb"))
                         ?.map { (it as Number).toInt() }
@@ -480,8 +331,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                 }
                 "reportResolvedBitrate" -> {
                     val kbps = call.argument<Int>("kbps")
-                    // songId lets the engine apply this only to the CURRENT song
-                    // (see AurumAudioEngine.reportResolvedBitrate).
                     val songId = call.argument<String>("songId")
                     engine.reportResolvedBitrate(songId, kbps)
                     result.success(null)
@@ -489,7 +338,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                 "getPremiumSoundCapabilities" -> {
                     result.success(engine.effects.describeCapabilities())
                 }
-                // ── Audio output device picker ──────────────────────────
                 "getAudioOutputDevices" -> {
                     result.success(mapOf(
                         "devices" to engine.outputManager.describeDevices(),
@@ -503,10 +351,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                         return@onMethodCall
                     }
                     if (!engine.outputManager.supportsExplicitRouting()) {
-                        // Pre-API 31: no explicit per-device routing exists.
-                        // Returning false (not an error) lets Dart show its
-                        // "routing is automatic on this Android version"
-                        // messaging instead of a scary failure.
                         result.success(false)
                         return@onMethodCall
                     }
@@ -518,23 +362,9 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     engine.outputManager.setForceSpeaker(force)
                     result.success(null)
                 }
-                // ── Smart Saver (2G-aware quality) ──────────────────────────
-                // Isolated read-only query: reports the current live
-                // throughput estimate from AurumAudioEngine's shared
-                // ExoPlayer BandwidthMeter. Never touches playback, the
-                // player's queue, or ExoPlayer state — a pure snapshot read,
-                // same isolation as getMediaVolume above.
                 "getEstimatedBandwidth" -> {
                     result.success(engine.getEstimatedBandwidthBitsPerSec())
                 }
-                // ── System media volume (for the output-device sheet's
-                // slider) ────────────────────────────────────────────────
-                // Deliberately isolated from AurumAudioEngine/ExoPlayer —
-                // this only talks to Android's AudioManager STREAM_MUSIC,
-                // the same thing the hardware volume keys control. It
-                // never touches the fade/duck/crossfade volume math, so
-                // there's zero risk of it fighting those for control of
-                // the player's internal volume.
                 "getMediaVolume" -> {
                     val am = appContext.getSystemService(Context.AUDIO_SERVICE)
                         as android.media.AudioManager
@@ -543,8 +373,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     result.success(mapOf(
                         "volume" to current,
                         "max" to max,
-                        // Boost slice (100-200), independent of STREAM_MUSIC
-                        // above — see setVolumeBoost.
                         "boostPercent" to engine.effects.currentVolumeBoostPercent(),
                     ))
                 }
@@ -559,16 +387,10 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     am.setStreamVolume(
                         android.media.AudioManager.STREAM_MUSIC,
                         level,
-                        0, // no UI flag — we render our own slider
+                        0,
                     )
                     result.success(null)
                 }
-                // ── Volume Boost (100-200, output sheet slider past 100%) ──
-                // Electrical gain on top of hardware max, via
-                // LoudnessEnhancer — see AurumAudioEffects.setVolumeBoost
-                // for the smooth-ramp + shared-budget-clamp details. Fully
-                // isolated from setMediaVolume above; safe to call at any
-                // playback state (attaches effects on demand if needed).
                 "setVolumeBoost" -> {
                     val percent = call.argument<Int>("percent")
                     if (percent == null) {
@@ -578,7 +400,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     engine.effects.setVolumeBoost(percent)
                     result.success(null)
                 }
-                // ── Chromecast ───────────────────────────────────────────
                 "getCastState" -> {
                     result.success(engine.castManager.describeState())
                 }
@@ -604,26 +425,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     engine.effects.exitPremiumSoundCompare()
                     result.success(null)
                 }
-                // FIX (2026-07-07) — "downloads fail / stuck resolving":
-                // DownloadProvider.download() (Dart) was calling
-                // ApiService.resolveStreamUrl() directly — the OLD,
-                // Worker-only resolve chain (Cloudflare Worker's SABR-gated
-                // YouTube clients + Piped fallback), completely bypassing
-                // the native YoutubeInnertube/NewPipeExtractor path that
-                // HybridStreamResolver already gives live playback. Live
-                // playback got reliable once NewPipeExtractor was bumped to
-                // v0.26.3, but downloads never benefited from that fix
-                // because they never went through this resolver at all.
-                //
-                // This exposes the SAME resolver playback uses
-                // (native-first via YoutubeInnertube, falling back to the
-                // Worker/Dart chain only if the native attempt genuinely
-                // fails) as a standalone, one-shot method call — no queue,
-                // no player state, no engine side effects. Dart's
-                // DownloadProvider calls this instead of
-                // ApiService.resolveStreamUrl() directly for youtube-source
-                // downloads (see NativeEngineBridge.resolveForDownload +
-                // the corresponding DownloadProvider change).
                 "resolveForDownload" -> {
                     val song = parseSong(call.argument<Map<String, Any?>>("song")!!)
                     scope.launch {
@@ -636,42 +437,14 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     }
                 }
 
-                // ── Public Music storage for finished downloads ──────────
-                // See AurumMediaStoreDownloads.kt doc comment for the full
-                // rationale: downloads used to be saved only in the app's
-                // private internal storage, invisible to the device's own
-                // file manager / other music apps, and the old delete path
-                // silently ignored failures. DownloadProvider (Dart) calls
-                // these two after a transfer finishes / when the user
-                // deletes a download, instead of touching the file
-                // directly itself.
                 "saveDownloadToPublicMusic" -> {
                     val sourcePath = call.argument<String>("sourcePath")
                     val displayName = call.argument<String>("displayName")
                     val mimeType = call.argument<String>("mimeType") ?: "audio/mpeg"
-                    // Raw image bytes (JPEG/PNG) for the song's artwork,
-                    // fetched Dart-side before this call — see the matching
-                    // FIX comment in AurumMediaStoreDownloads.saveToPublicMusic.
-                    // Optional: null/absent just means no embedding, exactly
-                    // the old behavior.
                     val artworkBytes = call.argument<ByteArray>("artworkBytes")
                     if (sourcePath == null || displayName == null) {
                         result.success(null)
                     } else {
-                        // BUG FIX (found on recheck): this was previously called
-                        // directly on the calling thread with no dispatch at all —
-                        // unlike every other handler here (see resolveForDownload
-                        // just above, which wraps its work in scope.launch).
-                        // saveToPublicMusic does a full blocking file copy
-                        // (potentially several MB of disk I/O) via MediaStore's
-                        // ContentResolver — running that inline on the platform
-                        // channel's thread (Main, since scope defaults to
-                        // Dispatchers.Main.immediate) would freeze the UI for the
-                        // duration of every single download's copy, and risk an
-                        // ANR on larger files or slow storage. Dispatchers.IO
-                        // moves the actual copy off the main thread; result.success
-                        // is still safe to call from there since Dio/Flutter's
-                        // platform channel handles the thread hop back.
                         scope.launch(Dispatchers.IO) {
                             val savedRef = AurumMediaStoreDownloads.saveToPublicMusic(
                                 appContext,
@@ -689,8 +462,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     if (pathOrUri == null) {
                         result.success(false)
                     } else {
-                        // Same threading fix — delete() can also block on
-                        // ContentResolver/File I/O.
                         scope.launch(Dispatchers.IO) {
                             result.success(AurumMediaStoreDownloads.delete(appContext, pathOrUri))
                         }
@@ -707,10 +478,6 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     }
                 }
 
-                // ── Auto Sleep Guard ────────────────────────────────────
-                // Battery feature, independent of the Dart Sleep Timer —
-                // see AutoSleepGuard.kt for the full design rationale.
-
                 "autoSleepGuardGetState" -> {
                     val isSignedIn = AuthStateBridge.isSignedIn
                     result.success(
@@ -726,42 +493,25 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
                     AutoSleepGuard.setDurationHours(appContext, hours)
                     result.success(null)
                 }
-                // User-facing Automatic/Off toggle. Off is a full
-                // shutdown (cancels any pending alarm/grace-timeout and
-                // dismisses an outstanding "Still there?" prompt); back to
-                // Automatic resumes properly right away, same as the plan
-                // called for — see AutoSleepGuard.setEnabled.
                 "autoSleepGuardSetEnabled" -> {
                     val enabled = call.argument<Boolean>("enabled") ?: true
                     AutoSleepGuard.setEnabled(appContext, enabled)
                     result.success(null)
                 }
-                // Pushed by SleepTimerService (Dart) on every start/cancel/
-                // expire, so the native guard never has to poll Dart to
-                // know whether it should stay out of the way.
                 "autoSleepGuardSetSleepTimerActive" -> {
                     val active = call.argument<Boolean>("active") ?: false
                     AutoSleepGuard.setSleepTimerActive(active)
                     result.success(null)
                 }
-                // Pushed by AuthProvider (Dart) on every auth state change.
                 "autoSleepGuardSetSignedIn" -> {
                     val signedIn = call.argument<Boolean>("signedIn") ?: false
                     AuthStateBridge.isSignedIn = signedIn
                     result.success(null)
                 }
-                // Explicit in-app tap activity (play/pause/skip/seek
-                // buttons in the Dart UI, distinct from the native
-                // notification/lock-screen controls which are already
-                // covered by the player listener in
-                // AurumMediaSessionService). Screen-unlock activity is
-                // reported the same way from MainActivity's onResume.
                 "autoSleepGuardRecordActivity" -> {
                     AutoSleepGuard.recordActivity(appContext)
                     result.success(null)
                 }
-                // Polled once on app open (not periodically) to drive the
-                // "Paused after inactivity at 4:12 AM — Resume?" prompt.
                 "autoSleepGuardPeekLastAutoPause" -> {
                     result.success(AutoSleepGuard.peekLastAutoPause(appContext))
                 }
@@ -777,40 +527,9 @@ class AurumEngineChannelHandler(context: Context, messenger: BinaryMessenger) {
         }
     }
 
-    /**
-     * Called from MainActivity.onDestroy(). THE actual fix for
-     * "background/lock-screen band ho jaata hai": this used to call
-     * engine.release(), which calls player.release() on the SAME ExoPlayer
-     * instance AurumMediaSessionService's MediaSession is built on (they
-     * share one AurumAudioEngine — see sharedEngine). MainActivity gets
-     * destroyed far more often than people expect (recents swipe, screen
-     * rotation edge cases, OS reclaiming the activity while the process
-     * stays alive) — every one of those was silently killing playback and
-     * tearing down the MediaSession, even mid-song.
-     *
-     * The Activity does not own the engine's lifecycle; the foreground
-     * service does. All this should do is stop forwarding state to a
-     * now-dead Dart EventChannel sink. The engine/player stays alive and
-     * keeps playing in the background; AurumMediaSessionService.onTaskRemoved
-     * already contains the correct logic for stopping the player when
-     * that's actually appropriate (nothing queued / not playing).
-     */
     fun release() {
         stateJob?.cancel()
         engine.castManager.onStateChanged = null
-        // Cast button is gone along with the Activity — stop LAN
-        // discovery too, same reasoning as the EventChannel's onCancel
-        // above. Safety net in case onCancel doesn't fire first during
-        // teardown (e.g. process death skipping the normal Flutter
-        // engine detach sequence).
         engine.castManager.stopCastStateDiscovery()
-        // NOTE: onSessionStarted/onSessionEnded are deliberately NOT
-        // cleared here — engine (and its castManager) is the shared,
-        // service-owned instance (see sharedEngine), which can outlive
-        // this particular MainActivity/handler instance (e.g. Activity
-        // recreated on rotation). Clearing them would silently break
-        // cast handoff for the next handler instance that attaches to
-        // the same shared engine. Only per-Activity state (the
-        // EventChannel sink callback above) is torn down here.
     }
 }

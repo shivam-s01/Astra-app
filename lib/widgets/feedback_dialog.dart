@@ -18,26 +18,10 @@ import 'aurum_focus_field.dart';
 import '../utils/aurum_haptics.dart';
 import '../utils/aurum_motion.dart';
 
-/// Shows the feedback dialog. Call this from either the auto-prompt
-/// (after 1-2 songs) or from a manual "Send Feedback" entry in
-/// Settings/About.
 Future<void> showFeedbackDialog(BuildContext context) {
   return showDialog(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.5),
-    // BUGFIX: "keyboard doesn't open, dialog vanishes in ~1s the moment
-    // you tap the feedback text field". barrierDismissible defaults to
-    // true, and when the keyboard rises it shrinks the available
-    // viewport, which shifts/relayouts the dialog's content (the
-    // AnimatedPadding below reacts to viewInsets.bottom mid-animation).
-    // On Android in particular, a tap-down that starts on the TextField
-    // can end up resolving as a tap-up over the barrier once that
-    // relayout has shifted things by even a few pixels — and with the
-    // barrier dismissible, Flutter reads that as "user tapped outside"
-    // and pops the dialog before the keyboard even finishes rising.
-    // There's already an explicit "Not now" button for dismissal, so
-    // outside-tap-to-dismiss was never load-bearing UX here — disabling
-    // it removes the race entirely.
     barrierDismissible: false,
     builder: (_) => const _FeedbackDialog(),
   );
@@ -59,14 +43,6 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
   String? _error;
   bool _spamWarn = false;
 
-  // Keyboard-focus timing (autofocus-during-dialog-entrance-animation
-  // bug) is handled centrally by AurumFocusField now — see that file for
-  // the full history/explanation. Don't re-add a FocusNode/autofocus
-  // here directly.
-
-  // Drives the icon's entrance "bubble pop" (overshoot scale-in) and its
-  // slow idle breathing glow once settled — the small bit of motion that
-  // makes the mark feel alive/crafted rather than a static system icon.
   late final AnimationController _iconCtrl = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 900),
@@ -83,7 +59,6 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
     if (_rating == 0 || _sending) return;
     FocusScope.of(context).unfocus();
 
-    // 1) Abuse check first — red message, nothing is sent.
     final problem = await FeedbackService.screen(_controller.text);
     if (!mounted) return;
     if (problem != null) {
@@ -92,9 +67,6 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
       return;
     }
 
-    // 2) Guests get the same Google sign-in sheet as "Create Playlist".
-    //    Their rating + text stay in the dialog, and as soon as sign-in
-    //    succeeds we carry straight on and send — no second tap needed.
     final signedIn = await PremiumGate.ensureSignedIn(
       context,
       feature: 'Feedback',
@@ -102,7 +74,7 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
           'Sign in with Google to send your feedback.\nIt takes just a moment.',
     );
     if (!mounted) return;
-    if (!signedIn) return; // dismissed the sheet — dialog stays as it was
+    if (!signedIn) return;
 
     final auth = context.read<AuthProvider>();
     setState(() {
@@ -116,10 +88,6 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
       version = '${info.version}+${info.buildNumber}';
     } catch (_) {}
 
-    // Fire the request but don't let network speed dictate the UX —
-    // show the thank-you state after a minimum, pleasant delay either
-    // way. The user never needs to know or care whether it succeeded
-    // instantly or is still in flight.
     final sendFuture = FeedbackService.submit(
       rating: _rating,
       userId: auth.userId,
@@ -148,7 +116,6 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
       _spamWarn = warn;
     });
 
-    // Leave a bit longer on screen when there's a warning to read.
     await Future.delayed(Duration(milliseconds: warn ? 3200 : 1400));
     if (mounted) Navigator.of(context).pop();
   }
@@ -157,23 +124,6 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    // BUGFIX (blank black slab under the card when the keyboard opens):
-    // the previous version reserved keyboard space TWICE — once here via
-    // ConstrainedBox.maxHeight subtracting bottomInset, and again just
-    // below via AnimatedPadding adding bottomInset as bottom padding
-    // *inside* that already-shrunk box. The BackdropFilter/Container
-    // background fills the full ConstrainedBox regardless, so squeezing
-    // the actual content into a sliver at the top of that box left a
-    // large empty (but still blurred/dark) area visible underneath it —
-    // exactly the ugly black slab seen when the keyboard rises.
-    //
-    // Fix: only account for the keyboard once. ConstrainedBox.maxHeight
-    // keeps the dialog from ever overflowing the visible viewport; the
-    // card's own Column is sized to its content (mainAxisSize.min via
-    // the Column widgets inside _buildForm/_buildThankYou), so it
-    // naturally shrinks to fit instead of stretching to fill leftover
-    // space. No extra bottom padding needed — Dialog already
-    // repositions/resizes for the keyboard on its own.
     final maxDialogHeight =
         MediaQuery.of(context).size.height - bottomInset - 48;
 
@@ -199,10 +149,6 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
                   width: 1,
                 ),
               ),
-              // mainAxisSize.min (set on the Column inside _buildForm /
-              // _buildThankYou) means this card hugs its own content
-              // height — it never stretches to fill the ConstrainedBox,
-              // so there's nothing left over to show as a blank slab.
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
                 child: SingleChildScrollView(
@@ -434,21 +380,6 @@ class _FeedbackDialogState extends State<_FeedbackDialog>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Aurum brand mark — the dialog's identity anchor.
-//
-// Replaces a generic Material sparkle icon with a mark that's clearly
-// "Aurum" (a music note in the app's gold gradient) inside a disc, plus
-// two bits of motion that separate a hand-tuned premium feel from a stock
-// system dialog:
-//
-//  1. Entrance "bubble pop" — scales in with a soft overshoot (elasticOut)
-//     the moment the dialog appears, like a bubble settling rather than
-//     just fading in flat.
-//  2. Idle breathing glow — once settled, a slow (2.4s) loop gently
-//     pulses the soft outer glow behind the disc, so the mark reads as
-//     alive rather than a static icon.
-// ─────────────────────────────────────────────────────────────────────────────
 class _AurumBrandMark extends StatefulWidget {
   final AnimationController controller;
   const _AurumBrandMark({required this.controller});
@@ -479,7 +410,7 @@ class _AurumBrandMarkState extends State<_AurumBrandMark>
     return AnimatedBuilder(
       animation: Listenable.merge([pop, _breathCtrl]),
       builder: (context, _) {
-        final breath = 0.5 + (_breathCtrl.value * 0.5); // 0.5 → 1.0
+        final breath = 0.5 + (_breathCtrl.value * 0.5);
         return Transform.scale(
           scale: pop.value,
           child: SizedBox(
@@ -488,7 +419,6 @@ class _AurumBrandMarkState extends State<_AurumBrandMark>
             child: Stack(
               alignment: Alignment.center,
               children: [
-                // Soft breathing glow behind the disc.
                 Container(
                   width: 76,
                   height: 76,
@@ -504,7 +434,6 @@ class _AurumBrandMarkState extends State<_AurumBrandMark>
                     ],
                   ),
                 ),
-                // Main disc with the note mark.
                 Container(
                   width: 56,
                   height: 56,

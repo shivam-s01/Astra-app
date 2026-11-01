@@ -27,9 +27,6 @@ import '../utils/aurum_transitions.dart';
 import 'island_customize_screen.dart';
 import '../widgets/aurum_settings_tile.dart' show AurumStaggerItem;
 
-// =============================================================================
-// Sleep Timer Service — singleton so it survives screen navigation
-// =============================================================================
 class SleepTimerService extends ChangeNotifier {
   SleepTimerService._();
   static final SleepTimerService instance = SleepTimerService._();
@@ -40,17 +37,11 @@ class SleepTimerService extends ChangeNotifier {
   bool _fadeOut = true;
   NativeAudioEngine? _engine;
 
-  // addListener / removeListener / notifyListeners now come from
-  // ChangeNotifier, so this is also a valid Listenable for
-  // ListenableBuilder / AnimatedBuilder.
   void _notify() => notifyListeners();
 
   bool get isActive => _timer != null && _timer!.isActive;
   Duration get remaining => isActive ? _endsAt!.difference(DateTime.now()) : Duration.zero;
 
-  /// Last fade-out preference used (defaults true) — lets any sheet that
-  /// opens the timer show the same choice the user last made in Settings,
-  /// without each call site needing its own SharedPreferences read.
   bool get lastFadeOutChoice => _fadeOut;
 
   void start({
@@ -70,10 +61,6 @@ class SleepTimerService extends ChangeNotifier {
         _onExpire();
       }
     });
-    // Auto Sleep Guard (a separate, native battery feature) must stay
-    // completely silent while this Sleep Timer is running — see
-    // AutoSleepGuard.kt. Pushed here rather than polled from native side
-    // so there's no cross-language polling in either direction.
     _engine?.autoSleepGuardSetSleepTimerActive(true);
     _notify();
   }
@@ -95,10 +82,8 @@ class SleepTimerService extends ChangeNotifier {
     _endsAt = null;
     _engine?.autoSleepGuardSetSleepTimerActive(false);
     if (_finishSong) {
-      // Let current song finish, then pause at next song start
       _engine?.sleepAfterCurrentSong();
     } else if (_fadeOut) {
-      // Apple-style smooth wind-down instead of an abrupt cut.
       _engine?.sleepFadeOutAndPause(fadeMs: 8000);
     } else {
       _engine?.pause();
@@ -107,18 +92,8 @@ class SleepTimerService extends ChangeNotifier {
   }
 }
 
-// =============================================================================
-// SettingsPlayerScreen
-// =============================================================================
 class SettingsPlayerScreen extends StatefulWidget {
   final NativeAudioEngine? audioEngine;
-  // FIX ("Quality tile ab auto-scroll + glow-pulse highlight kar sakta
-  // hai"): lets a caller (the Bluetooth output sheet's now-tappable
-  // Quality row, see audio_output_sheet.dart) land the user directly on
-  // this setting instead of a plain scroll-to-top open — the screen
-  // auto-scrolls the Stream Quality tile into view and gives it a
-  // couple of soft glow pulses so it's unmistakable which setting was
-  // being pointed to.
   final bool highlightQuality;
   const SettingsPlayerScreen({
     super.key,
@@ -145,34 +120,18 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
   bool _swipeToChange = true;
   double _historyDuration = 50;
 
-  // New settings
-  double _crossfadeDuration = 0.0;   // seconds 0–12
+  double _crossfadeDuration = 0.0;
   bool _volumeNormalization = false;
   bool _bassBoost = false;
   bool _premiumSound = false;
   PremiumSoundCapabilities? _premiumSoundCaps;
 
-  // Sleep timer UI state
   bool _sleepTimerFinishSong = false;
   bool _sleepTimerFadeOut = true;
   String _hapticIntensity = 'light';
 
-  // FIX (toggle flash — see settings_appearance_screen.dart for the full
-  // root-cause writeup): every field above defaults to a hardcoded value
-  // before _load()'s async SharedPreferences read resolves, so the first
-  // build() paints those hardcoded defaults for a frame, then snaps to the
-  // real saved value once _load() completes. Gate the real UI behind a
-  // brief loader until the real values are ready, so it only paints once.
   bool _loaded = false;
 
-  // FIX ("Quality tile ab auto-scroll + glow-pulse highlight kar sakta
-  // hai"): plain ScrollController on the settings ListView (previously
-  // uncontrolled) plus a GlobalKey on the Quality tile so we can measure
-  // its real on-screen position and scroll straight to it, and a small
-  // AnimationController driving a couple of soft opacity pulses on its
-  // border/glow once it's in view — the same "look here" pattern as the
-  // lyrics active-line glow elsewhere in the app, just for a settings
-  // tile a deep-link (the Bluetooth sheet's Quality row) jumped to.
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _qualityTileKey = GlobalKey();
   late final AnimationController _qualityPulseCtrl = AnimationController(
@@ -191,18 +150,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
     _load();
     _loadPremiumSoundCaps();
     SleepTimerService.instance.addListener(_onTimerTick);
-    // FIX (caught on final recheck): the previous version scheduled the
-    // highlight off a single postFrameCallback plus a fixed 50ms guess-
-    // delay — but _load() awaits SharedPreferences.getInstance(), an
-    // async gap of UNKNOWN length (can be well over 50ms on a slow/cold
-    // device). If that gap outlasts the guess, _loaded is still false
-    // when we look, the Quality tile's loading-spinner branch is on
-    // screen instead of the real list, _qualityTileKey has no
-    // currentContext yet, and the whole highlight silently no-ops with
-    // no error and no retry. Polling for _loaded to actually flip true
-    // (checked every short tick, not guessed once) removes the race
-    // entirely — this waits exactly as long as it needs to, no more, no
-    // less, on any device speed.
     if (widget.highlightQuality) {
       _waitForLoadThenHighlight();
     }
@@ -213,17 +160,9 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
       await Future.delayed(const Duration(milliseconds: 16));
     }
     if (!mounted) return;
-    // One more frame so the now-real Quality tile has actually been
-    // laid out (setState from _load() just landed; the tile's RenderBox
-    // exists only after the NEXT build/layout pass completes).
     WidgetsBinding.instance.addPostFrameCallback((_) => _highlightQualityTile());
   }
 
-  /// Scrolls the Stream Quality tile into view (measuring its real
-  /// position via GlobalKey, same precise-measurement approach as the
-  /// lyrics scroll fix — no estimation, no bounce/overshoot), then plays
-  /// two gentle glow pulses once it's settled so it's clear which
-  /// setting the user was sent here for.
   Future<void> _highlightQualityTile() async {
     if (!mounted) return;
     final tileContext = _qualityTileKey.currentContext;
@@ -235,8 +174,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
       alignment: 0.1,
     );
     if (!mounted) return;
-    // Two soft pulses (forward-reverse twice) — enough to draw the eye
-    // without looping forever and becoming an annoyance.
     await _qualityPulseCtrl.forward();
     if (!mounted) return;
     await _qualityPulseCtrl.reverse();
@@ -268,7 +205,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
     final savedQuality = p.getString('stream_quality') ?? 'Auto';
     if (!mounted) return;
     setState(() {
-      // 320kbps ('High') is fully free now — no defensive downgrade needed.
       _streamQuality       = savedQuality;
       _dataSaver           = p.getBool('data_saver') ?? false;
       _gapless             = p.getBool('gapless') ?? true;
@@ -301,13 +237,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
     if (value is String) await p.setString(key, value);
   }
 
-  // ── Stream Quality ──────────────────────────────────────────────────────
-  //
-  // 320kbps ('High') is fully free now — no sign-in, no payment required.
-  // Every tier is directly selectable; nothing here is locked anymore.
-  // Internal values MUST stay these exact English strings — they're persisted
-  // to SharedPreferences and matched literally by AudioPrefs.qualityOrder()
-  // and the native Kotlin side. Only the on-screen label is localized.
   static const _qualityKeys = ['Auto', 'Low', 'DataSaver', 'Medium', 'High'];
   List<(String key, String label, String subtitle, bool locked)> _qualityOptions(AppLocalizations l10n) => [
     ('Auto',   l10n.spQualityAuto,   l10n.spQualityAutoDesc,   false),
@@ -323,11 +252,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
       key: _qualityTileKey,
       animation: _qualityPulse,
       builder: (context, child) {
-        // FIX ("Quality tile glow-pulse highlight kar sakta hai"): a
-        // soft accent-colored glow that breathes in/out around the
-        // tile's border when this screen was opened via the deep-link
-        // flag — 0 opacity (invisible, matches the normal border) at
-        // rest, so a normal Settings visit looks exactly as before.
         final pulseColor = AurumTheme.accentOf(context);
         return Container(
           margin: const EdgeInsets.only(bottom: 8),
@@ -425,16 +349,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
                               color: AurumTheme.textMutedOf(context),
                               fontSize: 11.5,
                             )),
-                        // "Smart Saver" (DataSaver) is the one tier whose
-                        // short label alone doesn't fully explain the
-                        // behaviour — its whole point is that it silently
-                        // adapts per song. Rather than always showing that
-                        // longer explanation in the collapsed list (which
-                        // would make the list feel cluttered/AI-written),
-                        // it only reveals once the user has actually
-                        // picked it — a quiet confirmation of what they
-                        // just turned on, the way a considered, premium
-                        // settings screen would do it.
                         if (key == 'DataSaver' && selected) ...[
                           const SizedBox(height: 3),
                           Text(l10n.spQualityDataSaverDescExpanded,
@@ -456,11 +370,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
       ),
     );
   }
-  // Pushes current Bass Boost / Volume Normalization / EQ band settings to
-  // the native AurumAudioEffects. Replaces the old
-  // `audioHandler?.customAction('reloadSettings')` call — the Kotlin side
-  // has no equivalent "reload from SharedPreferences" hook of its own, so
-  // Dart reads prefs itself and sends the resolved values explicitly.
   Future<void> _notifyEngine() async {
     final p = await SharedPreferences.getInstance();
     final bandGains = List.generate(10, (i) => p.getDouble('eq_band_$i') ?? 0.0);
@@ -540,12 +449,11 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
     );
   }
 
-  // ── Sleep Timer Sheet ──────────────────────────────────────────────────────
   void _showSleepTimerSheet(BuildContext context) {
     showAurumModalBottomSheet(
       context: context,
       backgroundColor: AurumTheme.bgCardOf(context),
-      isScrollControlled: true, // needed so the custom-duration keyboard doesn't cover the sheet
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -583,27 +491,13 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
       appBar: _appBar(context, l10n.settingsPlayerAudio),
       body: ListView(
         controller: _scrollController,
-        // Was missing the BouncingScrollPhysics every other settings
-        // screen uses — without it this list fell back to Android's
-        // default ClampingScrollPhysics (hard-stops at the edges, no
-        // overscroll give), which is what made this one screen feel
-        // stuck/rigid compared to the rest of Settings.
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
         children: [
 
-          // ── PLAYBACK ──────────────────────────────────────────────────────
-          // Same AurumStaggerItem entrance used by every other Settings
-          // screen — one section per stagger slot keeps the cascade
-          // timing identical across all of Settings.
           AurumStaggerItem(index: 0, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _sectionLabel(context, l10n.spPlayback),
           _streamQualityTile(context),
-          // Offline Mode — Spotify-style data saver: reads live from
-          // SourceProvider (not local state like the switches below) so
-          // it always reflects the real current value, including when a
-          // real connectivity change elsewhere flips MusicSource while
-          // this screen is open.
           Consumer<SourceProvider>(
             builder: (context, sourceProvider, _) => _switchTile(context,
                 icon: Icons.wifi_off_rounded,
@@ -626,18 +520,8 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
                 AudioPrefs.setDataSaver(v);
               }),
 
-          // Auto Sleep Guard — placed right under Data Saver since both
-          // are battery-related, but styled distinctly (its own gold-
-          // accented card, not a plain switch tile) so it reads as a
-          // standalone premium-feeling feature, not a minor toggle.
           const AutoSleepGuardTile(),
 
-          // Battery Saver Mode — right below Auto Sleep Guard since both
-          // are battery-focused features sharing the same premium card
-          // treatment. Distinct from Auto Sleep Guard: this one never
-          // touches playback, only visual effects (animations, blur,
-          // breathing background), and reacts live to actual battery %
-          // rather than inactivity time.
           const BatterySaverModeTile(),
 
           _switchTile(context,
@@ -669,20 +553,12 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
                 AudioPrefs.setCastIconVisibility(key);
               }),
 
-          // Playback Speed
           _buildSpeedSlider(context),
 
-          // Crossfade
           _buildCrossfadeSlider(context),
 
-          // Premium Sound — flagship toggle: Virtualizer + native BassBoost
-          // + extra loudness + presence/clarity EQ curve, composed on top
-          // of whatever Bass Boost/Volume Normalization/manual EQ the user
-          // already has set. Styled distinctly (gold gradient) since this
-          // is the headline audio-quality feature.
           _premiumSoundTile(context, l10n),
 
-          // Volume Normalization
           _switchTile(context,
               icon: Icons.equalizer_rounded,
               title: l10n.spVolumeNormalization,
@@ -694,7 +570,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
                 await _notifyEngine();
               }),
 
-          // Bass Boost
           _switchTile(context,
               icon: Icons.surround_sound_rounded,
               title: l10n.spBassBoost,
@@ -706,7 +581,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
                 await _notifyEngine();
               }),
 
-          // ── SLEEP TIMER ───────────────────────────────────────────────────
           ])),
           AurumStaggerItem(index: 1, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 16),
@@ -714,7 +588,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
           _buildSleepTimerTile(context, timer),
           ])),
 
-          // ── EQUALIZER ─────────────────────────────────────────────────────
           AurumStaggerItem(index: 2, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 16),
           _sectionLabel(context, l10n.spEqualizer),
@@ -726,7 +599,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
                   .push(_slideRoute(EqualizerScreen(audioEngine: widget.audioEngine)))),
           ])),
 
-          // ── BEHAVIOR ──────────────────────────────────────────────────────
           AurumStaggerItem(index: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 16),
           _sectionLabel(context, l10n.spBehavior),
@@ -814,13 +686,9 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
                 final key = _hapticIntensityKeyFromLabel(l10n, label);
                 setState(() => _hapticIntensity = key);
                 AurumHaptics.setIntensity(key);
-                // Immediate preview so picking "Strong" is felt right away
-                // instead of the user having to leave Settings to notice
-                // anything changed.
                 AurumHaptics.medium();
               }),
 
-          // History Duration
           _buildHistorySlider(context),
           ])),
         ],
@@ -828,7 +696,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
     );
   }
 
-  // ── Speed Slider ─────────────────────────────────────────────────────────
   Widget _buildSpeedSlider(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return Container(
@@ -892,7 +759,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
       ),
     );
   }
-
 
   Widget _buildCrossfadeSlider(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -958,7 +824,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
     );
   }
 
-  // ── Sleep Timer Tile ──────────────────────────────────────────────────────
   Widget _buildSleepTimerTile(BuildContext context, SleepTimerService timer) {
     final l10n = AppLocalizations.of(context)!;
     final isActive = timer.isActive;
@@ -1020,7 +885,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
     );
   }
 
-  // ── History Slider ────────────────────────────────────────────────────────
   Widget _buildHistorySlider(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return Container(
@@ -1046,7 +910,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
             onChanged: (v) {
               setState(() => _historyDuration = v);
               _save('history_duration', v.toInt());
-              // Trim existing history to new limit immediately
               context.read<RecentlyPlayedProvider>()
                   .trimToLimit((10 + (v / 100.0 * 190).round()).clamp(10, 200));
             },
@@ -1057,9 +920,6 @@ class _SettingsPlayerScreenState extends State<SettingsPlayerScreen>
   }
 }
 
-// =============================================================================
-// Sleep Timer Bottom Sheet
-// =============================================================================
 class SleepTimerSheet extends StatefulWidget {
   final NativeAudioEngine? engine;
   final bool finishSong;
@@ -1084,14 +944,13 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
   late bool _finishSong;
   late bool _fadeOut;
 
-  // Custom-duration text field state
   bool _customMode = false;
   final TextEditingController _customController = TextEditingController();
   final FocusNode _customFocusNode = FocusNode();
   String? _customError;
 
   static const _presets = [5, 10, 15, 20, 30, 45, 60, 90];
-  static const int _maxCustomMinutes = 600; // 10h — generous ceiling, guards against fat-finger overflow
+  static const int _maxCustomMinutes = 600;
 
   @override
   void initState() {
@@ -1107,10 +966,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
     super.dispose();
   }
 
-  /// Formats a minute count the way a premium app would — no duplicate
-  /// labels for different durations (the old `min ~/ 60` truncation made
-  /// both 60 and 90 minutes display as "1h"). Shows minutes for anything
-  /// under an hour, and "Xh" / "Xh Ym" above it.
   String _formatMinutes(int min) {
     if (min < 60) return '${min}m';
     final h = min ~/ 60;
@@ -1129,7 +984,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
         extentOffset: _customController.text.length,
       );
     });
-    // Open the keyboard right away — this is the whole point of custom mode.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _customFocusNode.requestFocus();
     });
@@ -1162,8 +1016,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
     final isCustomPreset = !_presets.contains(_selectedMinutes);
 
     return Padding(
-      // Lifts the whole sheet above the keyboard when the custom-duration
-      // field is focused, instead of the keyboard just covering it.
       padding: EdgeInsets.fromLTRB(
         20, 20, 20, 36 + MediaQuery.of(context).viewInsets.bottom,
       ),
@@ -1172,7 +1024,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Handle
             Center(
               child: Container(
                 width: 36, height: 4,
@@ -1193,7 +1044,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
             const SizedBox(height: 20),
 
             if (!_customMode) ...[
-              // Preset chips + Custom chip
               Wrap(
                 spacing: 8, runSpacing: 8,
                 children: [
@@ -1208,9 +1058,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
                       },
                     );
                   }),
-                  // Custom chip — shows the current custom value once set,
-                  // otherwise an edit-pencil affordance so it reads as
-                  // "type your own" rather than a mystery button.
                   _DurationChip(
                     label: isCustomPreset
                         ? _formatMinutes(_selectedMinutes)
@@ -1222,7 +1069,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
                 ],
               ),
             ] else ...[
-              // Custom duration entry — keyboard-driven, Apple-Clock-style.
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
@@ -1324,7 +1170,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
             ],
             const SizedBox(height: 20),
 
-            // Fade-out toggle
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
               decoration: BoxDecoration(
@@ -1356,7 +1201,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
             ),
             const SizedBox(height: 10),
 
-            // Finish song toggle
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
               decoration: BoxDecoration(
@@ -1388,12 +1232,11 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
             ),
             const SizedBox(height: 20),
 
-            // Start button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _customMode
-                    ? null // must confirm or cancel custom entry first
+                    ? null
                     : () {
                         AurumHaptics.medium();
                         SleepTimerService.instance.start(
@@ -1446,9 +1289,6 @@ class SleepTimerSheetState extends State<SleepTimerSheet> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Duration selection chip — shared by presets and the "Custom" entry point
-// ─────────────────────────────────────────────────────────────────────────────
 class _DurationChip extends StatelessWidget {
   final String label;
   final bool selected;
@@ -1498,17 +1338,6 @@ class _DurationChip extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// Equalizer Screen — production redesign
-//
-// Scope note: this class was rebuilt visually/UX-wise only. All existing
-// persistence keys ('eq_preset', 'eq_band_$i', 'bass_boost',
-// 'volume_normalization'), the preset table, band frequencies, and the
-// applyAudioEffects()/bandGainsDb pipeline are unchanged — see _load(),
-// _saveValues(), and _applyPreset() below, which are the same logic as
-// before with one additive extension (bassBoostPercent, see its own doc
-// comment) layered on top, never replacing it.
-// =============================================================================
 class EqualizerScreen extends StatefulWidget {
   final NativeAudioEngine? audioEngine;
   const EqualizerScreen({this.audioEngine});
@@ -1528,23 +1357,8 @@ class EqualizerScreenState extends State<EqualizerScreen> {
     'Electronic': [5.0,4.0,1.0,0.0,-2.0,1.0,0.0,2.0,4.0,5.0],
   };
 
-  // Approximate center frequency of each band, used only to place points
-  // on the response graph (log-spaced x-axis) — purely presentational,
-  // does not feed back into the real DSP path in any way.
   static const _bandFreqsHz = [32,64,125,250,500,1000,2000,4000,8000,16000];
 
-  // ── Isolated rebuild state ──────────────────────────────────────────────
-  // Band values, the selected preset name, and the Bass Boost percentage
-  // live in ValueNotifiers rather than plain setState fields. This is a
-  // PERFORMANCE-ONLY change — same data, same persistence keys, same
-  // applyAudioEffects() wiring below — but it means dragging a band
-  // slider or a curve node only rebuilds the small ValueListenableBuilder
-  // around that value (see build() below), instead of rebuilding the
-  // entire Equalizer screen (preset card, bass boost card, all 10 other
-  // sliders, the graph) on every drag frame. Matters for staying smooth
-  // at 60fps on the low-end devices Aurum targets, especially since the
-  // curve's CustomPaint and 10 sliders would otherwise all repaint on
-  // every single pixel of a drag.
   final ValueNotifier<List<double>> _valuesNotifier =
       ValueNotifier<List<double>>(List.filled(10, 0.0));
   final ValueNotifier<String> _presetNotifier = ValueNotifier<String>('Flat');
@@ -1556,43 +1370,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
   String get _selectedPreset => _presetNotifier.value;
   double get _bassBoostPercent => _bassBoostNotifier.value;
 
-  // Max additive dB this slider can contribute at 100%, split across the
-  // two lowest bands (sub-bass heavier than bass, same shape the existing
-  // 'Bass Boost' preset and native BASS_BOOST_SUB_BASS_EXTRA_MB/
-  // BASS_BOOST_BASS_EXTRA_MB constants already use). Kept well inside the
-  // ±12dB slider range and the native ceiling so headroom is preserved
-  // even when layered on top of an already-boosted manual curve.
-  //
-  // WHY THIS APPROACH (not a native bassBoostIntensity parameter): the
-  // native side (AurumAudioEffects.kt) already exposes
-  // android.media.audiofx.BassBoost.setStrength() internally, but only
-  // ever drives it from Premium Sound's own internal fade fraction —
-  // there is no existing MethodChannel parameter for a user-controllable
-  // bass strength, and adding one would mean touching native Kotlin AND
-  // every other call site of applyAudioEffects() across the app to keep
-  // them all passing a correct value, which is far riskier to get right
-  // than reusing a pipeline that's already fully wired end to end. The
-  // existing, already-proven-safe path this screen DOES have full
-  // control over is bandGainsDb — the same 10 values already flowing
-  // through applyAudioEffects() into the native EQ, which already
-  // double-clamps (K_CAP ceiling, then the device's real bandLevelRange)
-  // and arms the limiter whenever bass gain is added (see _ap2/_ap3 in
-  // AurumAudioEffects.kt). Scaling an additive low-frequency curve into
-  // that existing, already-safe pipeline is the smallest technically
-  // correct implementation available without native changes, and — since
-  // it's plain EQ band gain, not a second parallel effect — it can never
-  // go stale relative to what SettingsPlayerScreen's own
-  // Bass Boost/Volume Normalization toggles send, because every call
-  // site already sends bandGainsDb as part of the same call.
-  //
-  // "Must not overwrite manual EQ": _effectiveBandGains() below always
-  // starts from the user's real _values (their 10-band edits or preset,
-  // whichever they last set) and ADDS the bass curve on top only for
-  // bands 0-1 (32Hz/64Hz) — it never replaces _values itself, so turning
-  // Bass Boost back to 0% always returns exactly to the user's own curve,
-  // and a manual edit to any band (including 0/1) after setting Bass
-  // Boost simply becomes the new base that the same percentage is added
-  // on top of, same as any additive layer should behave.
   static const double _kBassBoostSubBassMaxDb = 4.0;
   static const double _kBassBoostBassMaxDb = 3.0;
 
@@ -1619,10 +1396,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
     setState(() => _loaded = true);
   }
 
-  /// The 10 band values actually sent to the native engine — the user's
-  /// real _values with the Bass Boost percentage additively layered onto
-  /// bands 0-1 only. See _kBassBoostSubBassMaxDb's doc comment above for
-  /// why this never overwrites _values itself.
   List<double> _effectiveBandGains() {
     final values = _values;
     final percent = _bassBoostPercent;
@@ -1642,9 +1415,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
       await p.setDouble('eq_band_$i', values[i]);
     }
     await p.setDouble('eq_bass_boost_percent', _bassBoostPercent);
-    // Bass Boost (on/off toggle) / Volume Normalization toggles live in
-    // SettingsPlayerScreen's state, not here — read the persisted values
-    // fresh so a custom EQ curve edit doesn't accidentally clobber them.
     final bassBoostToggle = p.getBool('bass_boost') ?? false;
     final volNorm = p.getBool('volume_normalization') ?? false;
     await widget.audioEngine?.applyAudioEffects(
@@ -1672,9 +1442,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
   }
 
   void _onBandChanged(int i, double v) {
-    // Mutate a fresh list (not in place) so ValueNotifier's identity
-    // check still fires a notification, then push the single changed
-    // value back.
     final next = List<double>.from(_valuesNotifier.value);
     next[i] = v;
     _valuesNotifier.value = next;
@@ -1703,10 +1470,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
     final l10n = AppLocalizations.of(context)!;
 
     if (!_loaded) {
-      // Brief loading state while the first SharedPreferences read
-      // resolves — same data source _load() always used, just an
-      // explicit frame for it instead of showing default/zeroed values
-      // for a flash before the real ones arrive.
       return Scaffold(
         backgroundColor: AurumTheme.bgOf(context),
         appBar: AppBar(
@@ -1743,9 +1506,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
                 color: AurumTheme.textPrimaryOf(context),
                 fontSize: 18, fontWeight: FontWeight.w600)),
         actions: [
-          // Subtle utility action, not a filled button — matches the
-          // spec's "Reset should feel like a subtle utility action, not
-          // unnecessarily large or button-like".
           TextButton(
             onPressed: _resetAll,
             child: Text(l10n.spEqReset,
@@ -1757,10 +1517,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
         children: [
-          // ── PRESET (compact selector) ──
-          // Only this row rebuilds when the preset name changes (e.g. a
-          // band drag flips it to "Custom") — everything else below is
-          // untouched by that change.
           _sectionLabel(context, l10n.spEqPresets),
           ValueListenableBuilder<String>(
             valueListenable: _presetNotifier,
@@ -1772,9 +1528,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
 
           const SizedBox(height: 22),
 
-          // ── BASS BOOST ──
-          // Only this card rebuilds while the Bass Boost slider is
-          // dragged — the 10-band list and curve never repaint for it.
           _sectionLabel(context, 'BASS BOOST'),
           ValueListenableBuilder<double>(
             valueListenable: _bassBoostNotifier,
@@ -1787,27 +1540,12 @@ class EqualizerScreenState extends State<EqualizerScreen> {
 
           const SizedBox(height: 22),
 
-          // ── EQ RESPONSE VISUALIZATION ──
-          // Only the curve (a single lightweight CustomPaint) rebuilds
-          // when any band value OR the bass boost percentage changes —
-          // combining both notifiers with Listenable.merge so it stays
-          // accurate to what's actually being sent to the engine without
-          // needing its own separate state copy.
           _sectionLabel(context, l10n.spEq10Band),
           ListenableBuilder(
             listenable: Listenable.merge([_valuesNotifier, _bassBoostNotifier]),
             builder: (context, _) => _EqResponseGraph(
               bandFreqsHz: _bandFreqsHz,
               values: _effectiveBandGains(),
-              // Dragging a node edits the user's real band value (same
-              // path _onBandChanged/_saveValues already use for the row
-              // sliders below) — NOT the bass-boost-inflated display
-              // value above. The graph shows the effective (bass-boost-
-              // included) curve so it's an honest preview of what's
-              // actually being sent to the engine, but a drag always
-              // writes back to the same underlying _values the sliders
-              // edit, so Bass Boost's contribution is never accidentally
-              // baked into a manual band value.
               onDragBand: _onBandChanged,
               onDragEnd: (_) => _saveValues(),
             ),
@@ -1815,12 +1553,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
 
           const SizedBox(height: 10),
 
-          // ── BAND CONTROLS ──
-          // Each row listens only to the shared values list (a single
-          // ValueListenableBuilder covering all 10 rows) — still far
-          // cheaper than the old design since this whole block no longer
-          // sits inside the same setState as the preset card, bass boost
-          // card, and curve above.
           ValueListenableBuilder<List<double>>(
             valueListenable: _valuesNotifier,
             builder: (context, values, _) => _EqBandList(
@@ -1836,11 +1568,6 @@ class EqualizerScreenState extends State<EqualizerScreen> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Compact preset selector row — tapping opens _PresetSheet. Replaces the
-// old full-width Wrap of pills with a single, calmer row that still shows
-// the active preset name at a glance.
-// ─────────────────────────────────────────────────────────────────────────
 class _PresetSelector extends StatelessWidget {
   final String selected;
   final VoidCallback onTap;
@@ -1879,8 +1606,6 @@ class _PresetSelector extends StatelessWidget {
   }
 }
 
-// Bottom sheet listing every existing preset (same table, same names) —
-// purely a presentation change from the old inline Wrap of pills.
 class _PresetSheet extends StatelessWidget {
   final List<String> presets;
   final String selected;
@@ -1955,9 +1680,6 @@ class _PresetSheet extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Bass Boost — single refined slider, 0-100%.
-// ─────────────────────────────────────────────────────────────────────────
 class _BassBoostCard extends StatelessWidget {
   final double percent;
   final ValueChanged<double> onChanged;
@@ -2025,20 +1747,6 @@ class _BassBoostCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// EQ response visualization — a lightweight CustomPainter drawing the
-// ACTUAL current band gains as a smooth curve over a log-frequency axis
-// (32Hz-16kHz) and a ±12dB grid. No decorative/fake curve — every point
-// is derived directly from `values`, the same array being sent to the
-// native engine. RepaintBoundary + a tight shouldRepaint keeps this cheap
-// even though it redraws on every band-slider drag.
-//
-// Interactive: dragging near a node updates that band's real value via
-// onDragBand — same callback/persistence path a manual slider drag
-// already uses (EqualizerScreenState._onBandChanged → _saveValues()), so
-// dragging on the curve and dragging the matching row slider are two
-// input paths into the exact same state, never a separate shadow value.
-// ─────────────────────────────────────────────────────────────────────────
 class _EqResponseGraph extends StatefulWidget {
   final List<int> bandFreqsHz;
   final List<double> values;
@@ -2068,10 +1776,6 @@ class _EqResponseGraphState extends State<_EqResponseGraph> {
     return t.clamp(0.0, 1.0) * width;
   }
 
-  /// Nearest band index to a horizontal touch position, so a drag
-  /// anywhere reasonably close to a node grabs that band rather than
-  /// requiring a pixel-perfect hit — small touch targets on a dense
-  /// 10-node graph would otherwise be hard to grab accurately.
   int _nearestBandIndex(double touchX, double width) {
     int best = 0;
     double bestDist = double.infinity;
@@ -2100,7 +1804,7 @@ class _EqResponseGraphState extends State<_EqResponseGraph> {
     final band = _activeBand ?? _nearestBandIndex(local.dx, size.width);
     final db = _dbForY(local.dy, size.height);
     setState(() => _activeBand = band);
-    widget.onDragBand!(band, (db * 2).round() / 2); // snap to 0.5dB, matches row sliders' divisions
+    widget.onDragBand!(band, (db * 2).round() / 2);
   }
 
   @override
@@ -2170,8 +1874,6 @@ class _EqCurvePainter extends CustomPainter {
   static const double _maxDb = 12;
 
   double _xFor(int freqHz, double width) {
-    // Log-scaled x-axis: 32Hz-16kHz spans a 9-octave range (log2(16000/32)),
-    // matching how real graphic EQs lay out frequency, not linear Hz.
     final minLog = math.log(32);
     final maxLog = math.log(16000);
     final t = (math.log(freqHz) - minLog) / (maxLog - minLog);
@@ -2188,9 +1890,6 @@ class _EqCurvePainter extends CustomPainter {
     final w = size.width;
     final h = size.height;
 
-    // Grid: 0dB center line (slightly stronger) + two subtle guide lines
-    // above/below. Kept minimal per spec — no dense grid, no labels
-    // cluttering the curve itself.
     final gridPaint = Paint()
       ..color = gridColor
       ..strokeWidth = 1;
@@ -2201,18 +1900,12 @@ class _EqCurvePainter extends CustomPainter {
     canvas.drawLine(Offset(0, h * 0.15), Offset(w, h * 0.15), gridPaint);
     canvas.drawLine(Offset(0, h * 0.85), Offset(w, h * 0.85), gridPaint);
 
-    // Build the curve through each band's actual current value — this IS
-    // the real EQ state, not a decorative approximation.
     final points = <Offset>[];
     for (int i = 0; i < freqs.length && i < values.length; i++) {
       points.add(Offset(_xFor(freqs[i], w), _yFor(values[i], h)));
     }
     if (points.isEmpty) return;
 
-    // Smooth the polyline through the band points with a simple Catmull-
-    // Rom-style spline so it reads as a continuous frequency response
-    // rather than a jagged connect-the-dots line — still 100% derived
-    // from the real values above, purely a rendering smoothing pass.
     final path = Path()..moveTo(points.first.dx, points.first.dy);
     for (int i = 0; i < points.length - 1; i++) {
       final p0 = points[i == 0 ? i : i - 1];
@@ -2231,11 +1924,6 @@ class _EqCurvePainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
     canvas.drawPath(path, curvePaint);
 
-    // Node dots at each band's real position — doubles as the visual
-    // anchor for the "which frequency am I looking at" read. The node
-    // currently being dragged (if any) draws slightly larger with a soft
-    // halo ring so there's clear feedback on which one is active —
-    // still just two cheap drawCircle calls, no gradients/glow.
     final nodePaint = Paint()..color = curveColor;
     for (int i = 0; i < points.length; i++) {
       final isActive = i == activeBand;
@@ -2264,10 +1952,6 @@ class _EqCurvePainter extends CustomPainter {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Compact 10-band list — same bands/frequencies/±12dB range/persistence
-// as before, laid out tighter with precise one-decimal dB formatting.
-// ─────────────────────────────────────────────────────────────────────────
 class _EqBandList extends StatelessWidget {
   final List<String> bands;
   final List<double> values;
@@ -2318,7 +2002,7 @@ class _EqBandList extends StatelessWidget {
                     ),
                     child: Slider(
                       value: v,
-                      min: -12, max: 12, divisions: 48, // 0.5dB steps for finer control
+                      min: -12, max: 12, divisions: 48,
                       onChanged: (val) => onChanged(i, val),
                       onChangeEnd: onChangeEnd,
                     ),
@@ -2344,9 +2028,6 @@ class _EqBandList extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// Shared Helpers
-// =============================================================================
 AppBar _appBar(BuildContext context, String title, {List<Widget>? actions}) =>
     AppBar(
       backgroundColor: AurumTheme.bgOf(context),
@@ -2407,11 +2088,6 @@ Widget _switchTile(BuildContext context,
       ),
     );
 
-/// Maps the stored preference key ('auto'/'always'/'hidden') to its
-/// localized display label for the dropdown, and back — AudioPrefs and
-/// SharedPreferences always store the stable English key regardless of
-/// display language, same as _streamQuality's 'Auto'/'High' keys elsewhere
-/// in this file.
 String _castIconVisibilityLabel(AppLocalizations l10n, String key) {
   switch (key) {
     case 'always':
@@ -2429,9 +2105,6 @@ String _castIconVisibilityKeyFromLabel(AppLocalizations l10n, String label) {
   return 'auto';
 }
 
-/// Same stable-key / localized-label split as _castIconVisibilityLabel
-/// above — 'off'/'light'/'strong' are stored, the dropdown shows the
-/// localized text.
 String _hapticIntensityLabel(AppLocalizations l10n, String key) {
   switch (key) {
     case 'off':
@@ -2534,7 +2207,5 @@ PageRouteBuilder _slideRoute(Widget screen) => PageRouteBuilder(
         );
       },
       transitionDuration: const Duration(milliseconds: 280),
-      // FIX ("back feels stuck/not smooth"): matched to the forward
-      // duration above — was 250ms vs 280ms open.
       reverseTransitionDuration: const Duration(milliseconds: 280),
     );

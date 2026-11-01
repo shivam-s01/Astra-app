@@ -14,24 +14,6 @@ import '../theme/aurum_theme.dart';
 import '../utils/aurum_haptics.dart';
 import '../utils/aurum_motion.dart';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AurumPromoScreen — one-time, full-screen animated promo (sign-in / playlist
-// import). Replaces the tiny coach-tip bubbles that most people never noticed.
-//
-// Design rules (low-end phones, battery, zero annoyance):
-//   • ONE AnimationController drives everything (no per-widget controllers)
-//   • hero rings / orbit are a single CustomPainter bound to the controller
-//     via `repaint:` — no widget rebuilds per frame, no BackdropFilter, no
-//     blur layers, no saveLayer
-//   • text / chips / button only use Fade/Slide/Scale transitions
-//     (compositor-only, cheap)
-//   • opaque route → Flutter stops painting the screens underneath
-//   • auto-closes by itself after [AurumPromoScreen.totalDuration] (~5.5s);
-//     a tap anywhere skips it instantly; the CTA pill runs the real action
-//   • never shown when animations are off or Battery Saver is active
-//     (see AurumPromoScreen.canShow)
-// ═══════════════════════════════════════════════════════════════════════════
-
 class AurumPromoData {
   final IconData icon;
   final String title;
@@ -39,13 +21,9 @@ class AurumPromoData {
   final List<(IconData, String)> chips;
   final String ctaLabel;
 
-  /// Icon + short label drawn ON the real button's spot, so people see
-  /// exactly where the feature lives ("Sign in from here").
   final IconData pointerIcon;
   final String pointerLabel;
 
-  /// Optional benefit rows (icon, heading, short text). When present they
-  /// replace the chips — easier to read for the sign-in pitch.
   final List<(IconData, String, String)> highlights;
 
   const AurumPromoData({
@@ -96,8 +74,6 @@ class AurumPromoData {
   );
 }
 
-/// Opaque fade route. Resolves to `true` when the CTA was tapped, otherwise
-/// `false` / `null` (skipped, auto-closed or back-pressed).
 class AurumPromoRoute extends PageRouteBuilder<bool> {
   AurumPromoRoute(AurumPromoData data, {Rect? anchor})
       : super(
@@ -116,18 +92,11 @@ class AurumPromoRoute extends PageRouteBuilder<bool> {
 class AurumPromoScreen extends StatefulWidget {
   final AurumPromoData data;
 
-  /// Global rect of the real button this promo is about. When given, the
-  /// promo marks that exact spot (ghost button + pulse + label) so people
-  /// know where to tap afterwards.
   final Rect? anchor;
   const AurumPromoScreen({super.key, required this.data, this.anchor});
 
-  /// Whole promo, start to auto-close. 5.5s: everything is on screen by ~2.6s,
-  /// then ~3s to read it. The Skip button / a tap anywhere ends it at any time.
   static const totalDuration = Duration(milliseconds: 5500);
 
-  /// False when the user turned animations off or Battery Saver is active —
-  /// the promo is then skipped entirely (nothing is marked as seen).
   static bool get canShow => AurumMotion.enabled;
 
   @override
@@ -211,11 +180,9 @@ class _AurumPromoScreenState extends State<AurumPromoScreen>
     final bg = AurumTheme.bgOf(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
     final d = widget.data;
-    // Short phones: smaller hero so the column never overflows.
     final mq = MediaQuery.of(context);
     final hero = mq.size.height < 640 ? 180.0 : 240.0;
     final a = widget.anchor;
-    // Keep the hero clear of the marked button + its label.
     final topPad = a == null
         ? 0.0
         : math.min(math.max(0.0, a.bottom + 56 - mq.padding.top),
@@ -230,8 +197,6 @@ class _AurumPromoScreenState extends State<AurumPromoScreen>
           onTap: () => _close(false),
           child: Stack(
             children: [
-              // Soft accent glow — a plain RadialGradient (no blur, no
-              // shader-heavy effects), painted once.
               Positioned.fill(
                 child: IgnorePointer(
                   child: DecoratedBox(
@@ -256,15 +221,12 @@ class _AurumPromoScreenState extends State<AurumPromoScreen>
                     Expanded(
                       child: Center(
                         child: FittedBox(
-                          // scales the block down on short screens instead of
-                          // ever overflowing
                           fit: BoxFit.scaleDown,
                           child: SizedBox(
                             width: mq.size.width,
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                    // ── Hero: rings + orbit + disc ──
                     RepaintBoundary(
                       child: SizedBox(
                         width: hero,
@@ -416,8 +378,6 @@ class _AurumPromoScreenState extends State<AurumPromoScreen>
                         ),
                       ),
                     ),
-                    // Explicit Skip button (a tap anywhere also skips) + a thin
-                    // countdown bar that shows it closes by itself.
                     FadeTransition(
                       opacity: _skip,
                       child: GestureDetector(
@@ -483,9 +443,6 @@ class _AurumPromoScreenState extends State<AurumPromoScreen>
     );
   }
 
-  /// Ghost copy of the real button at its exact on-screen spot, pulse rings
-  /// and a small "…from here" label with an arrow. Tapping the ghost runs the
-  /// action, same as the CTA.
   List<Widget> _pointer(BuildContext context, Rect a, Color accent, Size screen) {
     final d = widget.data;
     const labelW = 150.0;
@@ -668,9 +625,6 @@ class _Chip extends StatelessWidget {
   }
 }
 
-/// Pulsing rings + a rotating arc + 3 orbiting dots. Driven straight off the
-/// controller (`super(repaint: t)`) so no widget rebuilds happen per frame.
-/// Paint objects are reused; only canvas primitives are drawn.
 class _HeroPainter extends CustomPainter {
   final Animation<double> t;
   final Color color;
@@ -686,7 +640,6 @@ class _HeroPainter extends CustomPainter {
     ..strokeCap = StrokeCap.round;
   final Paint _dot = Paint();
   final Paint _spark = Paint();
-  // unit 4-point sparkle, built once and only scaled/translated per frame
   static final Path _star = Path()
     ..moveTo(0, -1)
     ..quadraticBezierTo(0.14, -0.14, 1, 0)
@@ -695,7 +648,6 @@ class _HeroPainter extends CustomPainter {
     ..quadraticBezierTo(-0.14, -0.14, 0, -1)
     ..close();
   static const _sparks = <(double, double, double)>[
-    // angle, radius factor, size
     (-0.9, 0.93, 8.0),
     (0.5, 0.97, 6.0),
     (2.2, 0.92, 7.0),
@@ -715,11 +667,9 @@ class _HeroPainter extends CustomPainter {
     final v = t.value;
     final c = size.center(Offset.zero);
     final maxR = size.shortestSide / 2;
-    // everything fades in over the first 10% of the timeline
     final appear = Curves.easeOut.transform((v / 0.10).clamp(0.0, 1.0));
     if (appear <= 0) return;
 
-    // 3 expanding rings, 2 full cycles over the promo
     for (var i = 0; i < 3; i++) {
       final phase = (v * 5.0 + i / 3.0) % 1.0;
       final r = discRadius + (maxR - discRadius) * Curves.easeOut.transform(phase);
@@ -728,7 +678,6 @@ class _HeroPainter extends CustomPainter {
       canvas.drawCircle(c, r, _ring);
     }
 
-    // rotating arc just outside the disc
     final arcR = discRadius + 10;
     _arc.color = lightColor.withOpacity(0.85 * appear);
     canvas.drawArc(
@@ -739,7 +688,6 @@ class _HeroPainter extends CustomPainter {
       _arc,
     );
 
-    // twinkling sparkles (5 tiny paths — cheap)
     for (var i = 0; i < _sparks.length; i++) {
       final sp = _sparks[i];
       final tw = 0.5 + 0.5 * math.sin(v * 2 * math.pi * 5 + i * 1.7);
@@ -753,7 +701,6 @@ class _HeroPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // 3 orbiting dots
     final orbitR = discRadius + 34;
     for (var i = 0; i < 3; i++) {
       final ang = -v * 2 * math.pi * 2.6 + i * (2 * math.pi / 3);
@@ -771,8 +718,6 @@ class _HeroPainter extends CustomPainter {
       old.color != color || old.lightColor != lightColor;
 }
 
-/// Two soft pulse rings around the marked button (starts at ~36% of the
-/// timeline, together with the ghost button).
 class _PointerPainter extends CustomPainter {
   final Animation<double> t;
   final Rect anchor;

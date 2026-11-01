@@ -27,14 +27,6 @@ class LikedScreen extends StatefulWidget {
 }
 
 class _LikedScreenState extends State<LikedScreen> {
-  // MULTI-SELECT ("select krne pr 3 dot aa jaye ... select all, unlike ka
-  // option"): selecting a song doesn't touch SongTile itself (shared by
-  // every other screen in the app) — instead, while _selectMode is true,
-  // a transparent GestureDetector is overlaid on top of each SongTile that
-  // intercepts the tap for selection instead of letting it reach the tile
-  // underneath and start playback. A normal long-press on any tile (while
-  // not already selecting) enters select mode with that song pre-selected,
-  // same gesture pattern as the Artists tab's multi-select above.
   bool _selectMode = false;
   final Set<String> _selectedIds = {};
 
@@ -123,8 +115,6 @@ class _LikedScreenState extends State<LikedScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    // BACK FIX: system back used to pop the whole screen while multi-select
-    // was active. Now it exits select mode first (same as the X button).
     return PopScope(
       canPop: !_selectMode,
       onPopInvokedWithResult: (didPop, _) {
@@ -132,24 +122,9 @@ class _LikedScreenState extends State<LikedScreen> {
       },
       child: Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // SPOTIFY-STYLE PERSISTENT MINI PLAYER: this screen is pushed via
-      // Navigator.push from Library, so it builds its own Scaffold on top
-      // of MainShell's — MainShell's own mini player (in its
-      // bottomNavigationBar) is no longer part of the visible layout once
-      // this screen is on top. MiniPlayerSlot reproduces the exact same
-      // visibility/transparency behavior here, so playback controls never
-      // disappear just because the user browsed into Liked Songs — same
-      // as Spotify/YT Music, where the mini player follows you into every
-      // browsing screen and only hides behind the full Now Playing view.
       bottomNavigationBar: const MiniPlayerSlot(),
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
-        // PERF FIX (same class as home_screen.dart / artist_screen.dart /
-        // library_screen.dart / mix_screen.dart's matching fix): default
-        // Sliver cacheExtent (250px) is too small for a large liked-songs
-        // list — fast flings tear down and rebuild tiles just outside
-        // that tiny buffer. 600 keeps flings smooth without building ~15 extra
-        // rows (images) inside the first frame on low-end phones.
         cacheExtent: 600,
         slivers: [
           SliverAppBar(
@@ -172,17 +147,6 @@ class _LikedScreenState extends State<LikedScreen> {
                 }
               },
             ),
-            // SELECTION APP BAR (FIX — "select all wala awkward hai"):
-            // Select all/Deselect all used to be buried two taps deep
-            // inside a 3-dot menu, which is exactly the kind of hidden
-            // control that makes bulk-selection screens feel clunky
-            // (Gmail/Photos/Spotify all put it directly in the app bar
-            // as a single tap). Replaced with a direct toggling action
-            // button — reads "Select all" while anything is unselected,
-            // flips to "Deselect all" once every song is selected — plus
-            // a dedicated unlike (delete) icon so the whole flow is two
-            // visible taps (select all → unlike) instead of three
-            // (menu → select all → menu → unlike).
             actions: _selectMode
                 ? [
                     Consumer<FavoritesProvider>(
@@ -269,22 +233,6 @@ class _LikedScreenState extends State<LikedScreen> {
               }
 
               final songs = fav.favorites;
-              // PERF FIX (nav-in jank on Liked Songs — "jatka" on open):
-              // this used to build every SongTile eagerly via
-              // SliverChildListDelegate + songs.map(...).toList() — the
-              // ENTIRE liked list was constructed, laid out, and painted
-              // on the very first frame after the push transition
-              // started, competing directly with the 350ms page-slide
-              // animation for frame budget. On a sizeable liked list that
-              // showed up as a visible stutter right as the screen
-              // entered, unlike every other library sub-screen (History,
-              // Downloads, Albums, Artists), which already used a lazy
-              // SliverChildBuilderDelegate. Switched to the same lazy
-              // pattern: only the tiles actually on/near screen build on
-              // that first frame, the rest build cheaply as the user
-              // scrolls — matching Spotify/YT Music's own lazy list
-              // behavior and giving this screen the same light, instant
-              // open feel as its siblings.
               return SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
@@ -324,16 +272,6 @@ class _LikedScreenState extends State<LikedScreen> {
                     final songIndex = index - 1;
                     final song = songs[songIndex];
                     final isSelected = _selectedIds.contains(song.id);
-                    // LONG-PRESS FIX ("long press krne pe kuch hota hi
-                    // nahi"): this used to wrap SongTile in an outer
-                    // GestureDetector(onLongPress: _enterSelectMode) and
-                    // rely on the wrapper "winning" the gesture arena
-                    // against SongTile's own internal InkWell long-press —
-                    // it never did, so long-press only ever opened the
-                    // options sheet and select mode could never be
-                    // entered. Passing onLongPressOverride makes SongTile
-                    // itself fire _enterSelectMode instead of its options
-                    // sheet — a single recognizer, no arena conflict.
                     final tile = SongTile(
                       song: song,
                       queue: songs,
@@ -345,22 +283,6 @@ class _LikedScreenState extends State<LikedScreen> {
                     if (!_selectMode) {
                       return tile;
                     }
-                    // CHECKBOX PLACEMENT FIX ("select wala option
-                    // thumbnail pr aa raha hai, awkward lagta hai"): the
-                    // previous version squeezed an extra circle in
-                    // between the screen edge and the artwork, visually
-                    // colliding with/crowding the thumbnail. Spotify and
-                    // Google Photos instead replace the thumbnail itself
-                    // with the selection indicator — a dimming scrim
-                    // directly over the artwork with a checkmark
-                    // centered on top when selected — so nothing new is
-                    // squeezed into the row layout at all; the check
-                    // simply takes over the exact space the artwork
-                    // already occupies. Precisely sized/positioned to
-                    // match SongTile's own artwork geometry (58px,
-                    // 10px radius, 16px left padding) so it sits exactly
-                    // on top of the real thumbnail beneath, pixel for
-                    // pixel.
                     return Stack(
                       children: [
                         IgnorePointer(child: tile),

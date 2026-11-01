@@ -5,8 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// Usage tracking -> Supabase (app_events + devices). Fails silent, batched,
-// offline-safe. Incognito ON = nothing is recorded or sent.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
@@ -48,7 +46,6 @@ class SupabaseTracker with WidgetsBindingObserver {
 
   SupabaseClient get _c => Supabase.instance.client;
 
-  /// Call once (AnalyticsService.init does it).
   Future<void> start() async {
     if (_started) return;
     _started = true;
@@ -90,7 +87,6 @@ class SupabaseTracker with WidgetsBindingObserver {
     _hw = hw.isEmpty ? null : hw;
   }
 
-  // ── Geo (city etc.) from public IP — free HTTPS lookup, no permission ──
   Future<Map<String, Object>?> _fetchGeo() async {
     try {
       final r = await http
@@ -145,7 +141,6 @@ class SupabaseTracker with WidgetsBindingObserver {
     return o;
   }
 
-  /// New app session: refresh location, register device, log session_info.
   Future<void> _beginSession() async {
     if (AudioPrefs.incognito) return;
     _geo = await _fetchGeo() ?? _geo;
@@ -252,13 +247,10 @@ class SupabaseTracker with WidgetsBindingObserver {
       try {
         await _c.from('app_events').insert(rows);
       } catch (_) {
-        // e.g. user signed out before flush -> keep data, drop user link
-        // (anon_id still ties it to the same install).
         final retry = rows.map((r) => {...r, 'user_id': null}).toList();
         await _c.from('app_events').insert(retry);
       }
     } catch (_) {
-      // offline / error: put back (capped) and retry on next flush
       if (_buf.length + rows.length < 500) {
         _buf.insertAll(0, rows);
       }
@@ -293,7 +285,6 @@ class SupabaseTracker with WidgetsBindingObserver {
   }
 }
 
-/// Small helper so we don't need an extra import in callers.
 class PlatformDispatcherLocale {
   static String? get() {
     try {

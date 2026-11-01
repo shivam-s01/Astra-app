@@ -28,40 +28,17 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 
-/**
- * Replaces audio_service's `AudioService` + `AurumAudioHandler` entirely.
- * Owns [AurumAudioEngine] (which owns the actual ExoPlayer) and wraps it in
- * a real MediaSession — Media3 auto-generates the lock-screen/notification
- * UI (MediaStyle notification, play/pause/next/prev, artwork, Bluetooth,
- * Android Auto) directly from the player + session state, so none of that
- * needs to be hand-built here.
- *
- * Held as a singleton by [AurumEngineChannelHandler] via [MainActivity] so
- * that MethodChannel calls from Dart (playQueue, playSong, etc.) and this
- * service operate on the SAME AurumAudioEngine/ExoPlayer instance — the
- * service is just the foreground/notification wrapper around it, not a
- * second player.
- */
 private const val VOICE_NOOP_ID = "aurum_voice_noop"
 private val VOICE_NOOP_ITEM: MediaItem = MediaItem.Builder().setMediaId(VOICE_NOOP_ID).build()
 
 class AurumMediaSessionService : MediaSessionService() {
-
     companion object {
         private const val LIKE_ACTION = "com.aurum.music.ACTION_TOGGLE_LIKE"
         private const val NOTIFICATION_CHANNEL_ID = "aurum_playback"
         private const val NOTIFICATION_ID = 1001
 
-        // Set by AurumEngineChannelHandler right after it constructs the
-        // engine (MainActivity.configureFlutterEngine runs before this
-        // service's onCreate in practice, but we guard with a null check +
-        // late binding regardless — see onCreate()).
         var sharedEngine: AurumAudioEngine? = null
 
-        // Live instance, set/cleared in onCreate()/onDestroy(). Lets
-        // AurumEngineChannelHandler push an immediate notification refresh
-        // (e.g. after setCurrentSongLiked) without waiting for the next
-        // player event to happen to fire onMediaMetadataChanged.
         var instance: AurumMediaSessionService? = null
     }
 
@@ -73,23 +50,6 @@ class AurumMediaSessionService : MediaSessionService() {
         super.onCreate()
         instance = this
 
-        // Explicitly wire Media3's own notification provider instead of
-        // relying purely on its implicit default. THE actual second bug
-        // (after the earlier release()-kills-the-player fix): a separate
-        // plain NotificationCompat notification (no MediaStyle) was being
-        // posted via startForeground() under its own ID, while Media3's
-        // own MediaNotificationManager built a DIFFERENT, real MediaStyle
-        // notification once the session/player were ready. Two
-        // notifications existed; the plain one (posted first) "won" the
-        // visible slot, and it had no transport controls because it was
-        // never MediaStyle — hence "name dikh raha hai, controls nahi".
-        //
-        // Fix: grab the SAME DefaultMediaNotificationProvider Media3 uses
-        // internally, build the real MediaStyle notification with it
-        // ourselves once mediaSession exists (see below), and post that
-        // via startForeground(). Only one notification ever exists now,
-        // and it's MediaStyle (title/artist/artwork/play-pause-next-prev)
-        // from the very first frame it's shown.
         notificationProvider = androidx.media3.session.DefaultMediaNotificationProvider
             .Builder(this)
             .setChannelId(NOTIFICATION_CHANNEL_ID)
@@ -99,13 +59,6 @@ class AurumMediaSessionService : MediaSessionService() {
         createNotificationChannelIfNeeded()
 
         val engine = sharedEngine ?: run {
-            // Defensive fallback: service was started (e.g. by the OS
-            // restoring a sticky foreground service after process death)
-            // before Dart/MainActivity ever constructed AurumEngineChannelHandler.
-            // We cannot safely build a second ExoPlayer here (would fight
-            // the real one for audio focus/output), so bail out quietly —
-            // the service will be recreated correctly once MainActivity
-            // actually launches and wires sharedEngine.
             stopSelf()
             return
         }
@@ -144,27 +97,6 @@ class AurumMediaSessionService : MediaSessionService() {
                 return result
             }
 
-            // FIX (root cause of "Aurum Music" generic-title notification +
-            // permanently frozen seek bar while audio genuinely plays,
-            // reported on both search-tapped AND downloaded songs equally):
-            // MediaSession.Callback's default onPlaybackResumption lets
-            // Media3 silently resume/start a MediaItem from its OWN
-            // persisted session state (Android's system media-resumption
-            // feature — surfaced via Android Auto, the media resumption
-            // shelf, or after process death/restart) completely OUTSIDE
-            // AurumAudioEngine.playSong()/playQueue(). That bypasses
-            // buildMediaItem() entirely, so the resumed item has no real
-            // title/artist metadata (hence the notification falling back to
-            // the app label "Aurum Music") — and since Dart never called
-            // playSong/playQueue for it, _expectedSongId/_queue/_isLoading
-            // in player_provider.dart are never touched, leaving the UI
-            // permanently showing whatever loading/expectation state it was
-            // already in while this separately-resumed player audibly
-            // plays in the background. Returning an immediate failed future
-            // here disables Media3's default resumption outright — the ONLY
-            // way a MediaItem can ever load is through this engine's own
-            // playSong/playQueue, called from Dart, which is the sole
-            // source of truth PlayerProvider's state machine assumes.
             override fun onPlaybackResumption(
                 mediaSession: MediaSession,
                 controller: MediaSession.ControllerInfo,
@@ -174,10 +106,6 @@ class AurumMediaSessionService : MediaSessionService() {
                 ))
             }
 
-            // Gemini / Assistant "play <query> on Astra Music" arrives here
-            // (legacy playFromSearch is converted to setMediaItems with a
-            // searchQuery and no URI). Hand the query to Dart and leave the
-            // current queue untouched; Dart's playSong does the real work.
             override fun onSetMediaItems(
                 mediaSession: MediaSession,
                 controller: MediaSession.ControllerInfo,
@@ -186,22 +114,14 @@ class AurumMediaSessionService : MediaSessionService() {
                 startPositionMs: Long,
             ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
                 if (mediaItems.isNotEmpty() && mediaItems.all { it.localConfiguration == null }) {
-                    // Besides the free-text query, Gemini/Assistant ships structured
-                    // MediaStore-style extras (focus = song/artist/album/playlist/genre,
-                    // title, artist, album, ...) in requestMetadata.extras. Forward all
-                    // of it so Dart can tell "play Kesariya by Arijit" (a song) from
-                    // "play Arijit Singh" (an artist) like YouTube Music does.
                     val q = mediaItems.firstNotNullOfOrNull { it.requestMetadata.searchQuery }
                     val extras = mediaItems.firstNotNullOfOrNull { it.requestMetadata.extras }
                     val payload = VoiceBridge.payload(q, extras)
                     if (payload.isNotBlank()) {
                         VoiceBridge.dispatch(applicationContext, payload)
                     } else if (mediaSession.player.mediaItemCount == 0) {
-                        // "play some music" with nothing loaded
                         VoiceBridge.dispatch(applicationContext, "liked songs")
                     }
-                    // Sentinel: the ForwardingPlayer below ignores it, so the
-                    // engine's own queue is never touched by this request.
                     return Futures.immediateFuture(
                         MediaSession.MediaItemsWithStartPosition(
                             listOf(VOICE_NOOP_ITEM), 0, 0L
@@ -229,19 +149,6 @@ class AurumMediaSessionService : MediaSessionService() {
             }
         }
 
-        // FIX ("background/notification/lock-screen/Bluetooth Next sometimes does
-        // nothing"): the session used to wrap engine.player (the raw ExoPlayer)
-        // directly. Every transport button from the notification, lock screen, headset
-        // and Android Auto therefore called ExoPlayer.seekToNext()/seekToPrevious()
-        // itself -- and ExoPlayer's timeline only ever contains the songs the engine has
-        // ALREADY spliced in (the rest of the queue is resolved one-by-one in the
-        // background). If the next song wasn't spliced in yet (right after starting a
-        // queue, after fast skips, after a slow/failed resolve), ExoPlayer had no next
-        // item: the Next button was disabled/hidden or the press was silently ignored,
-        // and it also bypassed the engine's skip serialization entirely.
-        // This wrapper routes every Next/Previous through the engine's own
-        // skipToNext()/skipToPrevious() (which know the full queue and fall back to a
-        // proper resolve+restart), and advertises the buttons based on the real queue.
         val sessionPlayer = object : androidx.media3.common.ForwardingPlayer(engine.player) {
             override fun getAvailableCommands(): Player.Commands {
                 val b = super.getAvailableCommands().buildUpon()
@@ -272,9 +179,6 @@ class AurumMediaSessionService : MediaSessionService() {
                 super.hasNextMediaItem() || engine.canSkipNext()
             override fun hasPreviousMediaItem(): Boolean =
                 super.hasPreviousMediaItem() || engine.canSkipPrevious()
-            // Assistants follow a voice "play <x>" with play(). The requested song is
-            // started by Dart (playSong), so letting this play() through would first
-            // resume whatever old song was paused -> a short burst of the wrong audio.
             override fun play() {
                 if (VoiceBridge.voiceJustRequested()) return
                 super.play()
@@ -296,31 +200,6 @@ class AurumMediaSessionService : MediaSessionService() {
         }
         mediaSession = sessionBuilder.build()
 
-        // Defensive safety-net for aggressive OEM battery managers
-        // (ColorOS/realme UI and similar) that have been observed killing
-        // this service within moments of creation, before Media3's own
-        // internal auto-promotion has a chance to fire on the first player
-        // event. Building Media3's own real notification here manually
-        // (via notificationProvider.createNotification(...)) requires an
-        // ActionFactory instance that Media3 1.4.1 doesn't expose a public
-        // DEFAULT/no-op implementation for, so that approach doesn't
-        // compile. Instead: post a minimal MediaStyle notification built
-        // with MediaStyleNotificationHelper (stable public API, correctly
-        // associates the notification with mediaSession so it's real
-        // MediaStyle, not a plain notification) as the immediate
-        // OEM-kill safety net. Media3's own MediaNotificationManager takes
-        // over and replaces this with its fully-featured notification
-        // (title/artist/artwork/play-pause-next-prev) the moment player
-        // state is available — same notification ID/channel, so there is
-        // still only ever one notification visible.
-        //
-        // This MUST happen before addSession() below: addSession() can
-        // itself trigger an immediate notification-refresh attempt (e.g.
-        // if playWhenReady is already true by the time this runs), and
-        // that refresh calls startForeground() internally. Calling our
-        // own startForeground() first guarantees the service is already
-        // in the foreground state before Media3's internal machinery ever
-        // tries to touch it — avoiding a startForeground-ordering race.
         val placeholderNotification = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("Aurum")
             .setContentText("Loading…")
@@ -342,49 +221,8 @@ class AurumMediaSessionService : MediaSessionService() {
             startForeground(NOTIFICATION_ID, placeholderNotification)
         }
 
-        // THE actual root cause of "Loading... kabhi update nahi hota":
-        // Media3's MediaNotificationManager (the thing that rebuilds the
-        // notification whenever player/metadata state changes) only ever
-        // starts listening to a session once MediaSessionService.addSession()
-        // is called on it. That call normally happens automatically inside
-        // MediaSessionService's own onBind()/connect() handling — but ONLY
-        // when a real androidx.media3.session.MediaController connects to
-        // this service. MainActivity's bindService() is a plain Android
-        // service bind, not a MediaController connection, so that path
-        // never fires and addSession() was never being called — the
-        // session existed and had a real player attached, but the
-        // notification manager didn't know it existed, so it never
-        // refreshed past the placeholder text. Calling addSession()
-        // ourselves, right here, is what actually wires up live title/
-        // artist/artwork + control-state updates on every player event.
         addSession(mediaSession!!)
 
-        // THE actual fix for "background/lock-screen kuch nahi ho raha":
-        // Media3's MediaSessionService base class owns an internal
-        // MediaNotificationManager that listens to player events and
-        // rebuilds a proper MediaStyle notification (title/artist/artwork/
-        // play-pause-next-prev controls) whenever they change — from
-        // engine.player's current MediaMetadata (already wired in
-        // AurumAudioEngine's buildMediaItem). It automatically upgrades
-        // the placeholder notification posted above into the real one and
-        // keeps it in sync; nothing further needs to be built by hand here.
-        // We do NOT call stopForeground() anywhere ourselves — Media3
-        // demotes/cleans up on its own once playback stops, and stopSelf()
-        // (see onTaskRemoved/the sharedEngine-null branch above) tears the
-        // notification down as part of normal service destruction.
-
-        // Keep the notification's like-button icon in sync whenever the
-        // engine's liked state changes (e.g. FavoritesProvider toggled from
-        // inside the app, or a successful reverse-channel toggle from this
-        // very button). Re-pushing the custom layout on every playback
-        // state change would be wasteful, so we piggyback on the existing
-        // player listener instead of polling.
-        //
-        // Also drives the home-screen widget (AurumWidgetProvider):
-        // metadata changes cover track switches (title/artist/artwork),
-        // and isPlaying changes cover the play/pause icon toggling —
-        // both read straight from this same engine.player, so the widget
-        // always mirrors exactly what the lock screen/notification show.
         engine.player.addListener(object : Player.Listener {
             override fun onMediaMetadataChanged(mediaMetadata: androidx.media3.common.MediaMetadata) {
                 refreshLikeButton(engine)
@@ -393,16 +231,9 @@ class AurumMediaSessionService : MediaSessionService() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 AurumWidgetProvider.refreshAll(this@AurumMediaSessionService)
-                // Auto Sleep Guard: schedules/cancels its alarm off the
-                // same play/pause signal everything else here already
-                // listens to — no separate listener or polling added.
                 AutoSleepGuard.onPlaybackStateChanged(this@AurumMediaSessionService, isPlaying)
             }
 
-            // A user-initiated skip/seek/track-change is real activity —
-            // covers the case where someone is actively skipping through
-            // songs without ever touching play/pause, which should reset
-            // the inactivity window the same as a tap would.
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo,
                 newPosition: Player.PositionInfo,
@@ -414,12 +245,6 @@ class AurumMediaSessionService : MediaSessionService() {
             }
         })
 
-        // Covers the case where a widget was already placed on the home
-        // screen before this session existed (e.g. app was killed, then
-        // relaunched by tapping a notification) — without this, such a
-        // widget would keep showing stale "Tap to play something" /
-        // last-known-track text until the next metadata/play-state change
-        // happened to fire naturally.
         AurumWidgetProvider.refreshAll(this)
     }
 
@@ -432,14 +257,6 @@ class AurumMediaSessionService : MediaSessionService() {
             "Playback",
             NotificationManager.IMPORTANCE_LOW,
         )
-        // FIX: "notification shows in status bar but not on lock screen".
-        // Without an explicit lockscreenVisibility, Android can withhold
-        // full notification content (including a MediaStyle notification's
-        // transport controls) on the lock screen even though the same
-        // notification renders fine in the status bar / shade. Setting
-        // this to PUBLIC on the channel is what actually lets the
-        // play/pause/next/prev controls render on the lock screen itself,
-        // not just when the phone is unlocked.
         channel.lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
         manager.createNotificationChannel(channel)
     }
@@ -457,28 +274,12 @@ class AurumMediaSessionService : MediaSessionService() {
         session.setCustomLayout(ImmutableList.of(button))
     }
 
-    /** Public hook AurumEngineChannelHandler calls after setCurrentSongLiked()
-     *  so the notification button updates immediately rather than waiting
-     *  for the next media-metadata-changed event. */
     fun onLikedStateChanged() {
         sharedEngine?.let { refreshLikeButton(it) }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
-    // I13: when the user swipes the app away from recents, stop playback +
-    // the foreground service instead of leaving a silent phantom session
-    // alive — matches audio_service's `stopWithTask="true"` behavior that
-    // was configured in the old AndroidManifest.xml service entry.
-    //
-    // Now gated by the Settings → "Stop on Swipe from Recents" toggle
-    // (AudioPrefs.stopOnSwipeNotifier on the Dart side, mirrored here via
-    // MainActivity's setStopOnTaskRemoved channel call into the same
-    // SharedPreferences store the shared_preferences plugin uses). If the
-    // song is actively playing AND the toggle is off, playback continues
-    // in the background as normal. If nothing is playing, we always stop
-    // the service regardless of the toggle — there's no reason to keep a
-    // silent foreground service alive just because the setting is off.
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = mediaSession?.player
         val isActivelyPlaying = player != null && player.playWhenReady && player.mediaItemCount > 0
@@ -491,15 +292,6 @@ class AurumMediaSessionService : MediaSessionService() {
             stopSelf()
         } else if (readStopOnSwipePref()) {
             player?.stop()
-            // player.stop() changes playback state synchronously, but
-            // Android's actual Service.onDestroy() (where the widget
-            // cache normally gets cleared/refreshed) can run noticeably
-            // later — during that gap the widget kept showing a stale
-            // "playing" pause-icon state even though playback had
-            // already gone silent. Refresh right here, synchronously,
-            // right after the explicit stop, so the widget reflects
-            // reality immediately instead of waiting on the service
-            // teardown to eventually catch up.
             try {
                 AurumWidgetProvider.clearArtworkCache()
                 AurumWidgetProvider.refreshAll(this)
@@ -527,39 +319,8 @@ class AurumMediaSessionService : MediaSessionService() {
             release()
             mediaSession = null
         }
-        // LEAK FIX: previously only player.release() ran above — this
-        // left AurumAudioOutputManager's BroadcastReceiver (audio device
-        // change events) and AurumCastManager's CastStateListener/
-        // SessionManagerListener (registered against the process-wide
-        // shared CastContext singleton) permanently registered against
-        // an engine instance nothing else references anymore. Neither
-        // is a runaway loop by itself, but each Service
-        // create/destroy cycle (sticky restart, repeated background/
-        // foreground transitions) leaked one more of each — receivers
-        // and listeners that silently keep doing small amounts of work
-        // forever, on top of whatever the *current* engine instance is
-        // also doing. engine.release() (see AurumAudioEngine) already
-        // correctly tears down every one of these; it just needs to
-        // actually be called here before sharedEngine is cleared below.
         AurumMediaSessionService.sharedEngine?.release()
         instance = null
-        // FIX (related to the onPlaybackResumption fix above): this service
-        // has no onStartCommand override, so it inherits MediaSessionService's
-        // default START_STICKY — Android can restart it after a low-memory
-        // kill. sharedEngine is a companion-object (static) field, so it
-        // survives independently of this Service instance's lifecycle; if
-        // the process itself stays alive across a sticky restart (only the
-        // Service was killed/restarted, not the whole app), sharedEngine
-        // would otherwise still point at the AurumAudioEngine whose player
-        // we just released() two lines above — a dead ExoPlayer instance.
-        // The next onCreate() would then see a non-null (but now-unusable)
-        // sharedEngine, skip its defensive `stopSelf()` fallback for a
-        // genuinely-null engine, and build a new MediaSession around a
-        // released player — silently broken playback controls, indistinguishable
-        // from the resumption bug this mirrors. Clearing it here forces the
-        // next onCreate() to correctly treat this as "no real engine yet"
-        // and bail out via the existing stopSelf() fallback until
-        // MainActivity genuinely re-launches and republishes a fresh one.
         if (AurumMediaSessionService.sharedEngine != null) {
             AurumMediaSessionService.sharedEngine = null
         }

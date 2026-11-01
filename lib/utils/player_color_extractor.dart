@@ -5,29 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/utils/player_color_extractor.dart
-// PROJECT: Astra Music
-// DESCRIPTION: 1:1 Dart port of ArchiveTune's PlayerColorExtractor.kt
-//   (moe.rukamori.archivetune.ui.theme.PlayerColorExtractor).
-//
-//   Ported line-for-line from the original Kotlin: same swatch set (7:
-//   vibrant/lightVibrant/darkVibrant/dominant/muted/darkMuted/lightMuted),
-//   same population*vibrancy weighting, same similarity-dedup thresholds,
-//   same greyscale-image fallback ramp, same hue-shift mesh-fill for when
-//   fewer than 6 genuinely distinct swatches exist. This is what makes
-//   ArchiveTune land on a *specific* swatch (sometimes dominant, sometimes
-//   muted, not always "the vibrant one") depending on which swatch has the
-//   biggest population*vibrancyBonus score for that particular image crop —
-//   copying that scoring, not just picking `vibrant` unconditionally, is
-//   what makes this app's colors match ArchiveTune's for the same artwork.
-//
-//   flutter's `palette_generator` package exposes the same swatch shape
-//   Android's androidx.palette library does (PaletteColor.color +
-//   PaletteColor.population), so every swatch used by the original Kotlin
-//   has a direct equivalent here.
-// =============================================================================
-
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:palette_generator/palette_generator.dart';
@@ -35,16 +12,10 @@ import 'package:palette_generator/palette_generator.dart';
 class PlayerColorExtractor {
   PlayerColorExtractor._();
 
-  /// Extracts up to 6 gradient-ready colors from a [PaletteGenerator]
-  /// result, in the same rank order and via the same scoring/derivation
-  /// rules as ArchiveTune's Kotlin `extractGradientColors`.
   static List<Color> extractGradientColors(
     PaletteGenerator palette, {
     required Color fallbackColor,
   }) {
-    // ── Collect every non-null swatch, same 7-swatch set + priority order
-    // as the Kotlin `listOfNotNull(...)`, deduped by exact rgb like
-    // `.distinctBy { it.rgb }`. ──
     final allSwatches = <PaletteColor>[];
     final seenRgb = <int>{};
     void addSwatch(PaletteColor? s) {
@@ -65,7 +36,6 @@ class PlayerColorExtractor {
       return [_tuneColorForMesh(fallbackColor, 0.62, 1.08, 0.75, 0.38, 0.9)];
     }
 
-    // ── Rank by population * vibrancyBonus, same as `calculateColorWeight`. ──
     final rankedSwatches = [...allSwatches]
       ..sort((a, b) => _colorWeight(b).compareTo(_colorWeight(a)));
 
@@ -84,8 +54,6 @@ class PlayerColorExtractor {
       if (availableColors.length >= 6) break;
     }
 
-    // ── Weighted saturation across all swatches (population-weighted),
-    // same as the Kotlin `weightedExtractedSaturation`. ──
     final totalPopulation = math.max(
       1,
       allSwatches.fold<int>(0, (sum, s) => sum + s.population),

@@ -15,33 +15,13 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.min
 
-/**
- * Media3 AudioProcessor that runs Premium Sound's in-app DSP ([AurumDspCore] + [PremiumVoicing])
- * on the player's decoded PCM, instead of vendor android.media.audiofx effects.
- *
- * Installed in DefaultAudioSink's PCM pipeline by AurumAudioEngine's RenderersFactory. Media3 never
- * runs processors on an offloaded / passthrough AudioTrack, which is why the engine drops offload
- * the moment Premium Sound is wanted (AurumAudioEffects.onEffectsAboutToAttach).
- *
- * Stays "active" for 16-bit / float, mono / stereo input so toggling Premium Sound never needs a
- * sink reconfiguration (that would be an audible gap): with Premium off every parameter is neutral
- * and the DSP is a bit-exact delay line. Any other PCM layout reports inactive (NOT_SET) and is
- * simply skipped, never an error.
- *
- * 16-bit output is TPDF-dithered, but only while the DSP is actually altering the signal.
- *
- * Diagnostics: a few lines are written to AurumDiagnosticLog (tag PREMIUM_DSP) on configure /
- * parameter change / first processed buffer, so it can be verified on a real phone without adb.
- */
 @UnstableApi
 class PremiumSoundProcessor : BaseAudioProcessor() {
-
     companion object {
         private const val BLOCK_FRAMES = 2048
         private const val INV_32768 = 1f / 32768f
         private const val LOG_TAG = "PREMIUM_DSP"
 
-        // Spiritual Sound fades in/out smoothly (time constant, ~95% after ~3x this = ~0.45 s).
         private const val FADE_MS = 150.0
     }
 
@@ -54,10 +34,8 @@ class PremiumSoundProcessor : BaseAudioProcessor() {
     @Volatile private var wantedIntensity = 1f
     @Volatile private var wantedKbps = 0
 
-    // diagnostics (audio thread only)
     private var loggedFirstBuffer = false
 
-    /** Thread-safe; takes effect on the next audio buffer, faded in/out smoothly. */
     fun setParams(enabled: Boolean, intensity: Float, sourceKbps: Int) {
         val changed = enabled != wantedEnabled
         wantedEnabled = enabled
@@ -117,7 +95,6 @@ class PremiumSoundProcessor : BaseAudioProcessor() {
             left -= n
         }
         inputBuffer.order(savedOrder)
-        // Media3 only ever queues whole frames; drop a stray partial frame defensively.
         inputBuffer.position(inputBuffer.limit())
         out.flip()
 
@@ -128,7 +105,6 @@ class PremiumSoundProcessor : BaseAudioProcessor() {
     }
 
     override fun onQueueEndOfStream() {
-        // The look-ahead holds back a few ms of audio; it is released from getOutput().
         tailPending = core.pendingFrames > 0
     }
 
@@ -179,7 +155,6 @@ class PremiumSoundProcessor : BaseAudioProcessor() {
         }
     }
 
-    // xorshift32 -> [0, 1)
     private fun nextRand(): Float {
         var x = rng
         x = x xor (x shl 13)
@@ -193,7 +168,6 @@ class PremiumSoundProcessor : BaseAudioProcessor() {
         try {
             AurumDiagnosticLog.logEvent(LOG_TAG, message)
         } catch (_: Throwable) {
-            // diagnostics must never affect audio
         }
     }
 }

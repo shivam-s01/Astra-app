@@ -5,25 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/widgets/constellation_lyrics.dart
-// PROJECT: Astra Music
-//
-// "Impressive lyrics" — constellation style. Every word of the active line
-// becomes a star, joined to the previous word by a thin line. The current
-// word is big and glowing, earlier words shrink and dim, and the camera
-// glides toward the active star. Drawn over a living night-sky (parallax
-// stars, drifting nebula glow, rare shooting stars) on a transparent canvas,
-// so the screen's own backdrop still shows through.
-//
-// SYNC (no bump): PlayerProvider reports position in coarse 500ms ticks and
-// the native engine sometimes corrects it a little BACKWARDS. Painting that
-// directly makes words/stars snap back. Instead we keep our own display
-// clock that only ever moves forward while playing and gently speeds up or
-// slows down (0.6x-1.6x) to converge on the real position. Only a genuine
-// seek (a jump > 0.9s) snaps instantly.
-// =============================================================================
-
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -36,10 +17,8 @@ import '../services/audio_prefs.dart';
 class ConstellationLyrics extends StatefulWidget {
   final List<LyricLine> lines;
 
-  /// Theme accent (gold in the Aurum theme). Text and stars derive from it.
   final Color accent;
 
-  /// True only when the lyrics sit on a LIGHT backdrop (dark text, no glow).
   final bool isLight;
 
   const ConstellationLyrics({
@@ -61,12 +40,10 @@ class _ConstellationLyricsState extends State<ConstellationLyrics>
   final Stopwatch _sw = Stopwatch()..start();
   late _Sim _sim;
 
-  // Last real position from the provider + when we received it.
   Duration _anchorPos = Duration.zero;
   int _anchorAtMs = 0;
   bool _wasPlaying = false;
 
-  // Our own forward-only display clock (ms, includes the lead).
   double _disp = 0;
   bool _inited = false;
   bool _needSnap = false;
@@ -77,12 +54,8 @@ class _ConstellationLyricsState extends State<ConstellationLyrics>
   bool _reduceMotion = false;
   Size? _size;
 
-  // Same lead the other lyrics views use so the highlight lands WITH the vocal.
   static const double _leadMs = 250;
-  // Never extrapolate further than this past the last real position update.
   static const int _maxExtrapolateMs = 700;
-  // A jump bigger than this between what we expected and what the player
-  // reports is a real seek, not jitter.
   static const int _seekJumpMs = 900;
 
   @override
@@ -129,8 +102,6 @@ class _ConstellationLyricsState extends State<ConstellationLyrics>
     final p = _player.position;
     final pl = _player.isPlaying;
     if (p == _anchorPos && pl == _wasPlaying) return;
-    // What we thought the position was a moment ago (no lead) vs what the
-    // player says now. A big gap = seek / song restart / app resume.
     final expected = _estimate(now) - _leadMs;
     if ((p.inMilliseconds - expected).abs() > _seekJumpMs) _needSnap = true;
     _anchorPos = p;
@@ -143,9 +114,7 @@ class _ConstellationLyricsState extends State<ConstellationLyrics>
     if (sz == null) return;
     final playing = _player.isPlaying;
     final lite = _reduceMotion || AudioPrefs.batterySaverActiveNotifier.value;
-    // Battery saver / reduce-motion: ~30fps.
     if (lite && (_skip++ & 1) == 1) return;
-    // Paused and fully settled: only refresh occasionally.
     if (!playing && _sim.parts.isEmpty && _sim.settled && (_idle++ % 6 != 0)) {
       return;
     }
@@ -161,9 +130,8 @@ class _ConstellationLyricsState extends State<ConstellationLyrics>
     } else {
       final diff = est - _disp;
       if (diff.abs() > 1500) {
-        _disp = est; // safety net: far off for any reason
+        _disp = est;
       } else if (playing) {
-        // Forward-only: speed up / slow down gently, never step back.
         final rate = (1 + diff / 1200).clamp(0.6, 1.6).toDouble();
         _disp += dt * rate;
       } else if (diff > 0) {
@@ -197,15 +165,12 @@ class _ConstellationLyricsState extends State<ConstellationLyrics>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Data
-// ─────────────────────────────────────────────────────────────────────────────
 class _CLine {
   final int startMs;
   final int endMs;
   final List<String> words;
-  final List<int> wordMs; // absolute ms each word lights up
-  final List<Offset> pts; // normalised 0..1 star positions
+  final List<int> wordMs;
+  final List<Offset> pts;
   _CLine(this.startMs, this.endMs, this.words, this.wordMs, this.pts);
 }
 
@@ -268,9 +233,6 @@ class _Shoot {
   _Shoot(this.x, this.y, this.vx, this.vy, this.m);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Simulation (everything that changes over time lives here, not in paint)
-// ─────────────────────────────────────────────────────────────────────────────
 class _Sim {
   final List<_CLine> lines;
   final List<_Star> stars;
@@ -279,9 +241,6 @@ class _Sim {
   _Shoot? shoot;
   double _shootIn = 9000;
 
-  // Render caches. A word's text only needs laying out again when its size
-  // or colour actually changes, and a gradient only when its radius/alpha
-  // changes, so steady frames re-use everything instead of rebuilding it.
   final Map<int, TextPainter> tpCache = {};
   final Map<int, TextPainter> glowCache = {};
   final Map<int, ui.Shader> shCache = {};
@@ -307,7 +266,7 @@ class _Sim {
   int li = -1;
   int act = -1;
   int posMs = 0;
-  double amb = 0; // ambient clock: advances only while playing
+  double amb = 0;
   bool lite = false;
   bool settled = false;
   Size size = Size.zero;
@@ -346,7 +305,6 @@ class _Sim {
     if (playing) amb += dt;
 
     li = lines.isEmpty ? -1 : _findLine(pos);
-    // Safe point to evict caches: update() always runs before paint().
     if (li != _cacheLi || tpCache.length > 160 || glowCache.length > 40) {
       _clearText();
       _cacheLi = li;
@@ -386,7 +344,6 @@ class _Sim {
       if (q.life >= q.max) parts.removeAt(i);
     }
 
-    // Rare shooting star (dark sky only, never in lite mode).
     if (!lite && playing) {
       final s = shoot;
       if (s == null) {
@@ -417,9 +374,6 @@ class _Sim {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Painter
-// ─────────────────────────────────────────────────────────────────────────────
 double _c01(double v) => v < 0 ? 0 : (v > 1 ? 1 : v);
 double _lerp(double a, double b, double t) => a + (b - a) * t;
 double _easeOut(double t) {
@@ -434,15 +388,10 @@ class _ConstellationPainter extends CustomPainter {
   final Color accent;
   final bool isLight;
 
-  // One reusable Paint/Path for the whole frame (drawn immediately, so
-  // sharing is safe) instead of allocating dozens per frame.
   final Paint _p = Paint();
-  // Used ONLY for gradient draws and never has its colour changed, so it
-  // behaves exactly like a fresh Paint() would (opaque, shader-only).
   final Paint _sp = Paint();
   final Path _path = Path();
 
-  // Theme colours depend only on accent + isLight, so compute them once.
   late final Color _deep = isLight
       ? HSLColor.fromColor(accent).withLightness(0.30).toColor()
       : accent;
@@ -475,8 +424,6 @@ class _ConstellationPainter extends CustomPainter {
     ..strokeWidth = w
     ..color = c;
 
-  // Cached text layout. Size is quantised to 0.1px (invisible) so a word
-  // that is not animating hits the cache every frame.
   TextPainter _tpFor(int i, String word, int fq, Color color) {
     final key = (i * 2048 + fq) * 4294967296 + color.value;
     var tp = sim.tpCache[key];
@@ -523,9 +470,6 @@ class _ConstellationPainter extends CustomPainter {
     return tp;
   }
 
-  // Radial glow with a cached shader. The gradient is built around the
-  // origin and the canvas is translated to [c], so moving glows (drifting
-  // nebula, following star) never need a new shader.
   void _radial(Canvas canvas, int slot, Offset c, double r, Color col, double al) {
     final rq = (r * 4).round();
     if (rq <= 0) return;
@@ -575,7 +519,7 @@ class _ConstellationPainter extends CustomPainter {
     final fo = math.min(350.0, dur * 0.3);
     final env = _c01(tl / 240) * (1 - _c01((tl - (dur - fo)) / fo));
 
-    var big = _c01((math.min(w, h) * 0.095 - 22) / 14) * 14 + 22; // 22..36
+    var big = _c01((math.min(w, h) * 0.095 - 22) / 14) * 14 + 22;
     if (n > 10) {
       big *= 0.78;
     } else if (n > 7) {
@@ -595,7 +539,6 @@ class _ConstellationPainter extends CustomPainter {
           Offset(L.pts[i].dx * w, L.pts[i].dy * h), 1.6, _fill(upcoming));
     }
 
-    // ── constellation lines ──
     for (var i = 1; i <= act; i++) {
       final p0 = Offset(L.pts[i - 1].dx * w, L.pts[i - 1].dy * h);
       final p1 = Offset(L.pts[i].dx * w, L.pts[i].dy * h);
@@ -610,7 +553,6 @@ class _ConstellationPainter extends CustomPainter {
       }
     }
 
-    // ── stars + words ──
     final maxW = w - pad * 2;
     for (var i = 0; i <= act; i++) {
       final px = L.pts[i].dx * w;
@@ -646,7 +588,6 @@ class _ConstellationPainter extends CustomPainter {
       }
       tp.paint(canvas, Offset(tx - tp.width / 2, cy - tp.height / 2));
 
-      // star
       final c = Offset(px, py);
       final sr = _lerp(8, 3.2, sh) * ap;
       if (sr > 0.5) {
@@ -676,7 +617,6 @@ class _ConstellationPainter extends CustomPainter {
       }
     }
 
-    // ── sparks ──
     for (final q in sim.parts) {
       final a = 1 - q.life / q.max;
       if (a <= 0) continue;
@@ -686,14 +626,10 @@ class _ConstellationPainter extends CustomPainter {
     canvas.restore();
   }
 
-  // Night sky: drifting nebula glow, parallax stars, rare shooting star.
   void _space(Canvas canvas, Size size, double t, Color deep, bool dark, bool lite) {
     final w = size.width, h = size.height;
     final mx = math.max(w, h);
 
-    // Deliberately subtle and single-hue (the theme accent only): the
-    // lyrics sit on the player's own artwork gradient, so anything louder
-    // or multi-coloured would fight it.
     const bx = [0.22, 0.80];
     const by = [0.30, 0.62];
     const br = [0.80, 0.75];
@@ -738,7 +674,6 @@ class _ConstellationPainter extends CustomPainter {
     }
   }
 
-  // Before the first line / in instrumental gaps: three breathing stars.
   void _intro(Canvas canvas, Size size, double t, Color deep) {
     final cx = size.width / 2, cy = size.height * 0.46;
     for (var k = -1; k <= 1; k++) {

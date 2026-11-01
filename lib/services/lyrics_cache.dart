@@ -5,14 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/services/lyrics_cache.dart
-// Extracted from api_service.dart to shrink that file and isolate lyrics
-// caching as its own small, single-purpose unit — same pattern as
-// lightweight_stream_cache.dart. Bounded, oldest-first eviction (unchanged
-// behavior from the original inline version).
-// =============================================================================
-
 import '../models/lyrics.dart';
 
 class LyricsCache {

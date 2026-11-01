@@ -10,14 +10,6 @@ import 'package:provider/provider.dart';
 import '../providers/player_provider.dart';
 import '../services/stream_quality_store.dart';
 
-/// Center pill under the seek bar: a static hi-res/codec glyph + the codec
-/// of the current song (OPUS / AAC / MP3 / VORBIS). If the codec can't be
-/// determined, the original "Astra" label is shown instead.
-///
-/// Lightweight by design: StreamQualityStore.codecFor() is now a pure,
-/// synchronous lookup (no network call, no polling, no retry timers — see
-/// stream_quality_store.dart), so this widget only needs to rebuild when
-/// the current song changes. No extra Listenable/AnimatedBuilder wiring.
 class AurumStreamQualityChip extends StatelessWidget {
   const AurumStreamQualityChip({super.key, required this.player});
   final PlayerProvider player;

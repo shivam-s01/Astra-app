@@ -12,21 +12,6 @@ import '../theme/aurum_theme.dart';
 
 enum AurumThemeMode { dark, light, amoled, system, dynamic }
 
-// FIX ("system dark mode toggle karte huye app khula rehta hai toh dynamic
-// theme switch nahi hota" — dynamic mode's themeMode getter below already
-// reads WidgetsBinding.instance.platformDispatcher.platformBrightness LIVE,
-// so the *value* was never stale — the bug was that nothing ever told
-// Flutter to re-ask for it. DynamicColorBuilder in main.dart only rebuilds
-// when the wallpaper-derived ColorScheme itself changes; a plain system
-// dark/light toggle with no wallpaper change never fires that, and no
-// other widget was listening for platform brightness changes either — so
-// MaterialApp kept using whichever ThemeMode was last computed, frozen
-// until *some* unrelated Provider happened to notifyListeners() and forced
-// a rebuild. WidgetsBindingObserver's didChangePlatformBrightness() is the
-// actual OS-level hook for this: implementing it here and calling
-// notifyListeners() makes ThemeProvider itself push a rebuild the instant
-// the system brightness flips, so dynamic mode (and system mode) react
-// live while the app is open, exactly like Google's own dynamic-color apps.
 class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const _key       = 'aurum_theme_mode';
   static const _fontKey   = 'font_style';
@@ -36,35 +21,9 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const _fullPlayerStyleKey = 'full_player_style';
   static const _colorPresetKey = 'aurum_color_preset';
 
-  // FIX (launcher/splash follows system theme but in-app didn't): default
-  // was AurumThemeMode.dark, so even though the native splash/launcher
-  // window background now resolves via Android's day/night resource
-  // qualifiers (values/colors.xml vs values-night/colors.xml — i.e. it
-  // DOES follow the system setting), Flutter's own MaterialApp theme
-  // ignored that same system setting entirely on first run, since `dark`
-  // is a fixed choice, not `system`. Defaulting to AurumThemeMode.system
-  // makes a fresh install's in-app theme match the OS setting from the
-  // first frame, consistent with the native layer. Users who have already
-  // picked an explicit mode are unaffected — _load() below overwrites this
-  // with their saved preference if one exists.
-  // NEW-USER DEFAULT: fresh installs start on the Midnight color theme
-  // (dark-styled, purple accent) from the very first frame. Users who
-  // already have a saved choice (or finished onboarding earlier) are
-  // switched back to their own value in _load() below.
   AurumThemeMode _mode      = AurumThemeMode.dark;
   String         _fontStyle = 'Default';
   Color          _accentColor = AurumTheme.accent;
-  // Named full-palette color theme (Ocean/Forest/Sunset/Midnight/Aurora).
-  // `none` = the default Aurum violet palette.
-  //
-  // The color theme is INDEPENDENT of the Dark/Light/AMOLED/System choice:
-  // every preset has its own dark and light palette and the one matching the
-  // active brightness is used, so a user on Light gets the light version of
-  // the theme they picked. Dynamic (Material You) is the one exception — it
-  // is its own wallpaper-derived palette, so while it is selected the color
-  // themes are OFF (the saved choice is kept and comes back when the user
-  // leaves Dynamic). Picking a color theme while Dynamic is on switches
-  // Dynamic off (to System, so Light/Dark still follow the device).
   AurumColorPreset _colorPreset = AurumColorPreset.midnight;
   String         _playerButtonColorMode = 'Primary';
   String         _playerSliderStyle = 'Waveform';
@@ -73,24 +32,6 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
   AurumThemeMode get mode      => _mode;
   String         get fontStyle => _fontStyle;
 
-  /// Premium accent color override. Used by the player screen, player
-  /// buttons, and sliders. Defaults to AurumTheme.accent so the rest of
-  /// the app (which references AurumTheme.accent as a const) is unaffected.
-  ///
-  /// FIX (color-theme presets looking half-applied): a named preset
-  /// (Ocean/Forest/etc.) already recolors the main app theme via
-  /// AurumTheme.presetTheme() — every widget that reads
-  /// Theme.of(context).colorScheme.primary / AurumTheme.accentOf(context)
-  /// picks it up automatically. But this accentColor getter is a SEPARATE
-  /// value, read directly by the mini player, full player, and the loading
-  /// spinners (AurumLoader/AurumMorphLoader) — none of those go through
-  /// Theme.of(context) for their accent. Without this override, picking
-  /// e.g. Ocean would recolor buttons/icons app-wide to cyan while the
-  /// mini player, full player and every loading spinner stayed on the old
-  /// fixed purple — an inconsistent, half-themed result. Whenever a preset
-  /// is active, its accent wins here too, so the whole app (including
-  /// those widgets) reads as one consistent color theme. `none` falls back
-  /// to the user's own accentColor selection exactly as before.
   Color get accentColor {
     final preset = effectivePreset;
     if (preset == AurumColorPreset.none) return _accentColor;
@@ -99,8 +40,6 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
     return data.accentFor(_resolvedBrightness);
   }
 
-  /// Brightness this provider resolves to right now (same answer
-  /// themeMode gives MaterialApp; `system` follows the OS).
   Brightness get _resolvedBrightness {
     switch (themeMode) {
       case ThemeMode.dark:
@@ -112,87 +51,36 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Currently selected named color theme (Ocean/Forest/Sunset/Midnight/
-  /// Aurora), or `none` if none is active. Selecting one is a full
-  /// top-level theme switch — see setColorPreset() below.
   AurumColorPreset get colorPreset => _colorPreset;
 
-  /// True while Dynamic Color (Material You) is genuinely driving the theme —
-  /// color themes are switched off during this.
   bool get dynamicOverridesPreset =>
       _mode == AurumThemeMode.dynamic && _dynamicDark != null;
 
-  /// The color theme that is actually applied right now: the saved choice,
-  /// except `none` while Dynamic Color is in control.
   AurumColorPreset get effectivePreset =>
       dynamicOverridesPreset ? AurumColorPreset.none : _colorPreset;
 
-  /// 'Primary' (default, white) | 'White' | 'Accent' — drives the color
-  /// of the main play/pause button on the full player screen.
   String get playerButtonColorMode => _playerButtonColorMode;
 
-  /// 'Slim' | 'Thick' | 'Rounded' (default) — seek bar track/thumb size.
   String get playerSliderStyle => _playerSliderStyle;
 
-  /// 'Edge to Edge' (default, shown as "Astra Model 2") | 'Classic'
-  /// ("Astra Model 1") | 'Spotify' ("Astra Model 3", lyrics-focused) —
-  /// which full player screen opens when the user taps the mini player.
-  /// Stored keys are unchanged so older installs keep their choice.
   String get fullPlayerStyle => _fullPlayerStyle;
 
-  // Latest system Material You schemes, pushed in from DynamicColorBuilder
-  // in main.dart on every rebuild (they change live if the user changes
-  // wallpaper while the app is open — no restart needed). Null on Android
-  // <12, other platforms, or devices that don't expose dynamic color; in
-  // that case dynamic mode silently falls back to the normal dark theme
-  // (see MainShell/AurumApp theme resolution).
   ColorScheme? _dynamicLight;
   ColorScheme? _dynamicDark;
 
   ColorScheme? get dynamicLight => _dynamicLight;
   ColorScheme? get dynamicDark  => _dynamicDark;
 
-  /// True only when dynamic mode is selected AND the platform actually
-  /// handed back a real wallpaper-derived scheme. Used to decide whether
-  /// to render the theme as dynamic or silently fall back.
   bool get isDynamicAvailable =>
       _mode == AurumThemeMode.dynamic && _dynamicDark != null;
 
   void updateDynamicSchemes(ColorScheme? light, ColorScheme? dark) {
-    // ColorScheme overrides == by value, but dynamic_color hands back a
-    // freshly-allocated instance on every platform broadcast even when
-    // nothing actually changed (e.g. the same wallpaper re-notifying, or
-    // an unrelated system event). Using identical() here meant every one
-    // of those no-op broadcasts still forced a full MaterialApp theme
-    // rebuild — which is what was flickering the mini-player/hero artwork
-    // to a blank placeholder for a frame while CachedNetworkImage briefly
-    // re-resolved under the new (structurally identical) ThemeData. Value
-    // equality skips the rebuild entirely when nothing really changed.
     if (light == _dynamicLight && dark == _dynamicDark) return;
     _dynamicLight = light;
     _dynamicDark = dark;
     if (_mode == AurumThemeMode.dynamic) notifyListeners();
   }
 
-  // FIX — white/cream flash on cold start (confirmed root cause, not the
-  // earlier DynamicColorBuilder-race theory): this getter used to return
-  // ThemeMode.system for AurumThemeMode.dynamic. ThemeMode.system tells
-  // Flutter's own MaterialApp to pick light-vs-dark by reading
-  // platformBrightness ITSELF, completely independent of isDarkOf()'s
-  // carefully-computed bool (which already folds in isDynamicAvailable,
-  // isAmoled, etc.). So even when isDarkOf() correctly resolved "dark" for
-  // this frame, MaterialApp could independently resolve "light" — and
-  // since lightDynamic is very often still null this early (async platform
-  // channel, see DynamicColorBuilder in main.dart), `theme:` at that point
-  // is AurumTheme.lightTheme, whose lightBg (0xFFF8F6F0, cream) is exactly
-  // the flash color reported. Longer async gaps (song loading) just widen
-  // the window where MaterialApp's independent resolution can land on
-  // "light" before dynamicDark/lightDynamic have arrived — matching
-  // "sometimes never happens, sometimes shows, worse when loading is
-  // slow". Returning an explicit dark/light here (never system) for
-  // dynamic mode forces MaterialApp to use the SAME answer isDarkOf()
-  // already computed, so there is no second, independent brightness
-  // resolution left to race.
   ThemeMode get themeMode {
     switch (_mode) {
       case AurumThemeMode.system:  return ThemeMode.system;
@@ -200,11 +88,6 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
       case AurumThemeMode.dynamic:
         final platformBrightness =
             WidgetsBinding.instance.platformDispatcher.platformBrightness;
-        // Mirrors isDarkOf()'s dynamic branch exactly: dark unless the
-        // platform is explicitly light AND we actually have a real
-        // wallpaper-derived dark scheme to know that for sure. Before any
-        // dynamic scheme has arrived (cold start / first frames), this
-        // defaults to dark — never an independently-resolved "light".
         final isDark = platformBrightness != Brightness.light ||
             _dynamicDark == null;
         return isDark ? ThemeMode.dark : ThemeMode.light;
@@ -216,50 +99,14 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get isAmoled => _mode == AurumThemeMode.amoled;
   bool get isDynamic => _mode == AurumThemeMode.dynamic;
 
-  // FIX (white/cream flash on first FullPlayerScreen open, "olash jaisa
-  // white white aata hai" — production bug): pushFullPlayer() in
-  // home_screen.dart and FullPlayerScreen's own Scaffold each used to
-  // decide light-vs-dark by reading `Theme.of(context).brightness`
-  // directly at their own build time. That's a DIFFERENT source of truth
-  // than the `isDark` bool main.dart actually computes to pick
-  // lightTheme/darkTheme in the first place (which also folds in isAmoled
-  // and the isDynamic+platformBrightness special case below — brightness
-  // alone doesn't capture those). Two independent call sites re-deriving
-  // "is dark" from ambient Theme lookups is exactly the kind of thing that
-  // goes stale for one frame: a route's pageBuilder can read Theme.of(
-  // context) from a context whose nearest Theme ancestor hasn't yet
-  // rebuilt with this frame's resolved theme (e.g. right after cold start
-  // or a DynamicColorBuilder/Consumer2 rebuild pass that hasn't landed),
-  // silently defaulting toward light — which is why the flash color seen
-  // is the light cream (0xFFF5F0EA), never black, and why it only ever
-  // shows on the FIRST open, not subsequent ones once the tree has
-  // settled. Exposing the exact same boolean main.dart uses to choose the
-  // MaterialApp theme means every other call site asks the one already-
-  // resolved answer instead of re-deriving (and risking disagreeing with)
-  // it independently.
-  // FIX — themeMode (above) now resolves dynamic mode to an explicit
-  // ThemeMode.dark/light itself (never .system), so it's already the
-  // single source of truth for every mode including dynamic. Re-deriving
-  // "is dark" here from platformBrightness/isDynamicAvailable a second
-  // time was the other half of the original race: two independent
-  // computations of the same fact, reading async state (platformBrightness,
-  // _dynamicDark) at two different moments, could disagree for exactly one
-  // frame. Delegating straight to themeMode removes that second
-  // computation entirely.
   bool isDarkOf(BuildContext context) {
     if (themeMode == ThemeMode.dark) return true;
     if (themeMode == ThemeMode.light) return false;
-    // Only AurumThemeMode.system reaches here (the only case still
-    // mapping to ThemeMode.system) — that one legitimately follows the
-    // OS setting.
     final platformBrightness =
         WidgetsBinding.instance.platformDispatcher.platformBrightness;
     return platformBrightness == Brightness.dark;
   }
 
-  // Prefs loaded BEFORE runApp() (see main.dart) so the very first frame
-  // already uses the user's real saved theme — no Midnight->Light/AMOLED
-  // flash for people who picked something else.
   static SharedPreferences? _early;
 
   static Future<void> primeEarly() async {
@@ -270,25 +117,14 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   ThemeProvider() {
     final early = _early;
-    if (early != null) _applyPrefs(early); // synchronous, before 1st frame
+    if (early != null) _applyPrefs(early);
     _load();
     WidgetsBinding.instance.addObserver(this);
   }
 
-  // Fires whenever the OS-level brightness setting changes while the app
-  // is running (system dark/light toggle, scheduled day/night switch,
-  // battery-saver auto dark mode, etc.) — this is what was missing.
-  // themeMode/isDarkOf() already compute the correct answer from
-  // platformBrightness on every call; this just makes sure something
-  // actually calls them again (via notifyListeners → MaterialApp rebuild)
-  // the moment the OS reports the change, instead of waiting for an
-  // unrelated rebuild to happen to pick up the new value.
   @override
   void didChangePlatformBrightness() {
     super.didChangePlatformBrightness();
-    // Only modes that actually derive from platform brightness need a
-    // rebuild here — fixed dark/light/amoled selections are unaffected by
-    // the OS setting, so skip the redundant notify for those.
     if (_mode == AurumThemeMode.system || _mode == AurumThemeMode.dynamic) {
       notifyListeners();
     }
@@ -306,9 +142,6 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Reads every saved appearance value from [p] into this provider.
-  /// Pure/synchronous (writes for brand-new users are fire-and-forget) so
-  /// it can run both before the first frame and again from _load().
   void _applyPrefs(SharedPreferences p) {
     final val = p.getString(_key);
     final presetVal = p.getString(_colorPresetKey);
@@ -317,8 +150,6 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
         (e) => e.name == val,
         orElse: () => AurumThemeMode.dark,
       );
-      // Saved mode but no saved preset = older install from before color
-      // presets existed: keep it on the plain palette, never Midnight.
       _colorPreset = presetVal == null
           ? AurumColorPreset.none
           : AurumColorPreset.values.firstWhere(
@@ -327,19 +158,15 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
             );
     } else if (presetVal == null) {
       if (p.getBool('onboarding_complete') ?? false) {
-        // Existing user who never touched the theme: keep the old default.
         _mode = AurumThemeMode.system;
         _colorPreset = AurumColorPreset.none;
       } else {
-        // Brand-new user: Midnight, locked in so it stays stable.
         _mode = AurumThemeMode.dark;
         _colorPreset = AurumColorPreset.midnight;
         p.setString(_key, AurumThemeMode.dark.name);
         p.setString(_colorPresetKey, AurumColorPreset.midnight.name);
       }
     } else {
-      // Preset saved without a mode (should not happen) — presets are
-      // always dark-styled.
       _mode = AurumThemeMode.dark;
       _colorPreset = AurumColorPreset.values.firstWhere(
         (e) => e.name == presetVal,
@@ -356,19 +183,11 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> setMode(AurumThemeMode mode) async {
     _mode = mode;
-    // The color theme is independent of the mode, so it is NOT cleared here.
-    // Choosing Dynamic simply switches color themes off while it is active
-    // (see effectivePreset); the saved choice returns when the user leaves it.
     notifyListeners();
     final p = await SharedPreferences.getInstance();
     await p.setString(_key, mode.name);
   }
 
-  /// Selects a named color theme. Works with Dark, Light, AMOLED and System
-  /// (each uses the matching dark/light palette). If Dynamic Color was on it
-  /// is switched off — a wallpaper palette and a fixed color theme cannot
-  /// both be the theme — falling back to System so Light/Dark still follow
-  /// the device.
   Future<void> setColorPreset(AurumColorPreset preset) async {
     _colorPreset = preset;
     if (_mode == AurumThemeMode.dynamic) _mode = AurumThemeMode.system;
@@ -413,7 +232,6 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
     await p.setString(_fontKey, style);
   }
 
-  /// Returns the TextTheme for current font selection
   TextTheme resolvedTextTheme(TextTheme base) {
     switch (_fontStyle) {
       case 'Rounded':
@@ -425,32 +243,10 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'Serif':
         return GoogleFonts.playfairDisplayTextTheme(base);
       default:
-        return base; // system default
+        return base;
     }
   }
 
-  // FIX ("home page font playlist mai kaam nahi kar raha" — the font
-  // picker in Settings only ever changed `ThemeData.textTheme`, via
-  // resolvedTextTheme() above, which is what `Theme.of(context).textTheme`
-  // reads. But the vast majority of Text widgets across the app —
-  // including every playlist/home card title — use a hand-written
-  // `const TextStyle(...)` instead of pulling from Theme.of(context)
-  // .textTheme, and a raw TextStyle with no explicit fontFamily does NOT
-  // inherit one from textTheme; it only inherits from
-  // `ThemeData.fontFamily` (the app-wide default family used to resolve
-  // ANY TextStyle that leaves fontFamily null), which nothing was ever
-  // setting. So changing the font in Settings visibly updated the few
-  // widgets that do read Theme.textTheme directly, while every hardcoded
-  // TextStyle screen (home_screen.dart alone has 37 of them) silently
-  // stayed on the system default font forever.
-  //
-  // Fix: expose the resolved GoogleFonts family name/fallback here so
-  // main.dart can also set them as ThemeData.fontFamily /
-  // fontFamilyFallback (see the .copyWith call in main.dart). That makes
-  // the chosen font the fallback for every TextStyle in the app that
-  // doesn't explicitly override fontFamily itself — including all the
-  // hardcoded playlist-card / home-screen TextStyles — with zero need to
-  // touch each of those call sites individually.
   String? get resolvedFontFamily {
     switch (_fontStyle) {
       case 'Rounded':
@@ -462,7 +258,7 @@ class ThemeProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'Serif':
         return GoogleFonts.playfairDisplay().fontFamily;
       default:
-        return null; // system default — don't override ThemeData.fontFamily
+        return null;
     }
   }
 

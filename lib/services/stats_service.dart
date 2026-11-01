@@ -5,10 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// Anonymous usage stats -> Aurum Stats Worker (own Cloudflare Worker + D1).
-// Sends only: random install id, event name, song title/artist, app version.
-// City/country are derived server-side by Cloudflare; no IP/email/GPS stored.
-// Never called while Incognito is ON (see AnalyticsService._log). Fails silent.
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;

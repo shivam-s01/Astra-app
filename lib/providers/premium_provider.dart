@@ -5,25 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/providers/premium_provider.dart
-// PROJECT: Aurum Music
-// DESCRIPTION: Single source of truth for premium status.
-//
-//   MONETIZATION MODEL: Google Sign-In unlocks sign-in-required features
-//   (cloud sync, follow artist, playlists, likes, unlimited skips, extra
-//   accents, Now Playing card styles etc. — gated separately via
-//   AuthProvider.isSignedIn / PremiumGate, not this provider). PREMIUM
-//   itself (HD 320kbps audio etc., gated via PremiumProvider.isPremium)
-//   requires an actual Cashfree payment OR a Supabase admin grant.
-//   Signing in with Google alone must NOT set isPremium = true.
-//
-//   HOW "isPremium" IS DETERMINED:
-//   1. Valid local Cashfree payment grant (PaymentService) -> true
-//   2. Supabase admin flag (user/app metadata is_premium) -> true
-//   3. Otherwise -> false, regardless of sign-in state
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -39,35 +20,17 @@ class PremiumProvider extends ChangeNotifier {
 
   bool _isPremium = false;
   bool _isChecking = false;
-  String? _activePlanId; // 'monthly' | 'yearly' | null (admin-granted)
+  String? _activePlanId;
 
   bool get isPremium => _isPremium;
   bool get isChecking => _isChecking;
   String? get activePlanId => _activePlanId;
 
-  // Fires when a Supabase check has been stuck (no internet, or the
-  // request is taking unusually long) past _slowNetworkTimeout, so the UI
-  // can show a "Please check your internet connection" prompt. Does NOT
-  // fire on a normal fast check, and does not fire more than once per
-  // _refresh() call.
   void Function()? onSlowNetwork;
 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
-  // BUG FIX ("long term stability" — subscription leak): the
-  // auth.onAuthStateChange listener below (in init()) used to be a
-  // fire-and-forget `.listen(...)` with the returned StreamSubscription
-  // never stored anywhere, so dispose() had nothing to cancel it with.
-  // In normal operation this provider lives for the app's whole
-  // lifetime so the practical impact is small, but it's still a genuine
-  // leaked subscription that would double up (and keep doubling up) on
-  // every _refresh() call if this provider were ever recreated — stored
-  // now so dispose() can clean it up like every other subscription here.
   StreamSubscription<AuthState>? _authSub;
   static const _slowNetworkTimeout = Duration(seconds: 6);
-
-  // -- Init --------------------------------------------------------------
-  // Call once from main.dart after AuthService.init().
-  // Loads cached value immediately so UI doesn't flash, then re-checks live.
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -75,17 +38,8 @@ class PremiumProvider extends ChangeNotifier {
     _activePlanId = prefs.getString(_kPremiumPlan);
     notifyListeners();
 
-    // Subscribe to auth changes so premium status auto-refreshes on
-    // sign-in/out. Sign-out no longer wipes the local payment grant — see
-    // _refresh(), which now re-derives status from the local grant alone
-    // whenever there's no signed-in user, instead of forcing it to false.
-    // Switching to a *different* signed-in account is still safe: the
-    // ownership check inside PaymentService.hasValidLocalGrant() refuses
-    // to honour a grant that belongs to another user id.
     _authSub =
         Supabase.instance.client.auth.onAuthStateChange.listen((state) {
-      // Skip the automatic initial-session / token-refresh events so cold
-      // start does not trigger a live network check.
       if (AudioPrefs.dataSaverActiveNotifier.value &&
           (state.event == AuthChangeEvent.initialSession ||
               state.event == AuthChangeEvent.tokenRefreshed)) {
@@ -94,20 +48,12 @@ class PremiumProvider extends ChangeNotifier {
       _refresh();
     });
 
-    // Spotify-style "just works on any device": if the app opened with no
-    // signal (or the very first check timed out), re-check the moment
-    // connectivity actually comes back, instead of leaving the user on a
-    // stale/local-only status until they background/foreground the app.
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       if (results.any((r) => r != ConnectivityResult.none)) {
         _refresh();
       }
     });
 
-    // ZERO-MB COLD START: the live Supabase getUser() round-trip runs at
-    // most once per 24h on cold start; otherwise the locally cached
-    // session is used (auth-change / reconnect / manual refresh still do
-    // the live check).
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final lastLive = prefs.getInt('premium_last_live_check_ms') ?? 0;
     final liveDue = !AudioPrefs.dataSaverActiveNotifier.value ||
@@ -124,24 +70,6 @@ class PremiumProvider extends ChangeNotifier {
     super.dispose();
   }
 
-  // -- Refresh -------------------------------------------------------------
-  // Checks (in priority order): Supabase admin flag -> local Cashfree grant.
-
-  // FIX (premium status could flicker back to stale/wrong value): _refresh()
-  // is called from multiple independent triggers — init(), auth state
-  // changes, connectivity changes, markPremiumGranted() — any of which can
-  // fire in quick succession (e.g. a sign-in event immediately followed by
-  // a token-refresh auth event, or connectivity flapping on/off). Each
-  // call awaits a real network round-trip (getUser(), up to the 6s
-  // timeout) before writing _isPremium/_activePlanId. Without a guard, an
-  // OLDER call that happened to be slow (e.g. it hit the timeout and fell
-  // back to a stale cached user) could finish AFTER a newer, faster call
-  // that already fetched the correct current status — and silently
-  // overwrite the correct value with its own stale result. For a paying
-  // user this could mean seeing premium features disappear/reappear
-  // incorrectly, or the reverse. Bumped on every _refresh() call; a call
-  // whose session has been superseded by the time its awaits resolve
-  // simply stops applying its result instead of clobbering a newer one.
   int _refreshSession = 0;
 
   Future<void> _refresh({bool live = true}) async {
@@ -158,15 +86,6 @@ class PremiumProvider extends ChangeNotifier {
     }
 
     try {
-      // IMPORTANT: Supabase.instance.client.auth.currentUser is whatever
-      // was cached in this session's local token — it will NOT reflect a
-      // premium grant that another device just synced into user_metadata
-      // a moment ago. getUser() makes an actual network call and returns
-      // the current server-side record, which is what makes "pay on
-      // Phone A, open Phone B, already premium" work without the user
-      // having to sign out and back in. Bounded by a timeout so a slow/
-      // absent connection degrades to the local grant instead of hanging
-      // the UI indefinitely.
       User? user;
       try {
         if (!live) {
@@ -180,23 +99,12 @@ class PremiumProvider extends ChangeNotifier {
         });
         user = resp.user;
       } on TimeoutException {
-        // Fall back to whatever local session/cache we already have -
-        // still lets a genuine local payment grant show as premium below.
         user = Supabase.instance.client.auth.currentUser;
       } catch (_) {
-        // No session / network error - fall back the same way.
         user = Supabase.instance.client.auth.currentUser;
       }
 
-      // A newer _refresh() call may have started (and even finished)
-      // while the network round-trip above was in flight — if so, this
-      // call's result is stale and must not be applied.
       if (mySession != _refreshSession) return;
-
-      // NOTE: general feature-unlock (follow artist, playlists, likes,
-      // unlimited skips, cloud sync etc.) is gated on sign-in elsewhere
-      // (AuthProvider.isSignedIn / PremiumGate.guard) — that's unchanged.
-      // This provider is ONLY about the paid "premium" flag below.
 
       bool fromAdmin = false;
       if (user != null) {
@@ -207,20 +115,9 @@ class PremiumProvider extends ChangeNotifier {
         fromAdmin = fromMeta || fromApp;
       }
 
-      // Local Cashfree payment grant — validated against its own expiry
-      // AND, as of the ownership fix in PaymentService, against who
-      // actually paid for it (payment != identity, so this must still be
-      // checked even when `user == null`; a guest checkout has no
-      // Supabase user at all, and a signed-in paying user who later
-      // signs out shouldn't lose premium they already paid for — but a
-      // *different* user signing in on the same device must not inherit
-      // it either; that check now lives in hasValidLocalGrant() itself).
       final hasValidPayment = await PaymentService.hasValidLocalGrant();
       if (mySession != _refreshSession) return;
 
-      // PREMIUM = actual payment or admin grant. Google sign-in alone
-      // no longer sets this — isSignedIn is still used elsewhere (auth
-      // gating, cloud sync, etc.) but must not feed into premium.
       final hasLegacyPaymentGrant = fromAdmin || hasValidPayment;
 
       String? planId;
@@ -228,14 +125,13 @@ class PremiumProvider extends ChangeNotifier {
         planId = await PaymentService.currentPlanId();
         if (mySession != _refreshSession) return;
       } else if (fromAdmin) {
-        planId = null; // admin-granted, no specific plan
+        planId = null;
       }
       _activePlanId = planId;
 
       _setPremium(hasLegacyPaymentGrant);
     } catch (e) {
       if (kDebugMode) debugPrint('[PremiumProvider] _refresh error: $e');
-      // Keep cached value on network error - don't downgrade silently
     } finally {
       if (mySession == _refreshSession) {
         _isChecking = false;
@@ -251,24 +147,17 @@ class PremiumProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Call after sign-in, or right after a successful Razorpay payment,
-  /// to force a fresh entitlement check.
   Future<void> refresh() => _refresh();
 
-  /// Call immediately after PaymentService reports success, so the UI
-  /// reflects premium status without waiting for a full async refresh.
   void markPremiumGranted(String planId) {
     _isPremium = true;
     _activePlanId = planId;
     AnalyticsService.instance.logPremium(planId);
     AnalyticsService.instance.setPremium(true);
     notifyListeners();
-    // Persist + reconcile with server in the background.
     _refresh();
   }
 
-  /// DEV ONLY - toggle premium locally for testing UI.
-  /// Remove before production release.
   void devToggle() {
     assert(() {
       _setPremium(!_isPremium);

@@ -7,24 +7,15 @@
 
 import 'song.dart';
 
-/// Status of a single download task.
 enum DownloadStatus { queued, downloading, paused, completed, failed, cancelled }
 
-/// Represents one downloaded (or downloading) song.
-/// Persisted in Hive box `aurum_downloads`, keyed by song.id.
 class DownloadItem {
   final Song song;
   final DownloadStatus status;
-  final double progress; // 0.0 - 1.0
-  final String? localPath; // set once completed
+  final double progress;
+  final String? localPath;
   final int? fileSizeBytes;
   final DateTime addedAt;
-  // Pause/resume support: the stream URL resolved for this download (once
-  // known) so resuming doesn't need to re-resolve it (a fresh resolve can
-  // return a different CDN URL than the one already partially downloaded
-  // against), and how many bytes of the `.part` file are already on disk
-  // so resume can send a `Range: bytes=<bytesDownloaded>-` request instead
-  // of restarting from zero.
   final String? resolvedUrl;
   final int bytesDownloaded;
 

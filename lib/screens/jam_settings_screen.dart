@@ -5,12 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FILE: lib/screens/jam_settings_screen.dart
-// DESCRIPTION: Astra Jam settings — display name, auto-approve join requests,
-//   blocked people, server address and a connection log (for support).
-// ═══════════════════════════════════════════════════════════════════════════
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -114,7 +108,6 @@ class _JamSettingsScreenState extends State<JamSettingsScreen> {
                     keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                     padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
                     children: [
-                      // Display name
                       _card([
                         Text(_t('Your name in a Jam', 'Jam me aapka naam'),
                             style: TextStyle(color: tp, fontSize: 15.5, fontWeight: FontWeight.w800)),
@@ -132,7 +125,6 @@ class _JamSettingsScreenState extends State<JamSettingsScreen> {
                         ),
                       ]),
 
-                      // Auto approve
                       _card([
                         Row(children: [
                           Expanded(
@@ -158,7 +150,6 @@ class _JamSettingsScreenState extends State<JamSettingsScreen> {
                         ]),
                       ]),
 
-                      // Blocked
                       _card([
                         Text(_t('Blocked people', 'Block kiye hue log'),
                             style: TextStyle(color: tp, fontSize: 15.5, fontWeight: FontWeight.w800)),
@@ -189,7 +180,6 @@ class _JamSettingsScreenState extends State<JamSettingsScreen> {
                             ]),
                       ]),
 
-                      // Server (own-server option: off, see JamService.allowCustomServer)
                       if (JamService.allowCustomServer)
                       _card([
                         Text(_t('Own server (optional)', 'Apna server (optional)'),
@@ -229,7 +219,6 @@ class _JamSettingsScreenState extends State<JamSettingsScreen> {
                         ]),
                       ]),
 
-                      // Log
                       _card([
                         Row(children: [
                           Expanded(

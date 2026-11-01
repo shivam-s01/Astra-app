@@ -5,25 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/mix_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Full-screen "album-style" page for the Home screen's curated
-//   playlists (Trending Now, Party Anthems, 90s Bollywood, etc), Spotify-
-//   style — big header art, Play + Save row, then the song list.
-//
-//   YT Music-style layout (2026-10-03 redesign): full-bleed sharp artwork
-//   that fades into the palette-tinted page background, centered title
-//   block, shuffle · Play · download row, description, track count, then
-//   compact rows (wide thumbnail + title/artist + 3-dot). The whole header
-//   scrolls away 1:1 with the list — no pinned bar, no parallax.
-//
-//   Takes an already-fetched `songs` list instead of an albumId to fetch
-//   by — these are client-side curated queries (see _kCuratedPlaylists /
-//   _PlaylistCard in home_screen.dart), not real JioSaavn album IDs, so
-//   there's nothing to re-fetch from here.
-// =============================================================================
-
 import '../services/analytics_service.dart';
 import 'dart:async';
 import '../utils/aurum_transitions.dart';
@@ -59,40 +40,13 @@ class MixScreen extends StatefulWidget {
   final String emoji;
   final List<Song> songs;
 
-  // OPT-IN pull-to-refresh (2026-08-14): off by default so the other 3
-  // existing callers of this screen (home_screen.dart's other two
-  // MixScreen pushes, library_screen.dart) are completely unaffected —
-  // only the "Playlists For You" row's card tap sets these. When on,
-  // pulling down at the top of the song list fetches more songs
-  // related to `refreshSeed` (falls back to mixName if unset) via
-  // ApiService.fetchMixRefreshSongs() and APPENDS them below the
-  // existing list — Spotify/YT Music style, never replaces what's
-  // already there so scroll position and whatever's currently playing/
-  // visible never jumps.
   final bool enableRefresh;
   final String? refreshSeed;
 
-  // Optional playlist description shown under the action row, YT
-  // Music-style (e.g. "Experience the sound of 2026 with this playlist
-  // featuring the biggest hits..."). Purely additive — every existing
-  // caller that doesn't pass one simply skips that block (see build()).
   final String? description;
 
-  // OPT-IN background top-up (2026-09-06, "ekdam youtube music jaisa
-  // fast" perf fix): only set by _RealShelfPlaylistCard._open() in
-  // home_screen.dart, which now opens this screen off a fast ~25-song
-  // first page (see ApiService.resolveHomeShelfPlaylist's doc comment)
-  // instead of blocking navigation on a full ~100-song fetch. When set,
-  // this is called once right after the screen mounts and its result is
-  // appended the same append-only way _onRefresh already appends
-  // pull-to-refresh results — never replaces what's already showing, so
-  // scroll position and whatever's currently playing/visible don't jump.
-  // Every other existing caller leaves this null and behaves exactly as
-  // before.
   final Future<List<Song>> Function()? autoLoadMore;
 
-  /// Progressive variant: songs batch-by-batch aate hain (pehla batch jaldi,
-  /// baaki peeche se append). Badi playlists pe poori list ka wait nahi.
   final Stream<List<Song>> Function()? autoLoadStream;
 
   const MixScreen({
@@ -115,49 +69,16 @@ class MixScreen extends StatefulWidget {
 
 class _MixScreenState extends State<MixScreen>
     with SingleTickerProviderStateMixin {
-  // FIX ("artwork palette kuch sec delay ke baad snap hoti hai — sab
-  // jagah instant, ekdam smooth chahiye"): this used to always start on
-  // the hardcoded fallback and wait for _extractGlow()'s await to land
-  // before ever painting the real color — even on a warm cache (this
-  // exact artwork already extracted elsewhere: Full Player, a playlist
-  // card, another detail screen just visited), which is the overwhelming
-  // common case since the user almost always arrives here from a tile
-  // that was already showing this same artwork. Seeding synchronously
-  // from ArtworkPaletteCache.peek() — a plain map lookup, no async gap —
-  // means the FIRST FRAME already paints the real color on a cache hit,
-  // with zero pop-in. Only a genuine cold cache (first-ever look at this
-  // artwork) still starts on the fallback and animates in once
-  // _extractGlow's extraction resolves — see _glow (the ANIMATED value
-  // every widget below actually paints with) vs this raw target.
   late Color _glowTarget = _peekInitialGlow();
 
-  // Drives the smooth fade from whatever `_glow` currently reads to a
-  // new `_glowTarget` (see _setGlowTarget below), instead of every
-  // Container/BoxDecoration reading `_glow` directly snapping to the new
-  // color the instant setState runs. A cache-hit never actually animates
-  // anything (begin == end == the same seeded color from the very first
-  // frame — see _peekInitialGlow), so this only ever visibly plays on a
-  // genuine cold-cache resolution, which is exactly the one case that
-  // needs a fade instead of a pop.
   late final AnimationController _glowController = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 420),
   );
   late Animation<Color?> _glowAnimation = AlwaysStoppedAnimation(_glowTarget);
 
-  /// The value every widget in build() actually paints with. Reads the
-  /// live animated color while a fade is in flight, and the settled
-  /// target once it's finished — callers never need to know the
-  /// difference between "still fading" and "already arrived".
   Color get _glow => _glowAnimation.value ?? _glowTarget;
 
-  /// Moves `_glowTarget` to [next] and smoothly animates `_glow` from
-  /// its current value to it, instead of the old plain `_glowTarget =
-  /// next` snap. Safe to call with `next == _glowTarget` (a cache-hit's
-  /// no-op path in _extractGlow) — AnimationController.forward() on an
-  /// already-1.0 controller is a harmless no-op, so this never needs its
-  /// own "did it actually change" guard beyond what call sites already
-  /// do.
   void _setGlowTarget(Color next) {
     final tween = ColorTween(begin: _glow, end: next);
     _glowTarget = next;
@@ -169,13 +90,6 @@ class _MixScreenState extends State<MixScreen>
       ..forward();
   }
 
-  /// Synchronous cache-hit seed for `_glowTarget`'s initializer — see its
-  /// own doc comment above. `ensureContrastSafe` needs `context` (theme
-  /// brightness), which isn't available yet at field-initializer time,
-  /// so this intentionally returns the RAW cached tone unclamped; the
-  /// safe/clamped version is applied moments later in
-  /// didChangeDependencies, which the ~1-frame gap before that point
-  /// already fully hides for a cache hit.
   Color _peekInitialGlow() {
     final url = widget.artworkUrl;
     if (url.isEmpty) return const Color(0xFF1A1630);
@@ -185,24 +99,8 @@ class _MixScreenState extends State<MixScreen>
 
   bool _contrastSafeApplied = false;
 
-  // Mutable working copy of widget.songs — only ever grows (append-only
-  // on refresh, see _onRefresh), and only actually diverges from
-  // widget.songs when enableRefresh is true. Every other caller
-  // (enableRefresh: false) reads widget.songs directly everywhere below
-  // exactly as before, so this has zero effect on them.
   late List<Song> _songs = widget.songs;
 
-  // FIX ("playlist pe click karne pe pehle loading leta hai" — 2026-09-06):
-  // _RealShelfPlaylistCard in home_screen.dart now navigates here
-  // instantly with an empty `songs: []` and resolves the real tracklist
-  // via autoLoadMore instead of blocking the tap on that network call.
-  // Without this flag, the empty-state branch below ("No songs found")
-  // would flash for however long that first resolve takes — wrong
-  // message for "still loading," not "genuinely nothing here." True only
-  // while genuinely waiting on that specific autoLoadMore-as-first-load
-  // case; every other existing caller passes a real, already-populated
-  // `songs` list and autoLoadMore null or "top-up only," so this stays
-  // false for all of them exactly as before this fix.
   late bool _awaitingFirstLoad = widget.songs.isEmpty &&
       (widget.autoLoadMore != null || widget.autoLoadStream != null);
 
@@ -210,22 +108,10 @@ class _MixScreenState extends State<MixScreen>
   void initState() {
     super.initState();
     AnalyticsService.instance.logScreen('Mix');
-    // The glow fade is driven by _glowController and consumed only by small
-    // AnimatedBuilder wrappers in build() (page bg, header fade gradient).
-    // Deliberately NOT a setState listener: that rebuilt the whole screen,
-    // every SongTile included, on each frame of the fade.
     _extractGlow();
-    // Fire-and-forget: see autoLoadMore's doc comment above. Deliberately
-    // not awaited here — the screen must render immediately with
-    // widget.songs already in hand; this only ever silently appends once
-    // it resolves, same "no error surfaced, list just stays as-is on
-    // failure" rule _onRefresh follows for the same reason (a background
-    // top-up failing isn't something worth interrupting the user for).
     _runAutoLoad();
   }
 
-  // True only when the first-load fetch failed / came back empty, so the
-  // empty state can offer a Retry instead of a dead-end "No songs found".
   bool _loadFailed = false;
 
   StreamSubscription<List<Song>>? _streamSub;
@@ -304,61 +190,21 @@ class _MixScreenState extends State<MixScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // FIX ("artwork kuch sec baad aa raha hai, instant chahiye" —
-    // 2026-09-07): the header's full-bleed AurumArtwork(size: 700) only
-    // starts its network fetch once it actually builds — i.e. after the
-    // route's push transition has already started sliding this screen
-    // into view, so on a cold cache (first time seeing this particular
-    // song's artwork) the header visibly sat on its placeholder for a
-    // beat after arriving. Kicking off the exact same cached, same-size
-    // image request here — didChangeDependencies is the correct, safe
-    // lifecycle point for context-dependent work like precacheImage
-    // (unlike initState, where MediaQuery/dependencies aren't fully
-    // established yet), and it still runs before the header's own first
-    // build call — means the fetch is already in flight (often finished)
-    // by the time the header widget asks for it. _precachedHeaderArtwork
-    // guards against re-firing on every dependency change (e.g. a theme
-    // toggle) — this only needs to happen once per screen instance.
     if (!_precachedHeaderArtwork) {
       _precachedHeaderArtwork = true;
       _precacheHeaderArtwork();
     }
-    // Applies ensureContrastSafe's clamp to whatever `_glowTarget`
-    // currently holds — the synchronous cache-hit seed from
-    // _peekInitialGlow() above, or (on a cold cache) still the plain
-    // fallback until _extractGlow's await lands. Only needs `context`
-    // (theme brightness) once, since didChangeDependencies can re-fire
-    // on any dependency change (e.g. a theme toggle), not just the
-    // first frame.
     if (!_contrastSafeApplied) {
       _contrastSafeApplied = true;
       final safe = ensureContrastSafe(
         _glowTarget,
         isLight: Theme.of(context).brightness == Brightness.light,
       );
-      // Plain assign, not _setGlowTarget() — this runs before the very
-      // first build, so there's no "current" painted color on screen yet
-      // to fade FROM. Also re-seeds _glowAnimation itself (built in the
-      // field initializer from the pre-contrast-clamp _glowTarget, so it
-      // could otherwise briefly disagree with the now-clamped value)
-      // with an already-settled animation at the correct color, so the
-      // very first frame is a clean paint, never a flash of the
-      // unclamped tone.
       _glowTarget = safe;
       _glowAnimation = AlwaysStoppedAnimation(safe);
     }
   }
 
-  // FIX ("artwork kuch sec baad aa raha hai, instant chahiye" —
-  // 2026-09-07): kicks off the exact same request AurumArtwork's network
-  // branch will make for the header (same CachedNetworkImageProvider,
-  // same AurumImageCache manager, same maxWidth as AurumArtwork's own
-  // _cacheSize for size:700 — see aurum_artwork.dart) as early as
-  // possible, so the fetch is already in flight (often finished) before
-  // the header widget itself builds and asks for it. Guards mirror
-  // AurumArtwork.build()'s own URL branching — content:// and local file
-  // paths are never routed through a network image provider, so this
-  // silently no-ops for those instead of throwing.
   void _precacheHeaderArtwork() {
     final url = widget.artworkUrl;
     if (url.isEmpty ||
@@ -367,15 +213,6 @@ class _MixScreenState extends State<MixScreen>
         url.startsWith('file://')) {
       return;
     }
-    // Warms the exact request the full-bleed header artwork makes (same
-    // upgraded URL, same decode width AurumArtwork uses for a sharp
-    // size:double.infinity image, same cache manager) so it is already in
-    // flight — often finished — before the header widget builds.
-    // PERF: must mirror what CachedNetworkImage builds in AurumArtwork
-    // (memCacheWidth -> ResizeImage over a plain provider, no maxWidth).
-    // The old maxWidth: variant decoded the image at full resolution into
-    // the ImageCache and wrote a second resized disk-cache entry, neither of
-    // which the header ever reused - pure wasted decode/RAM on low-end.
     precacheImage(
       ResizeImage.resizeIfNeeded(
         AurumArtwork.screenDecodeWidth(context),
@@ -387,49 +224,22 @@ class _MixScreenState extends State<MixScreen>
       ),
       context,
     ).catchError((_) {
-      // A failed warm-up just means AurumArtwork's own build-time fetch
-      // handles it normally (including its placeholder path).
     });
   }
 
   Future<void> _extractGlow() async {
     final c = await extractImmersiveColor(widget.artworkUrl);
-    // CHANGE ("aankhon pe effect na kare ekdam beautiful rahe"): clamps
-    // an occasional too-bright/oversaturated extracted swatch (rare for
-    // a muted swatch specifically, but a neon/pastel cover can still
-    // produce one) into the same safe luminance range Full Player's
-    // background already enforces, so text/icons drawn over this glow
-    // stay readable and the wash never reads as harsh regardless of
-    // which theme mode is active.
     if (c != null && mounted) {
       final safe = ensureContrastSafe(
         c,
         isLight: Theme.of(context).brightness == Brightness.light,
       );
-      // FIX ("palette kuch sec baad snap/pop hoti hai"): on a cache hit,
-      // _peekInitialGlow() (see _glowTarget's field initializer) + the
-      // didChangeDependencies contrast-safe pass above already applied
-      // this exact same color before the first frame ever painted — so
-      // by the time this await lands, `safe` is identical to what's
-      // already showing, and moving the target again is a genuine
-      // no-op. Only a real cold-cache resolution — where `safe` differs
-      // from the fallback/seed already in `_glowTarget` — actually moves
-      // it, and _setGlowTarget animates `_glow` (what every widget
-      // below actually paints with) smoothly from its current value to
-      // the new one instead of a hard snap.
       if (safe.value != _glowTarget.value) {
         _setGlowTarget(safe);
       }
     }
   }
 
-  /// Pull-to-refresh handler — only wired up when widget.enableRefresh
-  /// is true (see build()'s RefreshIndicator). Fetches songs related to
-  /// the mix's seed and appends whatever's genuinely new to the bottom
-  /// of the list. A refresh that turns up nothing new (seed exhausted,
-  /// transient failure) is silent — no error snackbar — since "no new
-  /// songs right now" isn't something a user pulling to refresh needs
-  /// interrupted for; the list just stays exactly as it was.
   Future<void> _onRefresh() async {
     final seed = (widget.refreshSeed?.trim().isNotEmpty ?? false)
         ? widget.refreshSeed!.trim()
@@ -445,28 +255,20 @@ class _MixScreenState extends State<MixScreen>
     });
   }
 
-  /// "100 tracks" — matches the reference's plain count line.
   String _summaryLine(List<Song> songs) {
     final count = songs.length;
     return '$count ${count == 1 ? 'track' : 'tracks'}';
   }
 
-
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final player = context.read<PlayerProvider>();
-    // Reads _songs (not widget.songs directly) so refresh/top-up appends
-    // show up immediately.
     final songs = _songs;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // Resolved per animation frame by the AnimatedBuilders below, so a glow
-    // fade only repaints the background and never rebuilds the song list.
     Color bgNow(BuildContext c) => immersiveScaffoldBg(c, _glow);
     final screenW = MediaQuery.sizeOf(context).width;
     final topInset = MediaQuery.paddingOf(context).top;
-    // Reference proportions: sharp artwork ~1.04x screen width tall, title
-    // block sitting on its faded bottom edge.
     final headerH = screenW * 1.04;
     final titleColor = isDark ? Colors.white : AurumTheme.textPrimaryOf(context);
     final subColor = isDark
@@ -478,19 +280,14 @@ class _MixScreenState extends State<MixScreen>
       animation: _glowController,
       builder: (ctx, child) => ColoredBox(color: bgNow(ctx), child: child),
       child: CustomScrollView(
-        // PERF: 1200px made ~30 rows (images + prewarm timers) build in the
-        // very first frame, right inside the route transition. 500px keeps
-        // flings smooth without that open-time burst.
         cacheExtent: 500,
         slivers: [
-          // ── Header (scrolls away 1:1 with the list) ─────────────────────
           SliverToBoxAdapter(
             child: RepaintBoundary(child: SizedBox(
               height: headerH,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Layer 0 — sharp full-bleed artwork.
                   Positioned.fill(
                     child: Hero(
                       tag: 'mix_art_${widget.mixId}',
@@ -516,8 +313,6 @@ class _MixScreenState extends State<MixScreen>
                     ),
                   ),
 
-                  // Layer 1 — top scrim so status bar + floating pills
-                  // stay readable on bright covers.
                   Positioned(
                     top: 0,
                     left: 0,
@@ -537,8 +332,6 @@ class _MixScreenState extends State<MixScreen>
                     ),
                   ),
 
-                  // Layer 2 — bottom fade into the page background (same
-                  // color the Scaffold paints, so there is no seam).
                   Positioned.fill(
                     child: AnimatedBuilder(
                       animation: _glowController,
@@ -564,7 +357,6 @@ class _MixScreenState extends State<MixScreen>
                     ),
                   ),
 
-                  // Title block — centered, on the faded bottom edge.
                   Positioned(
                     left: 24,
                     right: 24,
@@ -608,8 +400,6 @@ class _MixScreenState extends State<MixScreen>
                     ),
                   ),
 
-                  // Floating glass toolbar — back (left) and
-                  // heart / search / overflow (right).
                   SafeArea(
                     bottom: false,
                     child: Padding(
@@ -690,7 +480,6 @@ class _MixScreenState extends State<MixScreen>
             )),
           ),
 
-          // ── Action row: shuffle · Play · download ───────────────────────
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
@@ -805,8 +594,6 @@ class _MixScreenState extends State<MixScreen>
                 padding: const EdgeInsets.symmetric(vertical: 56),
                 child: Center(
                   child: _awaitingFirstLoad
-                      // Still waiting on the first real fetch — spinner, not
-                      // the "nothing found" message.
                       ? const CircularProgressIndicator()
                       : Column(
                           mainAxisSize: MainAxisSize.min,
@@ -840,15 +627,11 @@ class _MixScreenState extends State<MixScreen>
                   ytStyle: true,
                 ),
                 childCount: songs.length,
-                // PERF: SongTile already wraps itself in a RepaintBoundary and
-                // has no keep-alive state, so the delegate's own per-row
-                // boundary + KeepAlive wrapper are pure overhead.
                 addRepaintBoundaries: false,
                 addAutomaticKeepAlives: false,
               ),
             ),
 
-          // Quiet end-of-list hint only when pull-to-refresh is enabled.
           if (widget.enableRefresh && songs.isNotEmpty)
             SliverToBoxAdapter(
               child: Padding(
@@ -870,7 +653,6 @@ class _MixScreenState extends State<MixScreen>
       ),
     );
 
-    // Opt-in pull-to-refresh (append-only, see _onRefresh).
     if (widget.enableRefresh) {
       body = RefreshIndicator(
         onRefresh: _onRefresh,
@@ -891,9 +673,6 @@ class _MixScreenState extends State<MixScreen>
       ),
     );
 
-    // Dark mode: the header artwork runs under the status bar, so keep the
-    // system icons light. Light mode keeps the app's global style (the
-    // icons must stay readable once the header has scrolled away).
     if (!isDark) return scaffold;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light.copyWith(
@@ -903,16 +682,11 @@ class _MixScreenState extends State<MixScreen>
     );
   }
 
-  // Shared, deduped toast handler — see aurum_snack.dart.
   void _snack(BuildContext context, String msg) {
     if (!mounted) return;
     AurumSnack.show(context, msg);
   }
 
-  /// Queues every song in the mix for download via DownloadProvider,
-  /// skipping ones already downloaded/in-progress, then opens the real
-  /// Downloads screen so progress is visible. Reads _songs so appended
-  /// songs are included too.
   Future<void> _downloadMix(
       BuildContext context, DownloadProvider downloads) async {
     final toQueue = _songs
@@ -931,22 +705,11 @@ class _MixScreenState extends State<MixScreen>
   }
 }
 
-/// Floating header pill — real Liquid Glass (the same shader-refraction
-/// surface the mini player and nav bar use via [AurumGlass]), not a flat
-/// BackdropFilter blur. Always the dark variant: it floats over the
-/// artwork where icons are white. Interactive: press swells, drag
-/// deforms and springs back, like iOS.
 class _GlassPill extends StatelessWidget {
   final Widget child;
   final double width;
   const _GlassPill({super.key, required this.child, required this.width});
 
-  // STABILITY FIX ("glass kabhi kabhi shape change kar raha hai"): the lens
-  // used to size itself from whatever its child measured, and the touch
-  // "swell/deform" mode (interactive) let a stray drag or a mid-layout
-  // measurement warp the pill into a leaf shape / clip the 3-dot button.
-  // Now: an exact, fixed 44dp-tall box with a known width (so the lens
-  // never re-measures), and interactive OFF (no deformation at all).
   static const double height = 44;
 
   @override
@@ -955,19 +718,15 @@ class _GlassPill extends StatelessWidget {
       width: width,
       height: height,
       child: AurumGlass(
-        // AurumGlass keeps the backdrop crisp (effective blur is a small
-        // fraction of this, floored at 3) — the look comes from refraction.
         sigma: 6,
         borderRadius: BorderRadius.circular(height / 2),
         isDark: true,
-        interactive: false,
         child: SizedBox(width: width, height: height, child: child),
       ),
     );
   }
 }
 
-/// Single tap target inside an [_GlassPill].
 class _GlassIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
@@ -994,7 +753,6 @@ class _GlassIconButton extends StatelessWidget {
   }
 }
 
-/// Round control flanking the Play pill (shuffle, download).
 class _RoundButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;

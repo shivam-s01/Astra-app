@@ -15,66 +15,17 @@ import '../services/audio_prefs.dart';
 import '../theme/aurum_theme.dart';
 import '../utils/aurum_motion.dart';
 
-/// Unified artwork widget — handles:
-///   • Network URLs  (https://...)
-///   • content:// URIs from MediaStore (album art via MethodChannel)
-///   • Absolute file paths (/storage/emulated/0/...)
-///   • file:// paths
-///   • Empty / null  → gold music-note placeholder
-///
-/// PREMIUM POLISH: every path now fades in (220–280ms, easeOut) instead of
-/// popping in abruptly once bytes are ready. CachedNetworkImage's built-in
-/// fadeInDuration handles the network case; local file/content URI cases
-/// are wrapped in AnimatedSwitcher so the same fade applies everywhere.
 class AurumArtwork extends StatelessWidget {
   final String url;
   final double size;
   final double borderRadius;
 
-  // BUGFIX (perf): default true preserves existing behavior everywhere
-  // (song tiles, mini player, etc. still get the polish fade). Set false
-  // for instances that are already hidden behind their own opacity/blur
-  // layer — e.g. the full player's blurred background — where the fade is
-  // invisible to the user but still costs a re-composite of whatever
-  // filter sits on top of it every single frame for its duration.
   final bool fadeIn;
 
-  // FIX (white flash on cold-start full-player open): the shimmer loading
-  // placeholder (_ShimmerPulse) is a subtle, low-opacity pulse tuned to
-  // look right on a normal thumbnail-sized tile. The full player's
-  // blurred background (_BgLayer in full_player_screen.dart) renders
-  // AurumArtwork at size:double.infinity and then applies
-  // Transform.scale(1.55) + a heavy Gaussian blur on top — at that scale
-  // the same subtle pulse stretches into a flat, bright white wash across
-  // the ENTIRE screen for however long the real artwork takes to arrive
-  // (worse on a cold start with nothing cached yet, and worse still for
-  // local/downloaded songs going through the content:// MediaStore path,
-  // which has no cache warm-up at all). The themed base/vignette layers
-  // already painted underneath this in full_player_screen.dart are the
-  // correct "nothing loaded yet" background for that specific context, so
-  // this flag lets ONLY that one call site opt out of the shimmer pulse
-  // while every other artwork usage (tiles, mini player, the full
-  // player's own non-blurred disc artwork, etc.) keeps it exactly as
-  // before. Deliberately a separate flag from `size`/`fadeIn` — those are
-  // both also used by the full player's non-background disc artwork
-  // (size:double.infinity to fill its parent, fadeIn:true for a smooth
-  // song-change crossfade), so neither can safely stand in as "is this
-  // the blurred background" on its own.
   final bool isBlurredBackground;
 
-  // NOTE: the loading state is now always a flat themed container with
-  // no pulsing overlay of any kind (see _shimmer() and the
-  // _ContentUriImage !_loaded branch below) — there is no shimmer left
-  // to suppress. This flag is kept only so existing call sites passing
-  // suppressWhiteShimmer: true/false elsewhere in the app don't need to
-  // be touched; it has no effect on what's painted.
   final bool suppressWhiteShimmer;
 
-  // PERF (low-end): a full-bleed header only ever shows ~1.05x screen width
-  // of pixels, but decoded at a fixed 1200px. On a 720p phone that is ~2.7x
-  // the pixels/RAM for zero visible gain. When true, the decode width is
-  // capped at what the screen can actually show (still never above 1200).
-  // Opt-in, so full-screen players keep their current sharpness.
   final bool decodeToScreenWidth;
 
   const AurumArtwork({
@@ -88,9 +39,6 @@ class AurumArtwork extends StatelessWidget {
     this.decodeToScreenWidth = false,
   });
 
-  /// Decode width for a full-bleed header: 1.05x screen width in physical
-  /// pixels, capped at 1200. Shared with precacheImage callers so the
-  /// precache and the widget hit the exact same image-cache entry.
   static int screenDecodeWidth(BuildContext context) {
     final px = MediaQuery.sizeOf(context).width *
         MediaQuery.devicePixelRatioOf(context) *
@@ -98,51 +46,14 @@ class AurumArtwork extends StatelessWidget {
     return px.ceil().clamp(480, 1200);
   }
 
-  /// Upgrades a list/tile-sized artwork URL (300x300 for YouTube, 150x150
-  /// for Saavn — see _hqArtworkGeneric/_onrenderArtwork in api_service.dart)
-  /// to a sharper size for the full player / edge-to-edge full-screen
-  /// player, where the same URL would otherwise be stretched across the
-  /// entire phone screen and look visibly soft.
-  ///
-  /// Song.artworkUrl is deliberately kept small everywhere else — every
-  /// list, shelf, and the mini player all read that one small URL, which
-  /// is what keeps their downloads fast/light. Only full-player-class
-  /// screens call this at render time to request a bigger version of the
-  /// exact same source image — a plain string substitution, no extra
-  /// network round-trip or API call needed to compute it.
-  ///
-  /// YouTube (`...=w300-h300...`) supports arbitrary sizes via that URL
-  /// parameter, so this simply asks for 600x600 instead. Saavn has no
-  /// such parameter — it only ever serves 3 fixed tiers baked into the
-  /// URL PATH itself (.../50x50/..., .../150x150/..., .../500x500/...) —
-  /// so for Saavn this upgrades to its largest available tier, 500x500,
-  /// which is the best quality Saavn's CDN provides at all. A URL that
-  /// matches neither pattern (local file, content:// URI, already-large,
-  /// or an unrecognized host) is returned unchanged.
-  ///
-  /// EXTREME DATA SAVER ("ekdam extreme sb kuch control mai le le, data
-  /// kam se kam use ho, bs play aur thumbnail mein problem na aaye" —
-  /// 2026-09-15): skipped entirely when Data Saver is on — the full
-  /// player already has a perfectly displayable list-sized image cached
-  /// (the exact same URL every shelf/tile already downloaded), so
-  /// upgrading to 600x600/500x500 here is a genuinely avoidable EXTRA
-  /// download purely for sharpness on one specific screen. Data Saver
-  /// trades that sharpness for real bytes saved — the smaller image
-  /// still fills the full player, just visibly softer at that size,
-  /// same tradeoff YouTube Music/Spotify's own data saver modes make.
   static String upgradeForFullPlayer(String url) {
     if (url.isEmpty) return url;
     if (AudioPrefs.dataSaverActiveNotifier.value) {
-      // Saver search thumbs (marked -l60-rj, 128px) are too small to fill the
-      // player: fetch ONE 300px image for the song actually playing. Every
-      // other saver URL keeps the old "no extra download" behaviour.
       if (url.contains('-l60-rj')) {
         return url.replaceFirst(RegExp(r'=w\d+-h\d+'), '=w300-h300');
       }
       return url;
     }
-    // List-sized YouTube art (<=300px: search rows are 226px, shelves 300px)
-    // -> 600px for the full player. Larger URLs are left untouched.
     final m = RegExp(r'=w(\d+)-h(\d+)').firstMatch(url);
     if (m != null && int.parse(m.group(1)!) <= 300) {
       return url.replaceFirst(m.group(0)!, '=w600-h600');
@@ -154,24 +65,6 @@ class AurumArtwork extends StatelessWidget {
   }
 
   int? _cacheSizeFor(BuildContext context) {
-    // When size is non-finite (size: double.infinity — used for both the
-    // blurred full-screen background AND the sharp full-player hero disc
-    // art, which also fills its parent at full width/height), the right
-    // decode budget differs completely between the two:
-    //   - Blurred background: a heavy blur (40σ+) destroys all detail
-    //     regardless of decode resolution, so decoding small is free
-    //     quality-wise and saves real memory/CPU. Capped at 220.
-    //   - Sharp hero art (isBlurredBackground: false): this IS the
-    //     visible, unblurred focal image of the whole screen. Capping it
-    //     to 220px here would decode a blurry-looking 220px image no
-    //     matter how high-resolution the source URL actually is —
-    //     silently defeating AurumArtwork.upgradeForFullPlayer()'s whole
-    //     point of fetching a sharper 600x600/500x500 source for exactly
-    //     this case. BUG FIX (found on recheck): before this distinction
-    //     existed, EVERY size:double.infinity caller — including the two
-    //     sharp hero-art call sites in full_player_screen.dart — silently
-    //     fell into the 220px blurred-background cap. Decode at a size
-    //     that actually uses the upgraded source's resolution instead.
     if (!size.isFinite) {
       if (isBlurredBackground) return 220;
       return decodeToScreenWidth ? screenDecodeWidth(context) : 1200;
@@ -182,19 +75,10 @@ class AurumArtwork extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // FIX: same isBlurredBackground gap as the other three artwork
-    // branches — an empty URL should not inject the gradient placeholder
-    // into a full-screen blurred background. _BlurredArtworkCore in
-    // full_player_screen.dart already checks song.artworkUrl.isEmpty
-    // before this widget is even constructed for the blurred-background
-    // call site, so this is currently unreachable with
-    // isBlurredBackground:true in practice — kept as defense-in-depth for
-    // any future call site.
     if (url.isEmpty) {
       return isBlurredBackground ? const SizedBox.expand() : _placeholder(context);
     }
 
-    // ── content:// URI (MediaStore album art) ──────────────────────────────
     if (url.startsWith('content://')) {
       return _ContentUriImage(
         uri: url,
@@ -207,7 +91,6 @@ class AurumArtwork extends StatelessWidget {
       );
     }
 
-    // ── Local file path ────────────────────────────────────────────────────
     if (url.startsWith('/') || url.startsWith('file://')) {
       final path =
           url.startsWith('file://') ? url.replaceFirst('file://', '') : url;
@@ -218,10 +101,6 @@ class AurumArtwork extends StatelessWidget {
         height: size,
         fit: BoxFit.cover,
         cacheWidth: _cacheSizeFor(context),
-        // FIX: same isBlurredBackground gap as the content:// and network
-        // paths above — a failed local file read (deleted/moved file)
-        // should not inject the gradient placeholder into a full-screen
-        // blurred background either.
         errorBuilder: (_, __, ___) =>
             isBlurredBackground ? const SizedBox.expand() : _placeholder(context),
       );
@@ -231,17 +110,6 @@ class AurumArtwork extends StatelessWidget {
       );
     }
 
-    // ── Network URL ────────────────────────────────────────────────────────
-    // BUGFIX: YouTube's maxresdefault.jpg (used for the HD full-player
-    // artwork upgrade) doesn't exist for every video — it 404s for
-    // anything without a 720p+ source upload, which is common. Since
-    // youtube_explode_dart's maxResUrl is a fixed string built from the
-    // video ID (never actually verified against YouTube), there was no
-    // way to detect this ahead of time — it always looked "available".
-    // _RetryableNetworkImage below catches the load failure and retries
-    // once with hqdefault.jpg (guaranteed to exist for every YouTube
-    // video) before falling through to the placeholder, so a missing
-    // maxres thumbnail no longer means a blank gray box.
     return _clipped(
       _RetryableNetworkImage(
         url: url,
@@ -249,23 +117,12 @@ class AurumArtwork extends StatelessWidget {
         cacheSize: _cacheSizeFor(context),
         fadeIn: fadeIn,
         placeholder: _shimmer(context, suppressWhiteShimmer),
-        // FIX (same class as the content:// _bytes==null fix): a
-        // genuinely failed network image (offline device, real 404, bad
-        // URL) used to always fall through to _placeholder(context) — the
-        // bgSurfaceOf→bgElevatedOf gradient + music-note icon — regardless
-        // of isBlurredBackground. Stretched into the full player's blurred
-        // background the same way the loading shimmer was, that gradient
-        // is the same light wash for a failed load as for a slow one.
-        // _BgLayer's theme-correct base is already the right "no artwork"
-        // background here — stay transparent and let it show through.
         errorWidget:
             isBlurredBackground ? const SizedBox.expand() : _placeholder(context),
       ),
     );
   }
 
-  // PERF: a ClipRRect with radius 0 still creates an anti-aliased clip layer
-  // per image (full-bleed headers, every wide thumb). Skip it when square.
   Widget _clipped(Widget child) => borderRadius <= 0
       ? child
       : ClipRRect(
@@ -273,19 +130,6 @@ class AurumArtwork extends StatelessWidget {
           child: child,
         );
 
-  // FIX ("grey/white layer on cold start, tap karte time, kuch bhi karke
-  // na aaye"): _shimmer used AurumTheme.bgSurfaceOf(context), which is a
-  // light warm-grey in LIGHT theme (lightBgSurface) — every single
-  // AurumArtwork instance (Hero Now Playing card, mini player thumbnail,
-  // song tiles) painted that light-grey block for as long as the network
-  // fetch took, which is exactly the "white/grey flash" reported — worse
-  // the slower the connection, since there was nothing bounding how long
-  // it stayed visible. Same root class of bug already fixed once in
-  // mini_player.dart's tint fallback (theme-dependent color leaking into
-  // a loading state) — same fix here: a single FIXED dark neutral,
-  // completely independent of Theme.of(context).brightness, so this can
-  // never again render as a light/white block no matter what theme is
-  // active or how long the fetch takes.
   static const Color _placeholderBase = Color(0xFF1A1714);
 
   Widget _placeholder(BuildContext context) => Container(
@@ -306,14 +150,6 @@ class AurumArtwork extends StatelessWidget {
         ),
       );
 
-  // FIX (permanent removal of white/light shimmer flash): the loading
-  // state now paints ONLY this flat theme-colored container — no
-  // opacity-pulsing overlay on top of it at all. A pulsing layer, no
-  // matter what color it's tinted, briefly lightens whatever it sits
-  // over every animation cycle; the only way to guarantee it can never
-  // read as a white/light flash in any theme or lighting state is to
-  // not paint one. isBlurredBackground still stays transparent so the
-  // full player's own themed base/vignette shows through underneath.
   Widget _shimmer(BuildContext context, [bool suppress = false]) {
     if (isBlurredBackground) return const SizedBox.expand();
     return Container(
@@ -327,16 +163,6 @@ class AurumArtwork extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// _RetryableNetworkImage — wraps CachedNetworkImage with one specific
-// fallback: a failed maxresdefault.jpg load (YouTube's 1280x720 tier,
-// which 404s for any video without a 720p+ source upload) retries once
-// against hqdefault.jpg (480x360, guaranteed to exist for every YouTube
-// video) before giving up to the placeholder. Non-YouTube URLs, or a
-// URL that isn't a maxresdefault variant, just go straight to the
-// normal CachedNetworkImage error path — this only adds a retry for
-// the one specific case that's actually recoverable.
-// ─────────────────────────────────────────────────────────────────────────────
 class _RetryableNetworkImage extends StatefulWidget {
   final String url;
   final double size;
@@ -378,16 +204,8 @@ class _RetryableNetworkImageState extends State<_RetryableNetworkImage> {
   @override
   Widget build(BuildContext context) {
     return CachedNetworkImage(
-      // Keyed by the ORIGINAL url (not _activeUrl) so switching between
-      // songs is still recognized as a new image by any parent
-      // AnimatedSwitcher/keyed list — only this widget's internal state
-      // tracks which tier is currently being attempted.
       key: ValueKey(widget.url),
       imageUrl: _activeUrl,
-      // Echo Nightly match: routes disk caching through a size-bounded
-      // CacheManager (AurumImageCache, 100MB-equivalent cap) instead of
-      // the plugin's default unbounded-by-size cache — see that class's
-      // own doc comment for why this matters on long-term disk usage.
       cacheManager: AurumImageCache(),
       width: widget.size,
       height: widget.size,
@@ -402,10 +220,6 @@ class _RetryableNetworkImageState extends State<_RetryableNetworkImage> {
       placeholder: (_, __) => widget.placeholder,
       errorWidget: (_, __, ___) {
         if (!_triedFallback && _maxResPattern.hasMatch(_activeUrl)) {
-          // Defer the retry to after this build — errorWidget runs
-          // during build, and calling setState synchronously here would
-          // trigger "setState during build" for the frame that first
-          // discovers the 404.
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               setState(() {
@@ -415,7 +229,6 @@ class _RetryableNetworkImageState extends State<_RetryableNetworkImage> {
               });
             }
           });
-          // Show the placeholder for this one frame while the retry kicks in.
           return widget.placeholder;
         }
         return widget.errorWidget;
@@ -424,13 +237,6 @@ class _RetryableNetworkImageState extends State<_RetryableNetworkImage> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// _FadeInImage — wraps a resolved Image widget so it fades in (220ms,
-// easeOut) on first paint instead of popping in. Used for local file /
-// content URI paths where CachedNetworkImage's built-in fadeIn isn't
-// available. Keyed by the image's own key so AnimatedSwitcher only
-// re-triggers the fade when the underlying image actually changes.
-// ─────────────────────────────────────────────────────────────────────────────
 class _FadeInImage extends StatelessWidget {
   final Widget child;
 
@@ -454,9 +260,6 @@ class _FadeInImage extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// content:// loader  —  reads bytes via MethodChannel, caches in-process
-// ─────────────────────────────────────────────────────────────────────────────
 class _ContentUriImage extends StatefulWidget {
   final String uri;
   final double size;
@@ -481,20 +284,6 @@ class _ContentUriImage extends StatefulWidget {
 }
 
 class _ContentUriImageState extends State<_ContentUriImage> {
-  // Shared across all instances — avoids duplicate platform calls.
-  // MEMORY-LEAK FIX ("UI lag/memory grows on large local libraries" —
-  // production gap): this was an unbounded Map. Every unique content://
-  // URI ever displayed (every distinct local/downloaded song's album art,
-  // as raw decoded bytes — not a thumbnail, the full MediaStore art blob)
-  // stayed in memory for the rest of the app session, no eviction, ever.
-  // A user with a large local library scrolling their library/queue
-  // repeatedly over a long session would accumulate hundreds of these
-  // permanently, which is exactly the kind of slow memory growth that
-  // shows up as the app "getting laggier the longer it's open" without
-  // an obvious single cause. ArtworkPaletteCache (artwork_palette_cache.
-  // dart) already solved this identical problem for palette data with a
-  // capped, drop-oldest policy — reusing that same bound here (60 entries,
-  // consistent with the rest of the codebase) fixes it the same way.
   static const int _maxEntries = 60;
   static final Map<String, Uint8List?> _cache = {};
 
@@ -529,7 +318,6 @@ class _ContentUriImageState extends State<_ContentUriImage> {
   }
 
   Future<void> _load() async {
-    // Serve from cache immediately
     if (_cache.containsKey(widget.uri)) {
       if (mounted) {
         setState(() {
@@ -556,38 +344,9 @@ class _ContentUriImageState extends State<_ContentUriImage> {
   @override
   Widget build(BuildContext context) {
     if (!_loaded) {
-      // FIX (white/gray wash on full-player open, root-caused — P0):
-      // this used to return a Container with color: AurumTheme.bgSurfaceOf
-      // (a light warm-grey, 0xFFE8E4D8 in light mode) regardless of
-      // isBlurredBackground — that flag only ever gated the _ShimmerPulse
-      // CHILD below, never this container's own background color. The
-      // full player's blurred background (_BlurredArtworkCore in
-      // full_player_screen.dart) wraps this widget in Transform.scale(1.55)
-      // + ImageFilter.blur(sigma 20-22): a flat color survives that
-      // untouched, so for however long the getAlbumArt MethodChannel call
-      // takes to resolve (no disk cache on this path — worse on a cold
-      // launch, worse than network art which at least has
-      // CachedNetworkImageProvider's cache to shortcut), the ENTIRE full
-      // player screen was a plain light wash.
-      //
-      // _BgLayer (full_player_screen.dart _buildLight/_buildDark) already
-      // paints its own theme-correct base + vignette UNDERNEATH this
-      // layer specifically to be the "nothing loaded yet" background —
-      // this widget just needs to get out of the way and let it show
-      // through, not paint a second, wrong-colored layer on top of it.
-      // Returning transparent here does exactly that. The non-blurred
-      // callers (tile art, mini player, full player's own disc artwork)
-      // are unaffected — they still get the themed Container + shimmer
-      // exactly as before, since this only changes the isBlurredBackground
-      // branch.
       if (widget.isBlurredBackground) {
         return const SizedBox.expand();
       }
-      // FIX (permanent removal of white/light shimmer flash): no
-      // pulsing overlay child at all now — just the flat themed
-      // container. A pulsing layer, whatever color it's tinted, briefly
-      // lightens on every cycle; not painting one is the only way this
-      // can never read as a white/light flash.
       return Container(
         width: widget.size,
         height: widget.size,
@@ -598,19 +357,6 @@ class _ContentUriImageState extends State<_ContentUriImage> {
       );
     }
 
-    // FIX (same class as the !_loaded branch above): _bytes == null here
-    // means the MethodChannel call completed but genuinely found no album
-    // art (not "still loading" — that's the !_loaded branch above). This
-    // used to fall through to widget.placeholder unconditionally —
-    // _placeholder(context) in aurum_artwork.dart, a bgSurfaceOf→
-    // bgElevatedOf gradient + music-note icon. Same problem as the
-    // loading case: stretched into the full player's blurred background
-    // at Transform.scale(1.55) + blur(20-22), that gradient reads as a
-    // light wash for a song that will simply never have artwork, not just
-    // a transient one. _BgLayer's own theme-correct base/vignette is
-    // already the correct "no artwork" background for this context —
-    // stay transparent and let it show through, exactly like the loading
-    // case above.
     if (_bytes == null || _bytes!.isEmpty) {
       return widget.isBlurredBackground
           ? const SizedBox.expand()

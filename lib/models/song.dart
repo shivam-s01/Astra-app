@@ -5,8 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-/// Where a song's data/stream comes from.
-/// Explicit field — avoids fragile ID-pattern guessing.
 enum SongSource { saavn, youtube, local }
 
 class Song {
@@ -19,14 +17,9 @@ class Song {
   final int? duration;
   final String? language;
   final String? year;
-  final String? localPath; // ← NEW: set for local songs, null for online
+  final String? localPath;
   final SongSource source;
-  final int? viewCount; // YouTube-only quality signal; null for Saavn/local
-  // YouTube channel id (format "UC...") for this song's primary artist, when
-  // known — lets song_tile.dart/full_player_screen.dart open ArtistScreen
-  // straight on the real YT channel instead of resolving by name. Null for
-  // Saavn/local songs and any YT result whose search response didn't carry
-  // an artist browseEndpoint (falls back to name-based resolution).
+  final int? viewCount;
   final String? artistChannelId;
 
   Song({
@@ -45,7 +38,6 @@ class Song {
     this.artistChannelId,
   });
 
-  /// True when this song came from the device library
   bool get isLocal => localPath != null && localPath!.isNotEmpty;
 
   factory Song.fromJson(Map<String, dynamic> json) {
@@ -84,9 +76,6 @@ class Song {
       .replaceAll('&gt;', '>');
 
   static String _resolveArtwork(Map<String, dynamic> json) {
-    // Round-trip case: this Song was previously saved via toJson(), which
-    // writes the already-resolved URL under 'artworkUrl'. Must check this
-    // first or saved songs lose their artwork on reload.
     if (json['artworkUrl'] != null && json['artworkUrl'].toString().isNotEmpty) {
       return json['artworkUrl'].toString();
     }
@@ -169,10 +158,6 @@ class Song {
 class SongSection {
   final String title;
   final List<Song> songs;
-  // Stable identifier for this section — used by SavedMixesProvider/MixScreen
-  // to save/lookup a mix. Defaults to a slug of the title when not passed
-  // explicitly, so every existing SongSection(...) call site keeps compiling
-  // without having to be touched.
   final String id;
   SongSection({required this.title, required this.songs, String? id})
       : id = id ?? _slugify(title);
@@ -190,11 +175,6 @@ class SongSection {
       .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
       .replaceAll(RegExp(r'^_+|_+$'), '');
 
-  // Added for the home-screen cold-start cache (see
-  // services/home_feed_cache.dart): lets a full List<SongSection> batch be
-  // written to disk after a successful fetch and read back instantly on the
-  // next app launch, before the network round-trip for a fresh batch has
-  // even started.
   Map<String, dynamic> toJson() => {
     'title': title,
     'id': id,

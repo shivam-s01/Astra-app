@@ -7,16 +7,14 @@
 
 import 'song.dart';
 
-/// Where an Artist's profile data (image/bio/follower count) came from.
 enum ArtistSource { youtube, saavn }
 
-/// A simplified album/playlist entry shown on an artist's page.
 class ArtistAlbum {
   final String id;
   final String name;
   final String artworkUrl;
   final String? year;
-  final String type; // "album" or "playlist"
+  final String type;
 
   ArtistAlbum({
     required this.id,
@@ -26,14 +24,6 @@ class ArtistAlbum {
     this.type = 'album',
   });
 
-  // ADDED (home-feed disk cache for "Similar to X" rows — "MB kam use ho
-  // aur similar to artist wala section refresh pe gayab na ho"): lets
-  // HomeFeedCache persist a seed artist's own real topAlbums to disk the
-  // same way it already persists Quick Picks/shelves/artist-strip data
-  // (see HomeFeedCache.saveQuickPicks' own doc comment for the full
-  // "paint instantly from cache, refetch silently underneath" contract
-  // this plugs into) — no new fields, just serializing the ones already
-  // fetched from the real InnerTube artist browse page.
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -51,12 +41,6 @@ class ArtistAlbum {
       );
 }
 
-/// One titled shelf of related album cards on an album's own page — e.g.
-/// YT Music's "Other versions" (same soundtrack re-releases/re-masters)
-/// or "More by [artist]" rows. Always sourced straight from the album
-/// browse response's own musicCarouselShelfRenderer secondary shelves
-/// (see AlbumScreen/_fetchYtAlbumSongsWithArtwork), never invented —
-/// title is whatever YT Music itself labeled that shelf.
 class AlbumRelatedShelf {
   final String title;
   final List<ArtistAlbum> albums;
@@ -64,13 +48,8 @@ class AlbumRelatedShelf {
   AlbumRelatedShelf({required this.title, required this.albums});
 }
 
-/// A simplified "related artist" entry — for the "Fans might also like"
-/// row. Always sourced from YouTube Music's own related-artists carousel
-/// on the browse response (never guessed/derived client-side), so it only
-/// ever contains artists YouTube itself considers genuinely related to
-/// this one.
 class RelatedArtist {
-  final String id; // channelId, so tapping opens ArtistScreen the normal way
+  final String id;
   final String name;
   final String imageUrl;
 
@@ -80,7 +59,6 @@ class RelatedArtist {
     required this.imageUrl,
   });
 
-  // ADDED (same disk-cache reason as ArtistAlbum.toJson/fromJson above).
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -104,21 +82,8 @@ class Artist {
   final List<Song> topSongs;
   final List<ArtistAlbum> topAlbums;
   final List<ArtistAlbum> singles;
-  // NEW (YouTube-primary artist page): which source this profile's
-  // image/bio/followerCount actually came from — lets ArtistScreen show a
-  // "via YouTube"/"via JioSaavn" style badge if desired. Defaults to
-  // youtube since that's now the primary path; fetchArtist() sets this
-  // explicitly on every return.
   final ArtistSource source;
-  // NEW: wide channel-banner image (YouTube channels only). Null for
-  // Saavn-sourced profiles — UI falls back to imageUrl-only layout when null.
   final String? bannerUrl;
-  // NEW ("Fans might also like" — YT Music parity): populated only from
-  // YT Music browse's own "Fans might also like" carousel (see
-  // _fetchArtistFromYtMusicBrowse) — empty for every other path
-  // (uploads-walk merge, Saavn fallback), never backfilled with a guess,
-  // so ArtistScreen simply hides the row rather than showing something
-  // awkward/unrelated when this is empty.
   final List<RelatedArtist> relatedArtists;
 
   Artist({

@@ -30,7 +30,6 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
   int _imageCacheUsed    = 0;
   bool _loading          = true;
 
-  // New
   String _downloadQuality    = '320kbps';
   bool   _autoDownloadLiked  = false;
   bool   _downloadWifiOnly   = true;
@@ -60,11 +59,6 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
     if (!mounted) return;
     setState(() {
       _maxImageCache       = p.getDouble('max_image_cache')  ?? 100.0;
-      // MIGRATION: 96kbps/128kbps used to be valid choices here. An
-      // existing install with one of those saved would no longer find a
-      // matching entry in the now-trimmed ['160kbps', '320kbps'] options
-      // list, which the dropdown widget can't render (value not in its
-      // options). Map old values to the nearest current tier.
       _downloadQuality     = switch (p.getString('download_quality')) {
         '96kbps' || '128kbps' => '160kbps',
         final q? => q,
@@ -104,23 +98,11 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
   Future<void> _clearDir(String subPath) async {
     if (!mounted) return;
     setState(() => _loading = true);
-    // BUG: delete()/exists() ran with no try/catch, unlike every other
-    // file-I/O path in this screen (_load, _dirSize both guard theirs).
-    // A locked file (e.g. an image mid-decode by CachedNetworkImage), a
-    // permission hiccup, or the directory vanishing between the exists()
-    // check and delete() (TOCTOU) throws here uncaught — Flutter surfaces
-    // that as an unhandled exception from the button's onTap, and because
-    // the throw happens before _load() runs, `_loading` never flips back
-    // to false: the screen is stuck on the loading spinner permanently
-    // until the user leaves and re-enters Settings > Storage.
     try {
       final cacheDir = await getTemporaryDirectory();
       final dir = Directory('${cacheDir.path}/$subPath');
       if (await dir.exists()) await dir.delete(recursive: true);
     } catch (_) {
-      // Best-effort clear — if it failed, _load() below will just report
-      // whatever size is actually still on disk instead of zero, so the
-      // UI stays honest rather than claiming a clear that didn't happen.
     }
     if (!mounted) return;
     await _load();
@@ -129,15 +111,11 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
   Future<void> _clearDownloads() async {
     if (!mounted) return;
     setState(() => _loading = true);
-    // Same fix as _clearDir above — guard the delete so a locked/in-use
-    // download (e.g. a song mid-playback from local storage) can't leave
-    // this screen stuck on the loading spinner forever.
     try {
       final appDir = await getApplicationDocumentsDirectory();
       final dir = Directory('${appDir.path}/downloads');
       if (await dir.exists()) await dir.delete(recursive: true);
     } catch (_) {
-      // Best-effort — _load() below reports the real remaining size.
     }
     if (!mounted) return;
     await _load();
@@ -176,7 +154,6 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
           ? const Center(child: AurumMorphLoader(size: 56, contained: true))
           : Builder(builder: (context) {
               final rows = <Widget>[
-                // ── DOWNLOADS ─────────────────────────────────────────────
                 _sectionLabel(context, l10n.ssDownloads),
                 _storageCard(context,
                   title: l10n.ssDownloadedSongs,
@@ -185,22 +162,15 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
                   onClear: () { AurumHaptics.medium(); _confirmClear(context, l10n.ssAllDownloadsTitle, _clearDownloads); },
                 ),
 
-                // Download Quality
                 AurumSettingsTile.dropdown(context,
                   icon: Icons.high_quality_rounded,
                   title: l10n.ssDownloadQuality,
                   subtitle: l10n.ssDownloadQualitySubtitle,
                   value: _downloadQuality,
-                  // Only the two real Saavn tiers that matter for download
-                  // quality — 320kbps (best available) and 160kbps. No
-                  // 96/128kbps options: those silently downgraded further
-                  // (see download_provider.dart) instead of giving users a
-                  // predictable, exact-tier result.
                   options: const ['160kbps', '320kbps'],
                   onChanged: (v) { setState(() => _downloadQuality = v!); _save('download_quality', v!); },
                 ),
 
-                // Auto-download liked songs
                 AurumSettingsTile.switchTile(context,
                   icon: Icons.favorite_rounded,
                   title: l10n.ssAutoDownloadLiked,
@@ -209,7 +179,6 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
                   onChanged: (v) { setState(() => _autoDownloadLiked = v); _save('auto_download_liked', v); },
                 ),
 
-                // WiFi only
                 AurumSettingsTile.switchTile(context,
                   icon: Icons.wifi_rounded,
                   title: l10n.ssWifiOnly,
@@ -218,7 +187,6 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
                   onChanged: (v) { setState(() => _downloadWifiOnly = v); _save('download_wifi_only', v); },
                 ),
 
-                // ── IMAGE CACHE ────────────────────────────────────────────
                 _sectionLabel(context, l10n.ssImageCache),
                 _cacheSliderCard(context,
                   title: l10n.ssMaxImageCacheSize,
@@ -248,7 +216,6 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
     );
   }
 
-  // ── Cards ─────────────────────────────────────────────────────────────────
   Widget _storageCard(BuildContext context, {
     required String title,
     required String used,
@@ -359,7 +326,6 @@ class _SettingsStorageScreenState extends State<SettingsStorageScreen> {
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 AppBar _appBar(BuildContext context, String title) => AppBar(
   backgroundColor: AurumTheme.bgOf(context),
   elevation: 0, scrolledUnderElevation: 0,
@@ -374,5 +340,3 @@ Widget _sectionLabel(BuildContext context, String label) => Padding(
   padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
   child: Text(label, style: TextStyle(color: AurumTheme.accentOf(context), fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.5)),
 );
-
-

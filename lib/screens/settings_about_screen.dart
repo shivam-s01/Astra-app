@@ -46,10 +46,7 @@ class _SettingsAboutScreenState extends State<SettingsAboutScreen> {
 
   Future<void> _launch(String url, {bool inApp = false}) async {
     final uri = Uri.parse(url);
-    if (uri.scheme != 'https') return; // only web links, never intent:/file:
-    // In-app browser tab (Chrome Custom Tabs) for our own legal pages —
-    // stays inside the app; falls back to the external browser if no
-    // custom-tabs provider exists.
+    if (uri.scheme != 'https') return;
     if (inApp) {
       try {
         if (await launchUrl(uri, mode: LaunchMode.inAppBrowserView)) return;
@@ -79,9 +76,6 @@ class _SettingsAboutScreenState extends State<SettingsAboutScreen> {
     final l10n = AppLocalizations.of(context)!;
 
     final rows = <Widget>[
-      // App identity card — flat, no gradient wash. Matches the plain,
-      // restrained card treatment used across the redesigned Settings
-      // screens (no gradients, no glow, single hairline border).
       Container(
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(20),
@@ -101,10 +95,6 @@ class _SettingsAboutScreenState extends State<SettingsAboutScreen> {
           ),
           const SizedBox(width: 16),
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Pinned to a fixed display font, independent of the user's
-            // chosen "App Font" — this is the app's own brand name, not
-            // body copy, so it stays consistent even when Mono/Serif is
-            // selected elsewhere (matches the Settings title treatment).
             Text('Astra Music',
               style: GoogleFonts.inter(
                 color: AurumTheme.textPrimaryOf(context),
@@ -114,10 +104,6 @@ class _SettingsAboutScreenState extends State<SettingsAboutScreen> {
               )),
             const SizedBox(height: 4),
             Text(
-              // Plain "v2.3.2" — no trailing "(build N)". Build numbers
-              // are an internal CI artifact, not user-facing product
-              // info; every polished app (Spotify, Apple Music) shows
-              // just the version string here.
               _version.isEmpty ? 'Loading...' : 'v$_version',
               style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 13),
             ),
@@ -137,7 +123,6 @@ class _SettingsAboutScreenState extends State<SettingsAboutScreen> {
       ),
 
       _sectionLabel(context, l10n.abUpdate),
-      // Play Store builds are updated by Play — no GitHub self-update tile.
       if (!kPlayBuild)
         AurumSettingsTile.action(context,
           icon: Icons.system_update_rounded,

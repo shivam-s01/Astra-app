@@ -5,29 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// aurum_pressable.dart
-// Astra Music — Shared Press-Scale Interaction Wrapper
-//
-// Single source of truth for the "premium tap" feel used across the app:
-// a quick scale-down on press-down, spring back on release, plus a light
-// haptic tick. Replaces one-off GestureDetector/AnimationController
-// boilerplate that was duplicated per-widget (home_screen's old
-// _SongCardState, _PlaylistCardState, etc.) with one cheap, reusable
-// implementation — same feel everywhere, less code, one less
-// AnimationController per card at a time.
-//
-// Usage:
-//   AurumPressable(
-//     onTap: () => doSomething(),
-//     child: MyCard(),
-//   )
-//
-//   // Disable haptic (e.g. for very frequent taps like chip filters):
-//   AurumPressable(onTap: ..., haptic: false, child: ...)
-//
-//   // Tighter/looser press feel:
-//   AurumPressable(onTap: ..., scaleAmount: 0.94, child: ...)
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../utils/aurum_haptics.dart';
@@ -48,10 +25,8 @@ class AurumPressable extends StatefulWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
-  /// Scale factor applied while pressed (1.0 = no shrink).
   final double scaleAmount;
 
-  /// Whether to fire a light selection haptic on tap.
   final bool haptic;
 
   final HitTestBehavior behavior;

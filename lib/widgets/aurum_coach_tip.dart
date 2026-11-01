@@ -16,27 +16,6 @@ import '../theme/aurum_theme.dart';
 import '../utils/aurum_motion.dart';
 import 'aurum_promo_screen.dart';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AurumCoachTip — one-time, non-blocking hint under a button.
-//
-// Same look as the Library "import playlist" tip, packaged so any screen can
-// reuse it. It is deliberately PATIENT: a hint must never fight another
-// popup, so it waits for a calm moment instead of showing on a timer.
-//   • shown ONCE per install — the flag is saved the moment it appears
-//   • waits for the splash intro to be completely gone
-//   • then waits until the screen has been calm for ~2.4s: app in the
-//     foreground, this route on top (no dialog / sheet / permission prompt /
-//     other screen), the button really painted, and [ready] true. On a brand
-//     new install that means it appears AFTER the notification / storage /
-//     autostart prompts are finished — and if the person never gets a calm
-//     moment within 90s it simply skips WITHOUT being marked as seen, so it
-//     tries again next launch
-//   • no dimming, no blocking: a touch ANYWHERE removes it instantly and the
-//     touch still reaches whatever was tapped
-//   • auto-hides after 8s, and also hides by itself if anything covers the
-//     button, the app goes to background, or the button moves
-// ═══════════════════════════════════════════════════════════════════════════
-
 class AurumCoachTip extends StatefulWidget {
   final Widget child;
   final String prefKey;
@@ -44,21 +23,12 @@ class AurumCoachTip extends StatefulWidget {
   final String title;
   final String message;
 
-  /// Evaluated on every calm-check. Return false to stop for good (without
-  /// marking the tip as seen), e.g. when the user signed in.
   final bool Function() enabled;
 
-  /// Optional async gate. While it returns false the tip keeps waiting
-  /// (e.g. "first-launch permission prompts are not finished yet").
   final Future<bool> Function()? ready;
 
-  /// When set, the hint is a full-screen animated promo (AurumPromoScreen,
-  /// auto-closes in ~2s) instead of the small bubble. The same patient
-  /// "calm moment" logic decides WHEN it appears. [title]/[message]/[icon]
-  /// are ignored in this mode (the promo carries its own copy).
   final AurumPromoData? promo;
 
-  /// Runs only if the person taps the promo's CTA button.
   final VoidCallback? onPromoAction;
 
   const AurumCoachTip({
@@ -79,7 +49,7 @@ class AurumCoachTip extends StatefulWidget {
 }
 
 class _AurumCoachTipState extends State<AurumCoachTip> {
-  static bool _showing = false; // never two tips at once
+  static bool _showing = false;
   static const _tick = Duration(milliseconds: 800);
   static const _calmTicksNeeded = 3;
   static const _maxWait = Duration(seconds: 90);
@@ -110,15 +80,11 @@ class _AurumCoachTipState extends State<AurumCoachTip> {
     try {
       await c.future.timeout(const Duration(seconds: 12));
     } catch (_) {
-      // splash never reported — carry on, the calm-checks below still
-      // protect us
     } finally {
       n.removeListener(l);
     }
   }
 
-  /// The button's on-screen rect, but ONLY if it is genuinely visible and
-  /// untouched-by-anything-else right now. Null = not a good moment.
   Rect? _visibleRect() {
     if (_disposed || !mounted) return null;
     final life = WidgetsBinding.instance.lifecycleState;
@@ -134,8 +100,6 @@ class _AurumCoachTipState extends State<AurumCoachTip> {
     if (rect.top < 0 || rect.bottom > screen.height - 80) return null;
     if (rect.left < 0 || rect.right > screen.width) return null;
 
-    // A hit-test at the button's centre only reaches it when it is painted
-    // on the active tab and nothing (sheet, dialog, another tab) covers it.
     final hit = HitTestResult();
     WidgetsBinding.instance
         .hitTestInView(hit, rect.center, View.of(context).viewId);
@@ -168,22 +132,16 @@ class _AurumCoachTipState extends State<AurumCoachTip> {
 
         final rect = gateOk ? _visibleRect() : null;
         if (rect == null || (last != null && !_sameRect(last, rect))) {
-          calm = 0; // something is going on — start the calm window again
+          calm = 0;
           last = rect;
           continue;
         }
         last = rect;
         if (++calm < _calmTicksNeeded) continue;
 
-        // Calm for ~2.4s — show it.
-        // Re-check the flag right before showing: another instance with the
-        // same prefKey (e.g. grid / list toolbar) may have shown it already.
         if (prefs.getBool(widget.prefKey) == true) return;
         final promo = widget.promo;
         if (promo != null) {
-          // Full-screen promo. Skipped (NOT marked seen) when animations are
-          // off / Battery Saver is on, so it can still appear on a later
-          // launch once motion is allowed again.
           if (!AurumPromoScreen.canShow) return;
           final nav = Navigator.of(context, rootNavigator: true);
           _showing = true;
@@ -232,9 +190,7 @@ class _AurumCoachTipState extends State<AurumCoachTip> {
         });
         return;
       }
-      // Never got a calm moment: give up quietly, NOT marked as seen.
     } catch (_) {
-      // A tip is never worth an error — just skip it.
       _showing = false;
     }
   }
@@ -293,8 +249,6 @@ class _CoachTipOverlay extends StatelessWidget {
     final top = anchor.bottom + 12;
 
     return Listener(
-      // translucent: a touch anywhere removes the tip at once AND still
-      // reaches the widget underneath — nothing ever gets blocked.
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => onDismiss(),
       child: Material(
@@ -311,7 +265,6 @@ class _CoachTipOverlay extends StatelessWidget {
           ),
           child: Stack(
             children: [
-              // soft ring around the button
               Positioned(
                 left: anchor.left - 4,
                 top: anchor.top - 4,

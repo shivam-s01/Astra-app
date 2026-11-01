@@ -83,7 +83,6 @@ class _ChangelogSheetState extends State<ChangelogSheet> {
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(children: [
-          // Handle
           Container(
             margin: const EdgeInsets.only(top: 12, bottom: 4),
             width: 36, height: 4,
@@ -92,7 +91,6 @@ class _ChangelogSheetState extends State<ChangelogSheet> {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-          // Header
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
             child: Row(children: [
@@ -118,7 +116,6 @@ class _ChangelogSheetState extends State<ChangelogSheet> {
             ]),
           ),
           Divider(color: AurumTheme.dividerOf(context), height: 1),
-          // Body
           Expanded(
             child: _loading
               ? const Center(child: AurumMorphLoader(size: 56, contained: true))

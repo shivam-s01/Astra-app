@@ -5,7 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as dev;
@@ -136,7 +135,6 @@ class _YtSearchHealth {
 }
 
 enum YtPlaylistImportError {
-
   invalidLink,
 
   isMix,
@@ -259,10 +257,6 @@ class HomeShelfItem {
 
   final bool isRadioMix;
 
-  /// True when this card is an artist/channel (browseId 'UC...'), not a
-  /// playlist or album. Moods & Genres pages (esp. language ones like
-  /// Tamil) carry artist cards, and those must open the artist page —
-  /// treating them as playlists is why tapping an artist did nothing.
   final bool isArtist;
   const HomeShelfItem({
     required this.browseId,
@@ -402,7 +396,6 @@ class MoodGenreCacheStore {
   static const _timeKey = 'mood_genre_sections_cache_time_v2';
   static const _freshWindow = Duration(hours: 6);
 
-  // Share of tiles that have artwork (0..1).
   static double artworkCoverage(List<MoodGenreSection> sections) {
     var total = 0, withArt = 0;
     for (final s in sections) {
@@ -420,16 +413,10 @@ class MoodGenreCacheStore {
       final encoded =
           jsonEncode(sections.map((s) => s.toJson()).toList());
       await prefs.setString(_key, encoded);
-      // Tiles are always saved (so the grid still shows offline), but if
-      // artwork mostly failed to load the cache is stamped as already
-      // expired (epoch 0) so the next open retries instead of keeping
-      // image-less tiles "fresh" for 6h. Data Saver still treats any
-      // saved cache as fresh (see isFresh), so it never re-downloads.
       final complete = artworkCoverage(sections) >= 0.7;
       await prefs.setInt(
           _timeKey, complete ? DateTime.now().millisecondsSinceEpoch : 0);
     } catch (_) {
-
     }
   }
 
@@ -453,7 +440,6 @@ class MoodGenreCacheStore {
       final prefs = await SharedPreferences.getInstance();
       final savedAt = prefs.getInt(_timeKey);
       if (savedAt == null) return false;
-      // Data Saver ON: any saved cache counts as fresh (zero-MB cold start).
       if (AudioPrefs.dataSaverActiveNotifier.value) return true;
       final age = DateTime.now()
           .difference(DateTime.fromMillisecondsSinceEpoch(savedAt));
@@ -517,7 +503,6 @@ class HomePlaylistHistory {
       }
       await prefs.setStringList(key, merged);
     } catch (_) {
-
     }
   }
 }
@@ -534,7 +519,6 @@ class YtHomeArtist {
 }
 
 class ApiService {
-
   static String lastArtistFetchDebug = '(not run yet)';
 
   static set workerMaintenanceMode(bool value) {
@@ -633,7 +617,6 @@ class ApiService {
 
   static Future<void>? _selectionHistoryLoadFuture;
   static Future<void> _ensureSelectionHistoryLoaded() {
-
     if (_selectionHistoryLoaded) return Future.value();
     return _selectionHistoryLoadFuture ??= () async {
       try {
@@ -643,7 +626,6 @@ class ApiService {
           final decoded = jsonDecode(raw);
           if (decoded is Map) {
             decoded.forEach((key, value) {
-
               if (_selectionHistory.containsKey(key)) return;
               if (key is String && value is List) {
                 _selectionHistory[key] = value.whereType<String>().toList();
@@ -661,7 +643,6 @@ class ApiService {
 
   static Timer? _selectionPersistDebounce;
   static void _persistSelectionHistorySoon() {
-
     _selectionPersistDebounce?.cancel();
     _selectionPersistDebounce = Timer(const Duration(seconds: 2), () async {
       try {
@@ -756,14 +737,10 @@ class ApiService {
     }
   }
 
-  /// Data Saver OFF: exactly the original behaviour (3 pings + warm-up at
-  /// launch / search open). Data Saver ON: nothing at launch — only a
-  /// single light ping when the user focuses the Search box
-  /// ([fromSearchFocus]), with a 30-minute cooldown.
   static Future<void> wakeSaavn({bool fromSearchFocus = false}) async {
     final saver = await _saverOn();
     if (!saver) {
-      if (fromSearchFocus) return; // already pinged at launch/search open
+      if (fromSearchFocus) return;
       _wakeSaavnFull();
       return;
     }
@@ -779,7 +756,6 @@ class ApiService {
   }
 
   static void _wakeSaavnFull() {
-
     _client
         .get(Uri.parse('$_saavnPrimary/result/?query=hello&limit=1'))
         .timeout(const Duration(seconds: 30))
@@ -802,9 +778,6 @@ class ApiService {
       _explodeWarmedUp = true;
       Future.microtask(() async {
         try {
-          // DATA SAVER: this warm-up downloads a full YouTube watch page
-          // (~1 MB) on EVERY app start. AudioPrefs isn't loaded yet this
-          // early, so read the persisted flags directly and skip it.
           final sp = await SharedPreferences.getInstance();
           if (sp.getBool('data_saver') == true ||
               sp.getString('stream_quality') == 'DataSaver') {
@@ -816,7 +789,6 @@ class ApiService {
               .timeout(const Duration(seconds: 8));
           _log('[warmup] youtube_explode_dart warmed up ✓');
         } catch (_) {
-
           _explodeWarmedUp = false;
         }
       });
@@ -928,10 +900,6 @@ class ApiService {
     'hindi':     'Hindi',
   };
 
-  // USER-CHOSEN (pinned) artists whitelist se EXEMPT: user ne khud chuna to
-  // woh hamesha feed me aayega, chahe woh fixed _mainstreamArtists list me na
-  // ho (US/K-pop/Punjabi indie/regional). Baaki artists ke liye quality gate
-  // pehle jaisa.
   static List<String> _filterMainstream(List<String> artists) {
     final pinned = RecommendationEngine.pinnedArtists
         .map((e) => e.toLowerCase().trim())
@@ -1056,7 +1024,6 @@ class ApiService {
   }
 
   static Future<List<Song>> _searchSaavnDeep(String query, {int limit = 80}) async {
-
     final startPage = 1 + math.Random().nextInt(4);
     final pages = List.generate(3, (i) => startPage + i);
     final futures = pages.map((p) => _fetchSaavnPage(
@@ -1098,9 +1065,6 @@ class ApiService {
     String label,
     void Function(SongSection section) onTopUp,
   ) {
-    // DATA SAVER: this silent top-up runs ~5 more searches plus a deep page
-    // for EVERY home section (the biggest single cost at app start). The
-    // fast pass has already painted each shelf, so under Data Saver stop here.
     if (AudioPrefs.dataSaverActiveNotifier.value) return;
     unawaited(_fetchSaavnSection(
       query,
@@ -1122,7 +1086,6 @@ class ApiService {
     required bool includeDeepPage,
     required int target,
   }) async {
-
     final variantResults = await Future.wait(
       variants.map((q) => _searchYt(q, limit: 60)),
     );
@@ -1260,7 +1223,6 @@ class ApiService {
     }
 
     if (personalArtists.isEmpty && topGenres.isEmpty && recentOnline.isEmpty) {
-
       const coldStartLabels = [
         'Trending Now',
         'New Releases',
@@ -1275,7 +1237,6 @@ class ApiService {
         if (entry.label.isEmpty) continue;
         final existingIndex = queryList.indexWhere((q) => q.label == entry.label);
         if (existingIndex != -1) {
-
           if (!queryList[existingIndex].priority) {
             queryList[existingIndex] = _SectionQuery(entry.query, entry.label, priority: true);
           }
@@ -1327,7 +1288,6 @@ class ApiService {
           });
         }
       }).catchError((_) {
-
       });
     }
 
@@ -1487,7 +1447,6 @@ class ApiService {
   static Future<SongSection?> fetchSaavnLanguageSection(String language) async {
     final label = _languageLabels[language] ?? '$language Hits';
     try {
-
       final saver = AudioPrefs.dataSaverActiveNotifier.value;
       return await _fetchSaavnSection(
         '$language top songs',
@@ -1514,7 +1473,6 @@ class ApiService {
     required void Function(SongSection section) onSection,
     List<String> languages = _saavnHomeDefaultLanguages,
   }) async {
-
     const waveSize = 3;
     const waveGap = Duration(milliseconds: 200);
     for (var i = 0; i < languages.length; i += waveSize) {
@@ -1618,7 +1576,6 @@ class ApiService {
         attempts: 2,
       );
       if (url != null) return url;
-
     }
     return resolveStreamUrl(song);
   }
@@ -1660,53 +1617,16 @@ class ApiService {
     return queries[genre] ?? '$genre top songs';
   }
 
-  // How many of hop 1's own top results get used as extra seeds for
-  // hop 2 (and, if still short, hop 3 — see _buildAutoQueue). TUNED
-  // 2 -> 4 as part of the "Up Next sirf 12-20 songs pe atak jaata hai"
-  // fix: with hop1/hop2 results now actually surviving isPremiumQuality
-  // (see addToPool's `trusted` flag), the old value of 2 became the
-  // real limiting factor on reaching a full ~80-song pool fast. All
-  // seeds within one hop still fire in parallel via Future.wait, so
-  // widening this doesn't turn generation into a sequential chain of
-  // calls — total latency stays roughly one extra request-time
-  // regardless of seed count, same as before, just with each of those
-  // requests now actually contributing songs instead of being filtered
-  // out afterward.
   static const int _autoQueueHop2SeedCount = 4;
 
-  // In-flight/completed Up Next builds, keyed by the seed song's id.
-  // This is what makes Up Next feel "instant" like the real YT Music
-  // app: player_provider.dart already fires its Phase-1/Phase-2
-  // getAutoQueue() calls the moment a song starts playing (see
-  // _buildInitialSmartQueue, un-awaited from playSong()) — well before
-  // Up Next is actually opened or needed. Caching the Future itself
-  // here (not just the result) means if a second caller asks for the
-  // same song's queue while that first build is still in flight, it
-  // gets the exact same in-progress Future instead of firing a
-  // duplicate network round-trip — and once it resolves, every caller
-  // for that song gets the answer immediately with zero extra work.
-  // Bounded to a handful of entries since only the current + next few
-  // songs are ever realistically in play on a phone at once.
   static final Map<String, Future<List<Song>>> _autoQueueCache = {};
-  // Bumped 8 -> 16: cache keys are now (song id + dedup-context) pairs
-  // instead of song id alone (see getAutoQueue's FIX comment), so the
-  // same anchor song legitimately produces more than one live entry
-  // during a session (initial build key, then a distinct key each time
-  // auto-extend re-anchors on it with a larger exclusion set). Doubling
-  // the cap keeps that from evicting a still-useful entry too eagerly.
   static const int _autoQueueCacheMaxEntries = 16;
 
   static void _rememberAutoQueueFuture(String cacheKey, Future<List<Song>> future) {
-    // Simple FIFO eviction — good enough here since entries are cheap
-    // Futures, not the song data itself, and playback is linear so the
-    // oldest entry is almost always the least likely to be reused.
     if (_autoQueueCache.length >= _autoQueueCacheMaxEntries) {
       _autoQueueCache.remove(_autoQueueCache.keys.first);
     }
     _autoQueueCache[cacheKey] = future;
-    // Don't let a failed build poison the cache for future attempts on
-    // the same song — drop it on error so the next call retries fresh
-    // instead of forever replaying the same failure.
     future.catchError((_) {
       _autoQueueCache.remove(cacheKey);
       return <Song>[];
@@ -1724,38 +1644,11 @@ class ApiService {
     }
   }
 
-  /// Pure YouTube-Music-algorithm Up Next: every candidate comes from
-  /// the same WEB_REMIX "Related"/"You might also like" graph the real
-  /// YT Music app itself serves for a given video — no keyword search,
-  /// no guessing. Hop 1 is the seed song's own related shelf; hop 2
-  /// fans out from a couple of hop 1's top hits, exactly the way the
-  /// real app's Up Next keeps extending itself as you play through it.
   static Future<List<Song>> getAutoQueue(
     Song currentSong, {
     int limit = 60,
     Set<String>? existingQueueIds,
   }) async {
-    // FIX ("Up Next 13 songs pe hi ruk jata hai" — the cache used to be
-    // keyed by currentSong.id ALONE. _buildInitialSmartQueue seeds the
-    // cache early with a SMALL existingQueueIds set; later,
-    // _maybeExtendQueue can walk backward and land on that exact same
-    // anchor song again (e.g. after a local track, or a short queue) and
-    // call getAutoQueue for it a SECOND time with a much LARGER
-    // existingQueueIds set (everything added since). Keyed on song id
-    // only, that second call got back the FIRST call's cached result —
-    // a batch already fully deduped against the old, smaller queue, so
-    // every song in it now already exists in the live queue.
-    // _maybeExtendQueue's own dedup loop then filtered the entire
-    // returned batch out (`toAdd` ends up empty), silently ending the
-    // auto-extend chain for that whole session even though real,
-    // never-seen recommendations still exist. Keying on the *combined*
-    // set of ids we're deduping against (not just the anchor song) means
-    // a call with a different exclusion set is treated as a distinct
-    // request instead of replaying a stale, already-consumed answer.
-    // Order-independent hash of the exclusion set (cheap: XOR of each id's
-    // hashCode, no sorting/joining a potentially long id list on every
-    // call) combined with its length so two different-sized sets landing
-    // on the same XOR by coincidence still produce different keys.
     int idsHash = 0;
     for (final id in existingQueueIds ?? const <String>{}) {
       idsHash ^= id.hashCode;
@@ -1763,11 +1656,6 @@ class ApiService {
     final cacheKey =
         '${currentSong.id}|${existingQueueIds?.length ?? 0}|$idsHash';
 
-    // Reuse an in-flight or already-completed build for this exact song
-    // + dedup-context pair instead of doing the network work again — see
-    // _autoQueueCache doc comment above for why this is what makes
-    // repeat/overlapping calls (Phase 1 + Phase 2, or a queue-extend
-    // shortly after with the SAME exclusion set) feel instant.
     final cached = _autoQueueCache[cacheKey];
     if (cached != null) return cached;
 
@@ -1802,25 +1690,6 @@ class ApiService {
     final mergedRawTitles = <String>[];
     final pool         = <Song>[];
 
-    // FIX ("Up Next sirf 12-20 songs pe atak jaata hai, category-wise
-    // poore related songs nahi aate — ekdam fast, top-level, kam se kam
-    // 80 songs chahiye"): `trusted` marks a song as coming from YT
-    // Music's own curated "Related" graph (hop1/hop2 below) rather than
-    // a raw keyword search — see isPremiumQuality's trustedRelatedGraph
-    // doc for why this source needs it (no view count OR duration in
-    // that endpoint's response at all, by format, not by parse failure).
-    // Before this, addToPool always called isPremiumQuality with its
-    // default (untrusted) check, so isPremiumQuality's very first line —
-    // `if (song.viewCount == null) return false` — rejected literally
-    // every hop1/hop2 result outright. hop1/hop2 together are meant to
-    // supply the vast majority of a fast, broad, ~80-song pool; with
-    // both silently emptied, `pool` fell straight to the "pool.isEmpty"
-    // keyword-search safety net below on nearly every call — a single
-    // narrow query for one song's own title+artist, which naturally
-    // returns only a small, same-song-flavored batch (further thinned
-    // by the variant/dedup checks already in this function) — exactly
-    // the 12-20 ceiling being reported, instead of the broad top-level
-    // related fan-out this function exists to build.
     bool addToPool(Song song, {bool trusted = false}) {
       if (mergedIds.contains(song.id)) return false;
       if (song.id.isEmpty || song.title.isEmpty) return false;
@@ -1848,23 +1717,12 @@ class ApiService {
       return const [];
     }
 
-    // Hop 1: the seed song's own real related shelf.
     final hop1 = await fetchYouMightAlsoLike(seedYtId,
             timeout: const Duration(seconds: 6))
         .catchError((_) => <Song>[]);
     for (final s in hop1) addToPool(s, trusted: true);
     _log('[autoQueue] hop1 (real YT Music related): ${pool.length}');
 
-    // Hop 2: fan out from hop 1's own top (already-ranked) hits so the
-    // pool keeps growing toward a full ~80-song Up Next instead of
-    // stopping at whatever a single hop returns. TUNED (same fix as
-    // above): widened from a fixed 2-seed cap to as many of hop 1's
-    // results as it takes to comfortably clear `limit`, since hop1
-    // alone (now that its results actually survive the quality filter)
-    // is usually not quite enough on its own for the larger ~80-song
-    // initial-build limit — still bounded (_autoQueueHop2SeedCount is
-    // now a ceiling, not a fixed count) so a single call never fires
-    // an unbounded number of parallel network round-trips.
     if (pool.length < limit && hop1.isNotEmpty) {
       final hop2Seeds = hop1.take(_autoQueueHop2SeedCount).toList();
       final hop2Results = await Future.wait(hop2Seeds.map((s) =>
@@ -1876,12 +1734,6 @@ class ApiService {
       _log('[autoQueue] hop2 (chained real related): ${pool.length}');
     }
 
-    // Hop 3: only reached if hop1+hop2 genuinely still fall short of a
-    // full pool (rare now that hop1/hop2 aren't silently discarded) —
-    // fans out one more level from hop 2's fresh (not-yet-seeded) top
-    // hits, same trusted related-graph source, so a thin niche seed
-    // still reaches the ~80-song target instead of dropping to the
-    // narrow keyword fallback below.
     if (pool.length < limit && hop1.length > _autoQueueHop2SeedCount) {
       final hop3Seeds = hop1.skip(_autoQueueHop2SeedCount).take(_autoQueueHop2SeedCount).toList();
       if (hop3Seeds.isNotEmpty) {
@@ -1895,11 +1747,6 @@ class ApiService {
       }
     }
 
-    // Safety net only — real related graph coming back completely dry
-    // (rare: brand-new/obscure upload) falls back to a single
-    // keyword search rather than leaving Up Next empty. Kept untrusted
-    // (default isPremiumQuality check) since these are raw search hits,
-    // not YT Music's own curated recommendation graph.
     if (pool.isEmpty) {
       final fallback = await _searchYt(
               '${currentSong.title} ${currentSong.artist}', limit: limit)
@@ -1972,7 +1819,6 @@ class ApiService {
     final ytResults = await earlySearchYtFuture;
     final ytRawTitlesAccepted = <String>[];
     for (final song in ytResults) {
-
       if (!RecommendationEngine.isSearchQuality(song)) continue;
 
       if (RecommendationEngine.isNonMusicContent(song)) continue;
@@ -2014,8 +1860,6 @@ class ApiService {
           AutoQueueQuery('${topMatch.album.trim()} movie all songs', weight: 3),
         ...RecommendationEngine.generateQueries(topMatch),
       ];
-      // DATA SAVER: the "related" list still appears, built from the 2
-      // best-weighted queries instead of every generated one.
       final relatedQueries = AudioPrefs.dataSaverActiveNotifier.value
           ? allRelatedQueries.take(1).toList()
           : allRelatedQueries.take(3).toList();
@@ -2205,7 +2049,6 @@ class ApiService {
               .any((a) => a.trim().toLowerCase() == artistName)) {
         tasteBoost += 5;
       }
-      // User-chosen (pinned) artist: sabse strong signal.
       if (artistName.isNotEmpty &&
           RecommendationEngine.pinnedArtists
               .any((a) => a.trim().toLowerCase() == artistName)) {
@@ -2299,13 +2142,11 @@ class ApiService {
 
     List<Song> ytQuickResults;
     final myEpoch = ++_liveSearchEpoch;
-    // Data Saver: live typing only needs the top rows; submit fetches more.
     final liveFetch = saverNow ? (limit < 12 ? limit : 12) + 4 : limit + 10;
     final ytFuture = _searchYt(q, limit: liveFetch, isStale: () => myEpoch != _liveSearchEpoch);
     try {
       ytQuickResults = await ytFuture.timeout(const Duration(seconds: 4));
     } on TimeoutException {
-
       try {
         ytQuickResults = await ytFuture.timeout(const Duration(seconds: 5));
       } catch (_) {
@@ -2364,7 +2205,6 @@ class ApiService {
     final mergedQuick = <Song>[...ytScoredQuick.map((s) => s.song)];
 
     final quickResult = mergedQuick.take(limit).toList();
-    // Never cache empty (failed / superseded) results.
     if (quickResult.isNotEmpty) _writeQuickSearchCache(quickCacheKey, quickResult);
     return quickResult;
   }
@@ -2384,7 +2224,6 @@ class ApiService {
     List<String> results = await _suggestYtMusic(q);
 
     if (results.isEmpty) {
-
       results = await _suggestSaavn(q).catchError((_) => const <String>[]);
     }
 
@@ -2404,7 +2243,6 @@ class ApiService {
       } else if (sNorm.contains(qNorm)) {
         score = 30;
       } else {
-
         final words = qNormSp.split(' ').where((w) => w.length > 2);
         var matched = 0;
         var total = 0;
@@ -2422,7 +2260,6 @@ class ApiService {
   }
 
   static Future<List<String>> _suggestSaavn(String query) async {
-
     for (final base in [_saavn, _saavnPrimary, _saavnSecondary]) {
       try {
         final url = Uri.parse(
@@ -2474,7 +2311,6 @@ class ApiService {
   }
 
   static Future<List<Song>> _searchSaavn(String query, {int limit = 20, bool allowMultiPage = true}) async {
-
     final effectiveLimit = limit > 40 ? 40 : limit;
     final pagesNeeded = allowMultiPage
         ? (limit / effectiveLimit).ceil().clamp(1, 10)
@@ -2569,13 +2405,6 @@ class ApiService {
   }
 
   static Future<List<Song>> _searchYt(String query, {int limit = 30, bool Function()? isStale}) async {
-
-    // DATA SAVER: the normal path below fires the compact worker search AND
-    // the raw InnerTube search at the same time (fastest wins) — but the
-    // loser still downloads its whole body, and the raw InnerTube one is
-    // 10-30x bigger than the worker's trimmed JSON. Under Data Saver ask the
-    // worker first and only fall back to direct InnerTube if it returns
-    // nothing. Same results, roughly half the bytes on every search/home.
     if (AudioPrefs.dataSaverActiveNotifier.value) {
       try {
         final w = await _searchYtMusic(query, limit)
@@ -2590,9 +2419,6 @@ class ApiService {
       }
     }
 
-    // Hedged: small worker JSON first; heavy raw InnerTube only if the worker
-    // is empty/failed or hasn't answered within 1.2s (was: both in parallel,
-    // loser still downloaded its whole 100-300KB body on every keystroke).
     return _hedged<Song>([
       () => _searchYtMusic(query, limit)
           .timeout(const Duration(seconds: 9), onTimeout: () => <Song>[]),
@@ -2648,22 +2474,7 @@ class ApiService {
   }
 
   static String _ytmThumbnailUrl(Map<String, dynamic>? renderer) {
-
     if (renderer == null) return '';
-    // BUGFIX ("artist album thumbnails not loading" — recheck 2026-09-14):
-    // musicResponsiveListItemRenderer (search rows, playlist rows, etc.)
-    // nests its thumbnail directly under renderer['thumbnail']. But
-    // musicTwoRowItemRenderer (used for every artist "topAlbums"/
-    // "singles"/"relatedArtists" card — see fetchArtist's collectReleaseCards)
-    // nests it one level deeper, under renderer['thumbnailRenderer']
-    // (confirmed by the already-working _parseHomeTwoRowItem above, which
-    // reads r['thumbnailRenderer']). This helper only ever checked
-    // renderer['thumbnail'], so every call site passing a raw
-    // musicTwoRowItemRenderer card (topAlbums, singles, relatedArtists)
-    // silently got an empty thumbField and returned '' — artwork always
-    // fell back to the placeholder music-note icon for those cards, even
-    // though the real thumbnail data was present in the response the
-    // whole time, just one key over.
     final thumbField = renderer['thumbnail'] is Map
         ? renderer['thumbnail']
         : renderer['thumbnailRenderer'];
@@ -2790,7 +2601,10 @@ class ApiService {
         }),
       ).timeout(timeout);
       if (resp.statusCode != 200) return null;
-      final decoded = jsonDecode(resp.body);
+      final body = resp.body;
+      final decoded = body.length > 40000
+          ? await compute(_decodeJsonBody, body)
+          : jsonDecode(body);
       return decoded is Map ? decoded.cast<String, dynamic>() : null;
     } catch (e) {
       _log('[_ytmBrowseRaw] error for "$browseId": $e');
@@ -2895,8 +2709,6 @@ class ApiService {
           duration: duration,
           source: SongSource.youtube,
           viewCount: 1000000,
-          // '' (home shelf playlists) ko channel id mat maano — warna
-          // "Go to artist" 'yt_' (khaali) id bhejta tha aur kabhi nahi khulta.
           artistChannelId: resolvedChannelId.isNotEmpty
               ? resolvedChannelId
               : (artistRuns.isNotEmpty ? artistRuns.first.channelId : null),
@@ -2963,7 +2775,6 @@ class ApiService {
         const [];
     String artworkUrl = '';
     if (thumbs.isNotEmpty) {
-
       artworkUrl = (thumbs.last['url'] ?? '').toString();
     }
 
@@ -2983,37 +2794,10 @@ class ApiService {
       .replaceAll('&lt;', '<')
       .replaceAll('&gt;', '>');
 
-  // FIX ("data saver on karne ke baad bhe app extreme MB le raha hai" —
-  // 2026-09-15): AudioPrefs.dataSaver (the app's own Data Saver toggle)
-  // only ever fed qualityOrder() — i.e. which AUDIO bitrate to stream.
-  // Every artwork/thumbnail/banner URL across the app was hardcoded to a
-  // fixed large size (=w300-h300 for shelf/list cards via
-  // _hqArtworkGeneric, =w1000-h1000 / =w1080-h1080-p for
-  // artist/album/playlist headers, and =w1440-h1440-p for artist
-  // banners) with NO regard for the toggle at all — a Data Saver user
-  // pulling a shelf of 12 sections x 10 cards each still downloaded 120+
-  // full 300x300 thumbnails, and opening a single artist page still
-  // pulled a 1440x1440 banner plus a 1080x1080 avatar, exactly as if
-  // Data Saver were off. Since images (fetched on every scroll/shelf/
-  // refresh, far more often than a single audio stream is chosen) are
-  // the actual dominant MB cost here, Data Saver needs to shrink these
-  // too, not just the audio ladder. This scales every requested
-  // dimension down by a fixed factor whenever dataSaver is on (covers
-  // both the standalone toggle and the 'DataSaver' streamQuality tier,
-  // same "either flag counts" contract qualityOrder() already uses) —
-  // still crisp enough for card-sized art on screen, just meaningfully
-  // fewer bytes over the wire.
   static int _dataSaverScaledSize(int fullSize) {
     final saverActive = AudioPrefs.dataSaverActiveNotifier.value;
     if (!saverActive) return fullSize;
-    // ~40% of the full size — well above visible-blur territory for a
-    // shelf card or list thumbnail, but a real byte reduction (roughly
-    // 1/6th the pixel count) for banners/headers that were previously
-    // forced all the way up to 1440px regardless of how small they
-    // actually render on screen.
     final scaled = (fullSize * 0.4).round();
-    // Floor so a tiny already-small request never gets scaled below
-    // something legible.
     return scaled < 96 ? 96 : scaled;
   }
 
@@ -3023,14 +2807,6 @@ class ApiService {
     return url.replaceAll(RegExp(r'=w\d+-h\d+[\w-]*$'), '=w$size-h$size');
   }
 
-  // Shared helper for the =wN-hN[-p] header/banner/top-songs artwork URLs
-  // scattered across the InnerTube parsing below — all six of those call
-  // sites previously hardcoded their own fixed size (=w1000-h1000,
-  // =w1080-h1080-p, =w1440-h1440-p) directly in a .replaceAll() call with
-  // no Data Saver awareness at all. [suffix] preserves each site's own
-  // trailing modifier (some InnerTube header URLs need the '-p' crop
-  // hint, list/top-songs thumbnails don't) so behaviour is otherwise
-  // identical to before, just at a Data-Saver-scaled size.
   static String _scaledArtworkUrl(String rawUrl, int fullSize, {String suffix = ''}) {
     if (rawUrl.isEmpty) return rawUrl;
     final size = _dataSaverScaledSize(fullSize);
@@ -3330,13 +3106,6 @@ class ApiService {
     }
   }
 
-  // Artwork for ONE mood/genre tile. Previously this reused
-  // _searchAsHomeShelf, whose strict "quality" filters (song-count marker,
-  // low-quality title check, mix-id skip) rejected most results, and ~40
-  // searches fired at once so many timed out -> tiles ended up with no
-  // image and that empty result was then cached for 6h. This version is
-  // relaxed (first real thumbnail wins), retries once, and falls back to
-  // a songs search.
   static String _firstThumbFromSearch(Map<String, dynamic> decoded) {
     for (final item in _findRenderers(decoded, 'musicResponsiveListItemRenderer')) {
       final thumbs = (item['thumbnail']?['musicThumbnailRenderer']?['thumbnail']
@@ -3367,7 +3136,6 @@ class ApiService {
     return '';
   }
 
-  // Copies already-known artwork (by title) from [old] onto [fresh].
   static Future<List<MoodGenreSection>> topupMoodGenreArtworkFrom(
     List<MoodGenreSection> fresh,
     List<MoodGenreSection> old,
@@ -3400,7 +3168,6 @@ class ApiService {
   static Future<List<MoodGenreSection>> _topupMoodGenreArtwork(
     List<MoodGenreSection> sections,
   ) async {
-    // Only titles that still have no artwork.
     final missingTitles = <String>{};
     final haveArt = <String, String>{};
     for (final section in sections) {
@@ -3416,7 +3183,6 @@ class ApiService {
     missingTitles.removeWhere(haveArt.containsKey);
     if (missingTitles.isEmpty) return sections;
 
-    // Throttled: small batches so YT Music doesn't drop/timeout requests.
     final titleList = missingTitles.toList();
     final artworkByTitle = <String, String>{...haveArt};
     const batchSize = 5;
@@ -3442,10 +3208,6 @@ class ApiService {
         .toList();
   }
 
-  // Collects every shelf-like renderer in DOCUMENT ORDER. Language/genre
-  // pages (Tamil, Punjabi, ...) mix carousels of playlists/albums/artists
-  // with plain song-list shelves; reading only musicCarouselShelfRenderer
-  // silently dropped every song list, leaving those categories empty.
   static void _collectShelfRenderers(
       dynamic node, List<MapEntry<String, Map<String, dynamic>>> out) {
     if (node is Map) {
@@ -3467,9 +3229,6 @@ class ApiService {
     }
   }
 
-  // A carousel card that is a playable song/video (watchEndpoint) instead
-  // of a browse page — _parseHomeTwoRowItem rejects these (no
-  // browseEndpoint), which is the other reason sections went missing.
   static Song? _parseTwoRowSong(Map<String, dynamic> item) {
     final r = item['musicTwoRowItemRenderer'];
     if (r is! Map) return null;
@@ -3684,10 +3443,6 @@ class ApiService {
       final id = await resolveArtistId(artistName);
       if (id == null) return null;
 
-      // LIGHTWEIGHT: sirf artist browse page (albums + related chip). Pehle
-      // fetchArtist() chalta tha jo songs kam hone pe extra YT-uploads fetch
-      // + 45s search top-up bhi karta tha — Similar-to row ko sirf albums
-      // chahiye, low-end device pe woh sab bekar ka data/CPU tha.
       Artist? artist;
       if (id.startsWith('yt_')) {
         artist = await _fetchArtistFromYtMusicBrowse(id.substring(3), songCount: 0)
@@ -3712,18 +3467,6 @@ class ApiService {
     }
   }
 
-  // "Similar to <artist>" = TOP-GRADE albums only.
-  // YT Music artist page ka Albums shelf pehle se popularity-ordered hota
-  // hai (sabse zyada suni gayi pehle) — wahi asli quality signal hai, isliye
-  // original position ko sabse zyada weight milta hai. Uske upar:
-  //  * regional-script / karaoke / remix / bhajan / cover / mashup /
-  //    compilation-junk hata do
-  //  * duplicate versions (Deluxe/Remastered/Original Motion Picture
-  //    Soundtrack, same name) collapse -> ek hi card
-  //  * film-soundtrack / hits / classic words + 1990-2015 era ko boost
-  //  * 2024+ random fresh drops ko penalty
-  //  * refreshKey se top-pool ke andar rotate, taaki har baar wahi same
-  //    albums na aayein (par kabhi junk nahi)
   static final RegExp _nonLatinScript = RegExp(
       r'[\u0980-\u09FF\u0B80-\u0BFF\u0C00-\u0C7F\u0A80-\u0AFF\u0A00-\u0A7F\u0C80-\u0CFF\u0D00-\u0D7F\u0B00-\u0B7F]');
   static final RegExp _junkAlbumWords = RegExp(
@@ -3758,8 +3501,8 @@ class ApiService {
       final n = a.name.trim();
       if (n.isEmpty || n.length > 60) continue;
       if (a.type == 'single') continue;
-      if (a.artworkUrl.trim().isEmpty) continue;            // bina cover wale skip
-      if (RegExp(r'^[\d\s\W]+$').hasMatch(n)) continue;       // "2020", "###" jaise
+      if (a.artworkUrl.trim().isEmpty) continue;
+      if (RegExp(r'^[\d\s\W]+$').hasMatch(n)) continue;
       if (RegExp(r'\b(vol(ume)?\.?\s*\d+|part\s*\d+|ep|mixtape|compilation|various)\b',
               caseSensitive: false).hasMatch(n) &&
           !_goodAlbumWords.hasMatch(n)) {
@@ -3771,7 +3514,6 @@ class ApiService {
       final dk = _albumDedupKey(n);
       if (dk.isEmpty || !seen.add(dk)) continue;
 
-      // Shelf position = popularity (YT already sorted). Rank 0 => 60 pts.
       var score = (60.0 - i * 2.5).clamp(0.0, 60.0);
       if (_goodAlbumWords.hasMatch(n)) score += 25;
       final y = int.tryParse(a.year ?? '') ?? 0;
@@ -3792,10 +3534,9 @@ class ApiService {
     final ranked = scored.map((e) => e.$1).toList();
     if (ranked.length <= keep) return ranked;
 
-    // Top-pool (best 2x) ke andar hi rotate — quality gir'ti nahi, variety milti hai.
     final poolSize = math.min(ranked.length, keep * 2);
     final pool = ranked.take(poolSize).toList();
-    final anchor = pool.take(3).toList();       // top-3 hamesha stable
+    final anchor = pool.take(3).toList();
     final rest = pool.skip(3).toList();
     if (rest.isEmpty) return anchor;
     final start = rotate.abs() % rest.length;
@@ -3849,11 +3590,6 @@ class ApiService {
             .where((t) => t != ' • ' && t.trim().isNotEmpty)
             .lastWhere((_) => true, orElse: () => ''));
 
-        // FIX ("Similar to" shelf showing a random creator channel /
-        // thin devotional-album card instead of a real curated playlist):
-        // reject channel-style results (subtitle says "N subscribers")
-        // and thin one-off albums/compilations (no song-count marker, or
-        // below the minimum) before they ever reach the shelf.
         if (RecommendationEngine.isLowQualityPlaylistShelfItem(subtitle)) continue;
 
         items.add(HomeShelfItem(
@@ -3882,8 +3618,6 @@ class ApiService {
             'weekly top videos hindi',
           ]
         : ['weekly top videos ${UserRegion.name}'];
-    // Pehle har query se sirf 1 card liya jata tha (aksar poore shelf me
-    // 1 hi dikhta tha). Ab har query ke real results lo, mix karke unique.
     final perQuery = await Future.wait(
       queries.map((q) => _searchAsHomeShelf(q, 'Featured playlists for you', take: 5)),
     );
@@ -3949,9 +3683,6 @@ class ApiService {
   }
 
   static Future<List<HomeShelf>> fetchSimilarToArtistShelves({int? seed, int artistCount = 3}) async {
-    // Affinity list me credit strings aate hain ("Sonu Nigam, Alka Yagnik,
-    // Sanjivani, ...") — poori string se search karne par 1 hi card bachta
-    // tha. Primary artist nikal ke dedupe karo, phir real playlists lao.
     final raw = RecommendationEngine.rotatingAffinityArtists(
         count: artistCount + 3, seed: seed);
     if (raw.isEmpty) return const [];
@@ -3972,8 +3703,6 @@ class ApiService {
       final title = 'Similar to $a';
       final first = await _searchAsHomeShelf('$a mix playlist', title, take: 10);
       var items = <HomeShelfItem>[...?first?.items];
-      // Data Saver: dusra search sirf tab jab shelf (min 3 cards) warna
-      // gayab ho jati; normal me 4 se kam par.
       if (items.length < (saver ? 3 : 4)) {
         final second = await _searchAsHomeShelf('$a playlist', title, take: 10);
         final ids = items.map((e) => e.browseId).toSet();
@@ -3987,10 +3716,6 @@ class ApiService {
     return perArtist.whereType<HomeShelf>().toList();
   }
 
-  // Shared in-flight request for the COLD (seed 0) home shelves: main()
-  // starts this during splash/onboarding; HomeScreen's own cold load joins
-  // the same request instead of firing a second identical one. Pull-to-
-  // refresh (non-zero seed) always does its own real fetch.
   static Future<List<HomeShelf>>? _homeShelvesInflight;
 
   static Future<List<HomeShelf>> fetchHomeShelvesForDisplay({int? refreshSeed}) {
@@ -4003,12 +3728,6 @@ class ApiService {
   }
 
   static Future<List<HomeShelf>> _fetchHomeShelvesForDisplayImpl({int? refreshSeed}) async {
-    // LOW-END / NEW-USER FAST LOAD: pehle har cold start pe ~10 network calls
-    // ek saath (real + similar + featured + 6 seeded) — weak phone/net pe
-    // heavy aur slow. Ab pehle sirf `real` (+ personalized similar) aata hai;
-    // seeded/featured fillers tabhi fetch hote hain jab real+similar ne 7
-    // shelves nahi bhare, aur tab bhi sirf utne jitne kam pade (rotating,
-    // capped) — extra calls skip.
     final realFuture = fetchRealHomeShelves();
     final similarFuture = fetchSimilarToArtistShelves(seed: refreshSeed);
     final real = await realFuture;
@@ -4025,9 +3744,6 @@ class ApiService {
       final need = maxShelvesLocal - have;
       final rot = (refreshSeed ?? 0).abs();
       await UserRegion.load();
-      // COUNTRY-AWARE fillers: user ki chuni country ke local shelves
-      // (US -> Hip-Hop/Country, KR -> K-Pop, NG -> Afrobeats ...), sirf India
-      // ke Bollywood shelves har country ko nahi.
       final regional = UserRegion.seedShelves();
       final pool = <({String label, String query, String? strapline})>[
         for (final r in regional)
@@ -4048,30 +3764,6 @@ class ApiService {
       seeded = results.skip(idx).whereType<HomeShelf>().toList();
     }
 
-    // FIX ("home page pe ek hi category kitne baar aa raha hai" — same
-    // shelf, e.g. "Dancing on your own", showing up 2-3 times in a row):
-    // `real` (raw FEmusic_home parse), `similar` (per-affinity-artist
-    // shelves), `featured`, and `seeded` (the fixed _kSeedHomeShelfQueries
-    // list, which itself includes a literal "Dancing on your own" entry)
-    // were concatenated with NO title-level dedup at all. Two ways that
-    // produced visible repeats: (1) FEmusic_home's own raw payload can
-    // legitimately include the same shelf title more than once across
-    // different sections of the response — fetchRealHomeShelves() just
-    // parses every section it finds, so both copies survived into `real`
-    // unchanged; (2) `seeded`'s fixed "Dancing on your own" entry could
-    // land right alongside a same-titled shelf already pulled in via
-    // `real` or `similar` for the same session. Either way, nothing
-    // downstream ever checked one shelf's title against another's before
-    // this list got capped and handed to the UI, so a genuine duplicate
-    // rode all the way to the screen. Dedup by normalized title here,
-    // first-seen-wins (in `real -> similar -> featured -> seeded`
-    // priority order — the real personalized shelves should never lose
-    // their slot to a generic fixed-query one with the same name), before
-    // the maxShelves cap so a duplicate never displaces a genuinely
-    // different shelf that would otherwise have made the cut.
-    // Ek-do card wali patli shelves YT Music jaisi nahi lagti — hata do
-    // (par agar sab hat jaayein to kuch bhi na dikhne se behtar hai wapas
-    // rakh lo).
     bool shelfOk(HomeShelf sh) =>
         sh.isList ? sh.songs.length >= 3 : sh.items.length >= 3;
     var combined = [
@@ -4091,8 +3783,6 @@ class ApiService {
       deduped.add(shelf);
     }
 
-    // 7 shelves x 12 cards (Data Saver me bhi same — fetch ke baad trim se
-    // data bachta nahi, bas content kam dikhta).
     const maxShelves = 7;
     const maxItemsPerShelf = 12;
     return deduped.take(maxShelves).map((sh) {
@@ -4240,15 +3930,9 @@ class ApiService {
     );
   }
 
-  // Shelf titles YT Music's own "Related" browse page groups results
-  // under. Only "You might also like" (sometimes plain "Related" on
-  // some locales) is the real recommendation signal — "Other
-  // performances" / "Live performances" are covers, remixes, and
-  // duplicate uploads of the SAME song, which is noise for an Up Next
-  // queue (it just plays variants of what you're already hearing).
   static bool _isRealRecommendationShelf(String shelfTitle) {
     final t = shelfTitle.trim().toLowerCase();
-    if (t.isEmpty) return true; // some locales omit the header — don't drop it
+    if (t.isEmpty) return true;
     return t == 'you might also like' || t == 'related';
   }
 
@@ -4296,28 +3980,6 @@ class ApiService {
             album: '',
             artworkUrl: it.artworkUrl,
             source: SongSource.youtube,
-            // FIX ("Up Next sirf 12-20 songs pe atak jaata hai, category-
-            // wise poore related songs nahi aate"): this "Related"/"You
-            // might also like" browse endpoint is YT Music's OWN curated
-            // recommendation graph for this exact video — the same trust
-            // tier as the sentinel used for _searchYtMusic's curated
-            // catalog results (see viewCount: 1000000 elsewhere in this
-            // file) — but its response format never carries a real view
-            // count or duration at all (that data simply isn't part of
-            // this endpoint's payload, unlike search results). Leaving
-            // viewCount null here meant EVERY song from this hop failed
-            // isPremiumQuality's "no view count = don't trust it" check
-            // outright, so addToPool silently dropped the entire related
-            // graph — hop1 and hop2 together contributed ~0 songs to the
-            // pool, and getAutoQueue fell through to its keyword-search
-            // safety net, which only ever returns a small, narrow batch
-            // for one song's title+artist (exactly the 12-20 ceiling
-            // being reported) instead of the broad, fast related-graph
-            // fan-out this function exists to provide. Same sentinel used
-            // elsewhere marks this as trusted-by-construction so the real
-            // quality bar (isNonMusicContent, isLowQualityUpload, variant/
-            // dedup checks) still applies — only the not-available view/
-            // duration signal is skipped.
             viewCount: 1000000,
           ));
         }
@@ -4455,7 +4117,6 @@ class ApiService {
     required String? filterParam,
     required String? continuationToken,
   }) async {
-
     final uri = continuationToken == null
         ? Uri.parse(
             'https://music.youtube.com/youtubei/v1/search?key=$_ytmApiKey&prettyPrint=false',
@@ -4536,7 +4197,6 @@ class ApiService {
       }
 
       for (final shelf in shelves) {
-
         final continuations = shelf?['continuations'] as List? ?? const [];
         if (continuations.isNotEmpty) {
           final token = continuations
@@ -4651,7 +4311,6 @@ class ApiService {
   }
 
   static Future<List<Song>> _searchYtMusic(String query, int limit) async {
-
     if (_YtSearchHealth.isLikelyDown) return [];
     try {
       final uri = Uri.parse(
@@ -4727,9 +4386,6 @@ class ApiService {
     final trimmed = input.trim();
     if (trimmed.isEmpty) return null;
 
-    // Real YouTube playlist IDs are only letters/digits/_/- (PL..., OLAK5uy_...,
-    // UU..., RD... etc). Anything else is not an ID, so reject it here instead
-    // of sending junk text to YouTube and showing a confusing "not found".
     final idShape = RegExp(r'^(?:LM|[A-Za-z0-9_-]{10,64})$');
 
     if (!trimmed.contains('://') && !trimmed.contains('.')) {
@@ -4740,7 +4396,6 @@ class ApiService {
       final listParam = uri.queryParameters['list']?.trim();
       if (listParam != null && idShape.hasMatch(listParam)) return listParam;
     } catch (_) {
-
     }
     return null;
   }
@@ -4847,7 +4502,6 @@ class ApiService {
             final it = entry.item;
             return () async {
               try {
-
                 final songs = <Song>[];
                 final seenIds = <String>{};
                 await _fetchFullTopSongsPlaylist(
@@ -4883,7 +4537,6 @@ class ApiService {
         }
 
       } catch (_) {
-
       }
     }
 
@@ -4906,7 +4559,6 @@ class ApiService {
     final isPodcastMood = mood == 'podcasts';
 
     final cardFutures = subQueries.take(remaining).map((sub) async {
-
       if (!isPodcastMood) {
         final real = await _realPlaylistCard(sub, mood, exclude, songsPerCard);
         if (real != null) return real;
@@ -4950,7 +4602,6 @@ class ApiService {
     int limit = 8,
     String? mood,
   }) async {
-
     final realCards = <HomeAlbumCard>[];
     if (mood == null) {
       try {
@@ -4976,7 +4627,6 @@ class ApiService {
             .take(limit));
 
       } catch (_) {
-
       }
 
       if (realCards.length < limit) {
@@ -4994,7 +4644,6 @@ class ApiService {
                 artworkUrl: it.artworkUrl,
               )));
         } catch (_) {
-
         }
       }
     }
@@ -5037,7 +4686,6 @@ class ApiService {
 
       for (final candidate in candidates) {
         try {
-
           final songs = <Song>[];
           final seenIds = <String>{};
           await _fetchFullTopSongsPlaylist(
@@ -5068,7 +4716,6 @@ class ApiService {
             songs: finalSongs,
           );
         } catch (_) {
-
           continue;
         }
       }
@@ -5085,7 +4732,6 @@ class ApiService {
     int take = 5,
     bool filterJunk = true,
   }) async {
-
     try {
       final decoded = await _ytmSearchRaw(query, params: _ytmPlaylistsFilterParam,
           timeout: const Duration(seconds: 6));
@@ -5109,8 +4755,6 @@ class ApiService {
 
         final title = _flexColumnText(item, 0);
         if (title.isEmpty) continue;
-        // Junk filter sirf home shelves ke liye — user ne khud search kiya
-        // to uska exact result dikhna chahiye.
         if (filterJunk && RecommendationEngine.isLowQualityUpload(title)) continue;
 
         final thumbs = (item['thumbnail']?['musicThumbnailRenderer']?['thumbnail']
@@ -5125,9 +4769,6 @@ class ApiService {
                         ?['text']?['runs'] as List?) ??
                 const [])
             : const [];
-        // Subtitle: "Playlist • Author • 2.3M views / 50 songs" — last run
-        // aksar views/songs count hota hai, author nahi. Count wale runs
-        // hata ke last bacha hua text author hai.
         final subtitleTexts = subtitleRuns
             .map((r) => (r is Map ? (r['text'] ?? '') : '').toString().trim())
             .where((t) => t.isNotEmpty && t != '•')
@@ -5152,7 +4793,6 @@ class ApiService {
       }
       return candidates;
     } catch (_) {
-
       return const [];
     }
   }
@@ -5163,8 +4803,6 @@ class ApiService {
   }) async {
     final q = query.trim();
     if (q.isEmpty) return const [];
-    // Pehle exact query, phir variants — taaki kuch na kuch hamesha mile
-    // (transient network miss ya bahut specific query pe bhi).
     final saver = AudioPrefs.dataSaverActiveNotifier.value;
     final attempts = <String>[q, '$q playlist', '$q songs', '$q mix'];
     final seen = <String>{};
@@ -5176,7 +4814,6 @@ class ApiService {
       try {
         var c = await _searchRealPlaylists(a, take: take, filterJunk: false);
         if (c.isEmpty && retry) {
-          // ek quick retry same query pe (network blip)
           c = await _searchRealPlaylists(a, take: take, filterJunk: false);
         }
         return c;
@@ -5197,13 +4834,9 @@ class ApiService {
       }
     }
 
-    // Exact query pehle (result order wahi rahega). Kam results aaye tabhi
-    // baaki variants EK SAATH (parallel) chalte hain — serial wait nahi.
     collect(await attempt(attempts.first, retry: true));
     if (out.length < enough && attempts.length > 1) {
       if (saver) {
-        // Data Saver: ek ek karke, enough results milte hi ruk jao (kam
-        // network, same content). Normal: sab variants parallel (fast).
         for (final a in attempts.skip(1)) {
           collect(await attempt(a));
           if (out.length >= enough) break;
@@ -5476,7 +5109,6 @@ class ApiService {
     ];
 
     try {
-
       final searchResponses = await Future.wait(seeds.map(
         (q) => _ytmSearchRaw(q, params: _ytmSongsFilterParam,
             timeout: const Duration(seconds: 4)),
@@ -5555,7 +5187,6 @@ class ApiService {
     required String debugTag,
   }) async {
     try {
-
       final searchResponses = await Future.wait(seeds.map(
         (q) => _ytmSearchRaw(q, params: _ytmSongsFilterParam,
             timeout: const Duration(seconds: 4)),
@@ -5646,10 +5277,7 @@ class ApiService {
     Object? lastError;
     List<Song> best = const [];
     Timer? grace;
-    // InnerTube path page-by-page yahan likhta hai — grace khatam hone par
-    // jo bhi ab tak aa chuka wo bhi count hota hai (partial result na khoye).
     final innerTubeSink = <Song>[];
-    // InnerTube crawl poora (aakhri page tak) hua ya beech me ruk gaya?
     var innerTubeComplete = false;
 
     void finish() {
@@ -5672,9 +5300,6 @@ class ApiService {
       }
       if (best.isEmpty) return;
       _log('[fetchYtPlaylistSongs] first: $source (${songs.length})');
-      // InnerTube ka jawab tab "complete" hai jab uska crawl aakhri page tak
-      // gaya (innerTubeComplete) — turant dikha do. Adhoora ho ya baaki sources
-      // ka pehla jawab ho to 4s grace do taaki poori list mile.
       if ((source == 'innertube' && songs.isNotEmpty && innerTubeComplete) ||
           best.length >= limit) {
         finish();
@@ -5727,8 +5352,6 @@ class ApiService {
     if (result.isEmpty) {
       final err = lastError;
       if (err is YtPlaylistImportException) throw err;
-      // Both sources died on the connection itself (offline / DNS / TLS /
-      // timeout) — say "network", not "playlist not found".
       if (err is SocketException ||
           err is HandshakeException ||
           err is TimeoutException ||
@@ -5740,8 +5363,6 @@ class ApiService {
     return _dedupAndFilterPlaylistSongs(result);
   }
 
-  /// The playlist's own title (for naming an imported playlist). Never
-  /// throws — null means "couldn't tell", caller falls back to a default name.
   static Future<String?> fetchYtPlaylistTitle(String playlistUrlOrId) async {
     final id = _extractYtPlaylistId(playlistUrlOrId);
     if (id == null || id.isEmpty || _isYtMixPlaylistId(id)) return null;
@@ -5761,12 +5382,9 @@ class ApiService {
     }
   }
 
-  /// Community-playlist stream ka cache (sirf POORI crawl hui playlists).
   static final Map<String, ({DateTime at, List<Song> songs})> _playlistCache = {};
   static const Duration _playlistCacheTtl = Duration(minutes: 10);
 
-  /// Ek baar fail ho to 700ms baad dobara try. Phir bhi khaali ho to exception
-  /// — taaki UI retry dikha sake.
   static Future<List<Song>> _fetchCommunityPlaylistUncached(
       String playlistId, int limit) async {
     Object? lastErr;
@@ -5776,7 +5394,6 @@ class ApiService {
         if (songs.isNotEmpty) return songs;
       } catch (e) {
         lastErr = e;
-        // Mix/invalid link pe retry ka fayda nahi.
         if (e is YtPlaylistImportException &&
             (e.reason == YtPlaylistImportError.isMix ||
                 e.reason == YtPlaylistImportError.invalidLink)) {
@@ -5791,10 +5408,6 @@ class ApiService {
     throw const YtPlaylistImportException(YtPlaylistImportError.notFound);
   }
 
-  /// Ek page ke JSON ko EK hi pass me scan karta hai (songs + continuation
-  /// token) aur matched row ke andar ghusta nahi (rows ke menu/thumbnail
-  /// subtree bade hote hain). Pehle 3 baar poora tree walk hota tha —
-  /// low-end phone pe wahi jank tha.
   static void _scanPlaylistPage(
       dynamic node, List<Map<String, dynamic>> items, List<String> tokens) {
     if (node is Map) {
@@ -5838,15 +5451,12 @@ class ApiService {
         ? artistRuns.map((a) => a.name).join(', ')
         : _flexColumnText(item, 1);
     if (artist.isEmpty) artist = 'Unknown';
-    // Album column kabhi kabhi views/plays count hota hai — album mat maano,
-    // warna "Go to album" galat cheez dhoondta hai.
     var albumText = _flexColumnText(item, 2);
     if (RegExp(r'\d.*(view|play|song|track|video)', caseSensitive: false)
         .hasMatch(albumText)) {
       albumText = '';
     }
 
-    // Playlist rows me duration fixedColumns me hota hai.
     int? duration;
     final fixed = (item['fixedColumns'] as List?) ?? const [];
     if (fixed.isNotEmpty) {
@@ -5871,22 +5481,14 @@ class ApiService {
       duration: duration,
       source: SongSource.youtube,
       viewCount: null,
-      // Primary artist ki real channel id — "Go to artist" turant khulta hai.
       artistChannelId: artistRuns.isNotEmpty ? artistRuns.first.channelId : null,
     );
   }
 
-  /// YT Music InnerTube se playlist PAGE-BY-PAGE (VL<id> browse + continuation,
-  /// ~100 songs/page). Har page ka batch turant yield hota hai — UI ko
-  /// pehle ~100 songs ~1s me mil jaate hain, baaki peeche se judte rehte
-  /// hain. Consumer cancel kare to agla page fetch hi nahi hota.
   static Stream<List<Song>> _streamYtPlaylistInnerTube(
       String playlistId, int limit,
       {bool Function()? cancelled,
       void Function(bool complete)? onEnd}) async* {
-    // complete == true sirf tab jab playlist sach me aakhir tak (ya limit /
-    // hop-cap tak) pahunchi. Beech me continuation fail ho to false — taaki
-    // adhoori list ko poori maan ke cache / finish na kiya jaaye.
     var complete = false;
     try {
       final browseId =
@@ -5899,7 +5501,7 @@ class ApiService {
       final seen = <String>{};
       var total = 0;
       var hops = 0;
-      const maxHops = 40; // 40 pages x ~100 = 4000 songs tak
+      const maxHops = 40;
       while (data != null &&
           total < limit &&
           hops <= maxHops &&
@@ -5926,7 +5528,6 @@ class ApiService {
         }
 
         hops++;
-        // Frame ko saans lene do — parse + setState ek hi frame me na dabe.
         await Future<void>.delayed(Duration.zero);
         var next = await _ytmBrowseContinuationRaw(tokens.first,
             timeout: const Duration(seconds: 8));
@@ -5940,7 +5541,6 @@ class ApiService {
     }
   }
 
-  /// Race ke liye (fetchYtPlaylistSongs): stream ko ek list me jama karta hai.
   static Future<List<Song>?> _fetchYtPlaylistViaInnerTube(
       String playlistId, int limit,
       {List<Song>? sink,
@@ -5959,9 +5559,6 @@ class ApiService {
     }
   }
 
-  /// Community playlist ke liye progressive stream: cache ho to ek hi batch
-  /// me instant; warna pehla page ~1s me, baaki peeche se. InnerTube khaali
-  /// aaye to purana 3-source race fallback.
   static Stream<List<Song>> streamCommunityPlaylistSongs(String playlistId,
       {int limit = 1000}) async* {
     final cached = _playlistCache[playlistId];
@@ -5986,8 +5583,6 @@ class ApiService {
       yield batch;
     }
     if (all.isEmpty || !complete) {
-      // InnerTube khaali ya beech me ruka — purana multi-source race se
-      // baaki songs lao (jo pehle aa chuke wo dobara yield nahi hote).
       try {
         final songs = await _fetchCommunityPlaylistUncached(id, limit);
         final have = all.map((s) => s.id).toSet();
@@ -6000,7 +5595,6 @@ class ApiService {
         if (all.isEmpty) rethrow;
       }
     }
-    // Sirf poori crawl hui playlist cache hoti hai — adhoori nahi.
     if (complete && all.isNotEmpty) {
       _playlistCache.remove(playlistId);
       _playlistCache[playlistId] = (at: DateTime.now(), songs: all);
@@ -6018,7 +5612,6 @@ class ApiService {
       );
       final resp = await http.get(uri).timeout(const Duration(seconds: 10));
       if (resp.statusCode == 404) {
-
         throw const YtPlaylistImportException(YtPlaylistImportError.empty);
       }
       if (resp.statusCode != 200) {
@@ -6058,24 +5651,18 @@ class ApiService {
     for (final s in songs) {
       if (s.id.isEmpty || s.title.isEmpty) continue;
       if (!seenIds.add(s.id)) continue;
-      // User-curated playlist: songs wahi dikhao jo playlist me hain.
-      // Sirf deleted/private placeholders aur exact duplicate hatao.
       final tl = s.title.trim().toLowerCase();
       if (tl == 'deleted video' || tl == 'private video') continue;
       result.add(s);
     }
 
     if (result.isEmpty) {
-
       throw const YtPlaylistImportException(YtPlaylistImportError.empty);
     }
     return result;
   }
 
   static Future<SongSection?> _ytSectionV1(String query, String label) async {
-
-    // DATA SAVER: one query, no deep multi-page crawl (that alone is up to
-    // 6 YouTube result pages). The shelf still shows, just from fewer results.
     final saver = AudioPrefs.dataSaverActiveNotifier.value;
     final variants = saver
         ? <String>{query}
@@ -6141,8 +5728,6 @@ class ApiService {
   }
 
   static String _bestThumbnail(dynamic t) {
-    // Data Saver: mqdefault (320x180, ~10KB) before hqdefault (480x360,
-    // ~30KB). Same image, still fetched — only the size changes.
     final order = AudioPrefs.dataSaverActiveNotifier.value
         ? [t.mediumResUrl, t.highResUrl, t.lowResUrl]
         : [t.highResUrl, t.mediumResUrl, t.lowResUrl];
@@ -6157,25 +5742,14 @@ class ApiService {
     return _scaledArtworkUrl(url, 544);
   }
 
-  /// List-row thumbnail for SEARCH results. Rows render ~52dp (~156px on a 3x
-  /// phone) so 544px was ~5x more pixels than ever shown. 226px (144 under
-  /// Data Saver) + explicit quality 80 keeps rows sharp at a fraction of the
-  /// bytes. Full player upgrades to 600px on demand
-  /// (AurumArtwork.upgradeForFullPlayer).
   static String _searchThumb(String url) {
     if (url.isEmpty) return url;
     final saver = AudioPrefs.dataSaverActiveNotifier.value;
-    // 128px (not 96): song.artworkUrl also feeds the lock-screen/notification
-    // art, so it must stay legible there. Full player rescues it to 300px.
     final size = saver ? 128 : 226;
     final q = saver ? 60 : 80;
     return url.replaceAll(RegExp(r'=w\d+-h\d+.*$'), '=w$size-h$size-l$q-rj');
   }
 
-  /// Data Saver ONLY: shrink artist/album search-result thumbnails to what
-  /// their tiles really show (artist tile 56dp, album card 130dp). Normal
-  /// mode is left exactly as it was (500px) because artist/album screens
-  /// can reuse these URLs for big headers.
   static String _saverListThumb(String url, int saverSize) {
     if (url.isEmpty || !AudioPrefs.dataSaverActiveNotifier.value) return url;
     return url.replaceAllMapped(
@@ -6193,7 +5767,6 @@ class ApiService {
         final head = await _client.head(uri).timeout(timeout);
         if (head.statusCode >= 200 && head.statusCode < 400) return true;
         if (head.statusCode == 405 || head.statusCode == 403) {
-
           final ranged = await _client
               .get(uri, headers: {'Range': 'bytes=0-255'})
               .timeout(timeout);
@@ -6265,7 +5838,6 @@ class ApiService {
             attempts: 2,
           );
           if (url != null && !await _isUrlAlive(url)) {
-
             _log('[resolve] Saavn URL for "${song.title}" failed liveness check — one bounded retry before YT');
             url = await () async {
               final retryUrl = await _saavnStreamById(song.id, title: song.title, artist: song.artist);
@@ -6472,7 +6044,6 @@ class ApiService {
     String artist = '',
     List<String>? qualityOrder,
   }) async {
-
     Future<String?> tryNodeHostById(String host) async {
       try {
         final url = Uri.parse('$host/api/songs/$songId');
@@ -6572,7 +6143,6 @@ class ApiService {
   }
 
   static String? _onrenderStreamUrl(Map<String, dynamic> j, {List<String>? qualityOrder}) {
-
     if (qualityOrder != null) {
       final viaLadder = _extractSaavnStreamUrl(j, qualityOrder: qualityOrder);
       if (viaLadder != null) return viaLadder;
@@ -6661,7 +6231,6 @@ class ApiService {
   }
 
   static void _writeStreamCache(String key, String url) {
-
     _streamCache.set(key, url);
   }
 
@@ -6709,7 +6278,6 @@ class ApiService {
   }
 
   static void prefetchQueue(List<Song> upcoming, {int count = 5}) {
-
     for (final op in _prefetchQueue) op.cancel();
     _prefetchQueue.clear();
 
@@ -6724,7 +6292,6 @@ class ApiService {
       final delay = Duration(milliseconds: 300 + (i * 400));
       final op = CancelableOperation.fromFuture(
         Future.delayed(delay, () async {
-
           final cacheKey = '${song.source.name}:${song.id}';
           if (_streamCache.get(cacheKey) != null) {
             _log('[prefetch] Already cached: "${song.title}"');
@@ -6756,12 +6323,6 @@ class ApiService {
   static const int _maxPrewarmConcurrency = 2;
   static final List<Song> _prewarmQueue = [];
 
-  /// [essential] = true only for the queue's immediate next song
-  /// (PlayerProvider._prewarmUpcoming). Under Data Saver every other
-  /// speculative prewarm (Home cards, song tiles, history/favorites warm-up
-  /// at cold start) is skipped: each one is a real network round-trip for a
-  /// song the user may never play. The tap-to-play path still resolves on
-  /// demand, so playback is unaffected — only the first tap is slightly slower.
   static void prewarmYtStream(Song song, {bool essential = false}) {
     if (song.source != SongSource.youtube) return;
     if (song.id.isEmpty) return;
@@ -6815,7 +6376,6 @@ class ApiService {
       if (singers.isNotEmpty) {
         artist = singers.join(', ');
       } else {
-
         artist = primaryList
             .map((a) => (a['name'] ?? '').toString())
             .where((s) => s.isNotEmpty)
@@ -6855,7 +6415,6 @@ class ApiService {
   }
 
   static Future<List<ArtistSimple>> fetchHomeArtists() async {
-
     const pool = [
 
       _ArtistEntry('arijit singh',      'Arijit Singh'),
@@ -6915,7 +6474,6 @@ class ApiService {
     final picked = deduped.take(20).toList();
 
     final results = await Future.wait(picked.map((a) async {
-
       try {
         final path = '/api/search/artists?query=${Uri.encodeQueryComponent(a.query)}&limit=1';
         for (final hosts in [_saavnNodeHosts, _saavnFlaskHosts]) {
@@ -6947,7 +6505,6 @@ class ApiService {
   }
 
   static Future<List<ArtistSimple>> fetchHomeArtistsCombined() async {
-
     unawaited(fetchHomeArtists().catchError((_) => <ArtistSimple>[]));
 
     final ytArtists = await fetchYtMusicHomeArtists(limit: 40);
@@ -6961,9 +6518,6 @@ class ApiService {
     return merged;
   }
 
-  // Shared in-flight request: main() prefetches the artist strip during the
-  // splash/onboarding; HomeScreen's own call joins it instead of firing a
-  // second identical network round-trip.
   static Future<List<ArtistSimple>>? _homeArtistsInflight;
 
   static Future<List<ArtistSimple>> _fetchHomeArtistsOnce() async {
@@ -7004,8 +6558,6 @@ class ApiService {
     return out;
   }
 
-  // Picks the result whose name equals the requested artist (same-name/
-  // similar-name artists are common); falls back to the top hit like before.
   static String? _pickArtistId(List<ArtistSimple> list, String name) {
     if (list.isEmpty) return null;
     String key(String v) => v.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\u0900-\u097f]'), '');
@@ -7087,10 +6639,6 @@ class ApiService {
     ], stagger: const Duration(milliseconds: 1500));
   }
 
-  // ── Tiny result memo: TTL cache + in-flight dedupe ─────────────────────
-  // Same query typed again / backspaced / submitted while the live fetch is
-  // still running => zero extra network. Empty results are never cached
-  // (usually a transient failure) so a retry can still succeed.
   static final Map<String, _MemoEntry> _memo = {};
   static final Map<String, Future<List<dynamic>>> _memoInFlight = {};
 
@@ -7118,9 +6666,6 @@ class ApiService {
     return f.then((v) => List<T>.from(v));
   }
 
-  /// Hedged request: start attempt #1 now; start the next only if the previous
-  /// finished empty/failed OR [stagger] passed with no answer. Fast path = 1
-  /// request / 1 body downloaded instead of N parallel ones.
   static Future<List<T>> _hedged<T>(
     List<Future<List<T>> Function()> attempts, {
     Duration stagger = const Duration(milliseconds: 1200),
@@ -7132,8 +6677,6 @@ class ApiService {
     Timer? timer;
     void startNext() {
       if (done.isCompleted || started >= attempts.length) return;
-      // Superseded by a newer keystroke: don't spend more bytes on a query
-      // nobody is looking at anymore (its result is discarded anyway).
       if (started > 0 && (isStale?.call() ?? false)) {
         timer?.cancel();
         done.complete(<T>[]);
@@ -7189,9 +6732,6 @@ class ApiService {
     return completer.future;
   }
 
-  /// Seedha naam se artist search (picker ke search box ke liye). Sirf real
-  /// artist-type results (YT filter), exact/prefix name match sabse upar,
-  /// Saavn sirf India/unset ke liye.
   static Future<List<ArtistSimple>> searchArtistsByName(
     String query, {
     int limit = 12,
@@ -7218,9 +6758,6 @@ class ApiService {
     return list.take(limit).toList();
   }
 
-  /// Curated artist NAMES ko real ArtistSimple (id + photo) me resolve karta
-  /// hai — parallel, har ek 3s timeout, fail hone wale skip. Picker ke top
-  /// section ke liye (guaranteed top-tier artists).
   static Future<List<ArtistSimple>> resolveCuratedArtists(
     List<String> names, {
     int max = 24,
@@ -7238,7 +6775,7 @@ class ApiService {
           final al = a.name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
           if (al == nl || al.startsWith(nl) || nl.startsWith(al)) return a;
         }
-        return null; // exact match nahi mila to galat artist mat dikhao
+        return null;
       } catch (_) {
         return null;
       }
@@ -7282,7 +6819,6 @@ class ApiService {
     final seen = <String>{};
 
     void addCandidate(String browseId, String name, String image) {
-
       final isValidArtistId = browseId.startsWith('UC') || browseId.startsWith('MPLA');
       if (name.isEmpty || !isValidArtistId || !seen.add(browseId)) return;
       out.add(ArtistSimple(id: 'yt_$browseId', name: _cleanText(name), imageUrl: _saverListThumb(image, 112)));
@@ -7480,7 +7016,6 @@ class ApiService {
         if (text.isEmpty || text == '•') continue;
         final hasLink = r['navigationEndpoint'] != null;
         if (hasLink) {
-
           final linkedBrowseId =
               (r['navigationEndpoint']?['browseEndpoint']?['browseId'] ?? '').toString();
           if (!linkedBrowseId.startsWith('MPRE') && artistName.isEmpty) {
@@ -7489,7 +7024,6 @@ class ApiService {
         } else if (RegExp(r'^(19|20)\d{2}$').hasMatch(text)) {
           year = text;
         } else if (!RegExp(r'^(Album|Single|EP)$', caseSensitive: false).hasMatch(text)) {
-
           if (artistName.isEmpty) artistName = text;
         }
       }
@@ -7514,10 +7048,42 @@ class ApiService {
     return out;
   }
 
+  static final Map<String, String> _artistIdByName = {};
+
   static Future<String?> resolveArtistId(String name) async {
+    final key = name.trim().toLowerCase();
+    if (key.isEmpty) return null;
+    final hit = _artistIdByName[key];
+    if (hit != null) return hit;
     final ytId = await _resolveYtChannelId(name);
-    if (ytId != null && ytId.isNotEmpty) return 'yt_$ytId';
+    if (ytId != null && ytId.isNotEmpty) {
+      if (_artistIdByName.length >= 200) {
+        _artistIdByName.remove(_artistIdByName.keys.first);
+      }
+      return _artistIdByName[key] = 'yt_$ytId';
+    }
     return null;
+  }
+
+  static final Map<String, ({DateTime at, Artist artist})> _artistPageCache = {};
+  static const Duration _artistPageTtl = Duration(minutes: 10);
+
+  static Artist? peekCachedArtist(String artistId) {
+    final hit = _artistPageCache[artistId];
+    if (hit == null) return null;
+    if (DateTime.now().difference(hit.at) > _artistPageTtl) {
+      _artistPageCache.remove(artistId);
+      return null;
+    }
+    return hit.artist;
+  }
+
+  static void _cacheArtistPage(String artistId, Artist artist) {
+    if (artist.topSongs.isEmpty && artist.topAlbums.isEmpty) return;
+    if (_artistPageCache.length >= 24) {
+      _artistPageCache.remove(_artistPageCache.keys.first);
+    }
+    _artistPageCache[artistId] = (at: DateTime.now(), artist: artist);
   }
 
   static Future<String?> searchArtistByName(String name) async {
@@ -7546,10 +7112,21 @@ class ApiService {
     int songCount = 100,
     int albumCount = 100,
     required void Function(Artist artist) onUpdate,
+    bool Function()? isCancelled,
   }) async {
     if (artistId.isEmpty) return;
+    final cached = peekCachedArtist(artistId);
+    if (cached != null) {
+      onUpdate(cached);
+      if (cached.topSongs.length >= songCount) return;
+    }
+    final rawOnUpdate = onUpdate;
+    onUpdate = (Artist a) {
+      if (cached != null && a.topSongs.length < cached.topSongs.length) return;
+      _cacheArtistPage(artistId, a);
+      rawOnUpdate(a);
+    };
     if (!artistId.startsWith('yt_')) {
-
       final artist = await fetchArtist(artistId, songCount: songCount, albumCount: albumCount);
       if (artist != null) onUpdate(artist);
       return;
@@ -7557,7 +7134,6 @@ class ApiService {
     final channelId = artistId.substring(3);
     final browseArtist = await _fetchArtistFromYtMusicBrowse(channelId, songCount: songCount);
     if (browseArtist == null) {
-
       final ytArtist = await _fetchArtistFromYoutube(channelId, songCount: songCount);
       if (ytArtist != null) onUpdate(ytArtist);
       return;
@@ -7599,8 +7175,10 @@ class ApiService {
           relatedArtists: browseArtist.relatedArtists,
         );
 
+    Artist? uploadsArtist;
     try {
-      final uploadsArtist = await _fetchArtistFromYoutube(channelId, songCount: songCount)
+      uploadsArtist = await _fetchArtistFromYoutube(channelId,
+              songCount: songCount, isCancelled: isCancelled)
           .timeout(const Duration(seconds: 25), onTimeout: () => null);
       if (uploadsArtist != null) addAll(uploadsArtist.topSongs);
       onUpdate(snapshot());
@@ -7608,10 +7186,13 @@ class ApiService {
       _log('[fetchArtistStreaming] uploads top-up failed for "${browseArtist.name}": $e');
     }
     if (mergedSongs.length >= songCount) return;
+    if (isCancelled?.call() == true) return;
 
-    if (browseArtist.name.isNotEmpty) {
+    final uploadsRanSameSearch = uploadsArtist != null &&
+        uploadsArtist.name.trim().toLowerCase() ==
+            browseArtist.name.trim().toLowerCase();
+    if (!uploadsRanSameSearch && browseArtist.name.isNotEmpty) {
       try {
-
         final extra = await _searchYtMusicDirectPaginated(
           browseArtist.name,
           songCount * 2,
@@ -7638,11 +7219,9 @@ class ApiService {
 
       final browseArtist = await _fetchArtistFromYtMusicBrowse(channelId, songCount: songCount);
       if (browseArtist != null && browseArtist.topSongs.isNotEmpty) {
-
         if (browseArtist.topSongs.length >= songCount) return browseArtist;
 
         try {
-
           final uploadsArtist = await _fetchArtistFromYoutube(channelId, songCount: songCount)
               .timeout(const Duration(seconds: 100), onTimeout: () => null);
 
@@ -7662,7 +7241,6 @@ class ApiService {
               mergedSongs.add(s);
             }
           } else {
-
             for (final s in browseArtist.topSongs) {
               if (mergedSongs.length >= songCount) break;
               if (!seenIds.add(s.id)) continue;
@@ -7676,7 +7254,6 @@ class ApiService {
 
           if (mergedSongs.length < songCount && browseArtist.name.isNotEmpty) {
             try {
-
               final extra = await _searchYtMusicDirectPaginated(
                 browseArtist.name,
                 songCount * 2,
@@ -7728,27 +7305,6 @@ class ApiService {
       return browseArtist;
     }
 
-    // BUGFIX ("Saavn band hai, artist/album abhi bhi Saavn se try ho rahe
-    // the" — recheck 2026-09-14): every OTHER Saavn entry point in this
-    // file (_searchArtistsSaavn, _searchAlbumsSaavn, searchArtistByName)
-    // already checks _saavnDisabled and short-circuits to InnerTube. This
-    // branch — reached whenever an artistId does NOT start with 'yt_'
-    // (a 'saavn_'-prefixed id, e.g. from a Saavn song's artist field, or
-    // any other non-YT id) — was the one place that called straight into
-    // _fetchArtistFromSaavn's live HTTP endpoint with no _saavnDisabled
-    // check and no InnerTube fallback at all. With the Saavn backend
-    // down, that meant landing on any Saavn-sourced artist's profile page
-    // just hung/failed outright instead of falling back the same way the
-    // 'yt_' branch above already does.
-    //
-    // Fix: fail fast with null instead of hanging/erroring on the dead
-    // Saavn endpoint. This id has no artist NAME attached (just an opaque
-    // Saavn id), so it can't be re-resolved via InnerTube search here —
-    // callers holding only a stale 'saavn_'-prefixed id (e.g. an artist
-    // followed back when Saavn was live) should re-resolve via
-    // resolveArtistId(name)/searchArtistByName(name) with the artist's
-    // NAME instead, which already goes through the same InnerTube-first
-    // pipeline every 'yt_' artist above uses.
     if (_saavnDisabled) {
       final saavnId = artistId.startsWith('saavn_') ? artistId.substring(6) : artistId;
       _log('[fetchArtist] Saavn disabled, cannot resolve bare id "$saavnId" via InnerTube (no name to search)');
@@ -7883,8 +7439,6 @@ class ApiService {
           duration: duration,
           source: SongSource.youtube,
           viewCount: 1000000,
-          // '' (home shelf playlists) ko channel id mat maano — warna
-          // "Go to artist" 'yt_' (khaali) id bhejta tha aur kabhi nahi khulta.
           artistChannelId: resolvedChannelId.isNotEmpty
               ? resolvedChannelId
               : (artistRuns.isNotEmpty ? artistRuns.first.channelId : null),
@@ -7918,7 +7472,6 @@ class ApiService {
             );
           } catch (e) {
             _log('[_fetchArtistFromYtMusicBrowse] Top Songs playlist top-up failed: $e');
-
           }
         }
       }
@@ -7951,7 +7504,6 @@ class ApiService {
 
       final moreGrids = await Future.wait(moreReleaseBrowses.map((entry) async {
         try {
-
           final grid = await _ytmBrowseRaw(entry.$1,
               params: entry.$3, timeout: const Duration(seconds: 8));
           return (grid, entry.$2);
@@ -7966,7 +7518,6 @@ class ApiService {
 
       void collectReleaseCards(dynamic node, bool isSinglesShelf) {
         for (final card in _findRenderers(node, 'musicTwoRowItemRenderer')) {
-
           final cardTitleRuns = (card['title']?['runs'] as List?) ?? const [];
           final cardTitle = cardTitleRuns
               .map((r) => (r is Map ? (r['text'] ?? '') : '').toString())
@@ -8117,9 +7668,8 @@ class ApiService {
   }
 
   static Future<Artist?> _fetchArtistFromYoutube(String channelId,
-      {int songCount = 100}) async {
+      {int songCount = 100, bool Function()? isCancelled}) async {
     try {
-
       final channelFuture = _yt.channels.get(channelId)
           .timeout(const Duration(seconds: 8));
       final aboutFuture = () async {
@@ -8162,6 +7712,7 @@ class ApiService {
 
           var pageCount = 0;
           while (true) {
+            if (isCancelled?.call() == true) break;
             pageCount++;
             for (final v in page) {
               final base = _songFromYtVideo(v);
@@ -8189,9 +7740,10 @@ class ApiService {
         }
       }
 
-      if (topSongs.length < songCount && cleanName.isNotEmpty) {
+      if (topSongs.length < songCount &&
+          cleanName.isNotEmpty &&
+          isCancelled?.call() != true) {
         try {
-
           final fallbackResults = await _searchYtMusicDirectPaginated(
             cleanName,
             songCount * 2,
@@ -8285,7 +7837,6 @@ class ApiService {
 
       final seenRawTitles = <String>[];
       for (final s in [...saavnTopSongs, ...ytTopSongs]) {
-
         if (s.source == SongSource.youtube) {
           if (!RecommendationEngine.isSearchQuality(s)) continue;
           if (RecommendationEngine.isNonMusicContent(s)) continue;
@@ -8380,22 +7931,29 @@ class ApiService {
     return [];
   }
 
+  static final Map<String, ({DateTime at, ({List<Song> songs, String headerArtworkUrl, List<AlbumRelatedShelf> relatedShelves}) data})>
+      _albumPageCache = {};
+
   static Future<({List<Song> songs, String headerArtworkUrl, List<AlbumRelatedShelf> relatedShelves})>
       fetchAlbumSongsWithArtwork(String albumId) async {
+    final hit = _albumPageCache[albumId];
+    if (hit != null && DateTime.now().difference(hit.at) < const Duration(minutes: 10)) {
+      return hit.data;
+    }
+    final fresh = await _fetchAlbumSongsWithArtworkUncached(albumId);
+    if (fresh.songs.isNotEmpty) {
+      if (_albumPageCache.length >= 24) {
+        _albumPageCache.remove(_albumPageCache.keys.first);
+      }
+      _albumPageCache[albumId] = (at: DateTime.now(), data: fresh);
+    }
+    return fresh;
+  }
+
+  static Future<({List<Song> songs, String headerArtworkUrl, List<AlbumRelatedShelf> relatedShelves})>
+      _fetchAlbumSongsWithArtworkUncached(String albumId) async {
     if (!albumId.startsWith('MPRE')) {
       final songs = await fetchAlbumSongs(albumId);
-      // FIX ("full player kabhi bina thumbnail ke na rahe"): Saavn's own
-      // per-track data is missing artwork for some older/obscure album
-      // entries (the track exists but Saavn never attached an image to
-      // that specific song row) — that's fine for the song LIST, which
-      // just shows a plain note icon for those rows, but the full player
-      // must never render blank. Since this function is the one place
-      // that knows "these songs all belong to album X," resolve one
-      // fallback image for the whole batch — the first song that DOES
-      // carry real artwork — and stamp every artwork-less song with it.
-      // Stamping here (the shared fetch, not just album_screen.dart)
-      // means every current and future caller of fetchAlbumSongsWithArtwork
-      // gets the guarantee, not just one screen.
       if (songs.isNotEmpty) {
         final fallbackArt = songs
             .map((s) => s.artworkUrl)
@@ -8469,19 +8027,9 @@ class ApiService {
 
       if (audioPlaylistId != null) {
         try {
-
           final songs = await fetchYtPlaylistSongs(audioPlaylistId, limit: 2000)
               .timeout(const Duration(seconds: 12));
           if (songs.isNotEmpty) {
-            // FIX ("full player kabhi bina thumbnail ke na rahe" — YT-only
-            // usage): headerArtworkUrl normally covers this (every song
-            // gets stamped with it below), but if the album header's own
-            // thumbnail parse came back empty, previously NO fallback ran
-            // at all and any song whose own playlist entry lacked artwork
-            // (rare — e.g. an unlisted/removed video still present in the
-            // audio playlist) would reach the full player blank. Falling
-            // back to the first song that DOES carry real artwork closes
-            // that gap without touching the normal case at all.
             final resolvedHeaderArt = headerArtworkUrl.isNotEmpty
                 ? headerArtworkUrl
                 : songs.map((s) => s.artworkUrl).firstWhere(
@@ -8519,7 +8067,6 @@ class ApiService {
           }
         } catch (e) {
           _log('[_fetchYtAlbumSongs] playlist fetch failed for $audioPlaylistId: $e');
-
         }
       }
 
@@ -8668,7 +8215,6 @@ class ApiService {
       return await _fetchSyncedLyricsChain(song, cacheKey)
           .timeout(const Duration(seconds: 12));
     } on TimeoutException {
-
       return const LyricsResult();
     }
   }
@@ -8915,13 +8461,9 @@ class ApiService {
       } else if (diff > 15) {
         score -= 0.4;
       } else if (diff > 7) {
-        // 8-15s off is a different cut/intro: line timings would be
-        // visibly shifted, so rank it below a closer version.
         score -= 0.15;
       }
     }
-    // Prefer an entry that actually has line-synced lyrics over a
-    // plain-only one with the same text match.
     final synced = entry['syncedLyrics'];
     if (synced is String && synced.isNotEmpty) score += 0.05;
     return score.clamp(0.0, 1.0);
@@ -9010,7 +8552,6 @@ class ApiService {
   static String _onrenderArtwork(Map<String, dynamic> j) {
     final imgField = j['image'];
     if (imgField is List && imgField.isNotEmpty) {
-
       const targetSize = 150;
       Map? best;
       int bestSize = -1;
@@ -9022,14 +8563,6 @@ class ApiService {
         if (!u.startsWith('http')) continue;
         final q = (entry['quality'] ?? '').toString();
         final match = RegExp(r'(\d+)x\d+').firstMatch(q);
-        // BUGFIX (production-hardening recheck): int.parse throws
-        // FormatException on any non-numeric capture — the regex itself
-        // only matches digits so this couldn't fail today, but this
-        // function has no surrounding try/catch at any of its 3 call
-        // sites, so a future Saavn response-format change here would
-        // crash the whole artwork lookup instead of just skipping one
-        // malformed entry. tryParse fails safe (treats it as size 0,
-        // same as the "no match" branch already does) instead of throwing.
         final size = match != null ? (int.tryParse(match.group(1)!) ?? 0) : 0;
         if (size == targetSize) {
           best = entry;
@@ -9310,7 +8843,6 @@ class ApiService {
 
     final targetIsSingleWord = !target.contains(' ');
     if (targetIsSingleWord) {
-
       if (_phoneticMatch(word, target)) return true;
     }
     final maxEdits = _maxEditsFor(word.length);
@@ -9429,7 +8961,6 @@ class ApiService {
           debugPrint('[Diagnostics] Real-handler playback test stack: $st');
         }
       } else {
-
         final testPlayer = AudioPlayer();
         try {
           final sw = Stopwatch()..start();
@@ -9475,7 +9006,6 @@ class ApiService {
   }
 
   static const Set<String> _saavnDirectSafeHosts = {
-
   };
 
   static String _proxiedSaavnUrl(String url) {
@@ -9590,3 +9120,5 @@ class _MemoEntry {
   final List<dynamic> value;
   const _MemoEntry(this.at, this.value);
 }
+
+dynamic _decodeJsonBody(String body) => jsonDecode(body);

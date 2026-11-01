@@ -32,23 +32,6 @@ import '../widgets/aurum_artwork.dart';
 import '../widgets/aurum_pressable.dart';
 import 'liked_screen.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Profile — redesigned.
-//
-//  • Hero gradient is tinted from the user's own avatar colors (same palette
-//    extractor the players use), fading smoothly into the theme background.
-//  • Left-aligned big avatar + name, Spotify-profile style.
-//  • One stats strip (Liked / Playlists / Artists / Albums) with live counts.
-//  • "Recently Played" shelf — tap to play.
-//  • Compact membership card (chips instead of a long list).
-//  • Sticky top bar that fades in a title once you scroll.
-//  • No looping animations (no particles / breathing glow): one short staggered
-//    entrance only, and fully off when animations are disabled — smoother and
-//    lighter on low-end phones.
-//  • Every colour comes from the active theme, so Light / Dark / AMOLED all work.
-//  • All sign-in / sign-out / sync behaviour is unchanged.
-// ─────────────────────────────────────────────────────────────────────────────
-
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
   @override
@@ -66,7 +49,6 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   bool _syncing = false;
 
-  // Avatar-derived tint for the hero gradient.
   String? _tintUrl;
   Color? _tint;
 
@@ -103,8 +85,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.dispose();
   }
 
-  // ── Avatar tint ────────────────────────────────────────────────────────────
-
   void _ensureTint(String? url) {
     if (url == _tintUrl) return;
     _tintUrl = url;
@@ -124,8 +104,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     }).catchError((_) {});
   }
 
-  // ── Account actions (logic unchanged from the previous screen) ─────────────
-
   Future<void> _runSync() async {
     await SyncService.instance.syncAll(
       playlists: context.read<PlaylistProvider>(),
@@ -141,8 +119,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     final ok = await auth.signInWithGoogle();
     if (!mounted) return;
     if (ok) {
-      // Cloud sync is sign-in-gated only, not payment-gated — every signed-in
-      // user gets a real sync right here.
       setState(() => _syncing = true);
       try {
         await _runSync();
@@ -172,7 +148,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     try {
       await _runSync();
     } catch (_) {
-      // Sync fails soft — SyncService already logs its own errors.
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
@@ -212,9 +187,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     await _signOutAndWipe(auth);
   }
 
-  /// Signs out, then clears every account-scoped local provider so the device
-  /// goes back to a clean slate. Downloads and device preferences are
-  /// deliberately kept (see the old implementation's note).
   Future<void> _signOutAndWipe(AuthProvider auth) async {
     final l10n = AppLocalizations.of(context)!;
     AurumHaptics.medium();
@@ -253,8 +225,6 @@ class _ProfileScreenState extends State<ProfileScreen>
       ));
     }
   }
-
-  // ── Build ──────────────────────────────────────────────────────────────────
 
   Widget _stagger(int i, Widget child) {
     final a = _reveal[i];
@@ -323,10 +293,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sticky top bar — transparent over the hero, solid + titled once scrolled.
-// ─────────────────────────────────────────────────────────────────────────────
 
 class _TopBar extends StatelessWidget {
   final ValueNotifier<double> progress;
@@ -397,10 +363,6 @@ class _TopBar extends StatelessWidget {
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Hero — avatar-tinted gradient, big avatar, name, email, badge, actions.
-// ─────────────────────────────────────────────────────────────────────────────
 
 class _ProfileHero extends StatelessWidget {
   final Color? tint;
@@ -577,8 +539,6 @@ class _Avatar extends StatelessWidget {
                   imageUrl: url!,
                   cacheManager: AurumImageCache(),
                   fit: BoxFit.cover,
-                  // 2x of the 120dp circle is plenty; don't decode the
-                  // full-size Google photo on low-RAM devices.
                   memCacheWidth: 260,
                   memCacheHeight: 260,
                   placeholder: (_, __) => placeholder,
@@ -758,10 +718,6 @@ class _SignInCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stats strip — live counts, Liked is tappable.
-// ─────────────────────────────────────────────────────────────────────────────
-
 String _compact(int n) {
   if (n >= 1000000) {
     final v = (n / 1000000).toStringAsFixed(1);
@@ -873,10 +829,6 @@ class _StatCell extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Recently Played shelf — horizontal covers, tap to play.
-// ─────────────────────────────────────────────────────────────────────────────
-
 class _RecentlyPlayedShelf extends StatelessWidget {
   const _RecentlyPlayedShelf();
 
@@ -985,10 +937,6 @@ class _RecentTile extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Membership card — one compact card, features as chips.
-// ─────────────────────────────────────────────────────────────────────────────
-
 class _MembershipCard extends StatelessWidget {
   const _MembershipCard();
 
@@ -1004,8 +952,6 @@ class _MembershipCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final accent = AurumTheme.accentOf(context);
-    // Payment gate removed for now — every benefit is free with a Google
-    // account, so the card always shows the unlocked state.
     const isPremium = true;
 
     return Container(

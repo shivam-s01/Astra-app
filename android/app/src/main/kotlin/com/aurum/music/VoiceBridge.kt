@@ -16,19 +16,6 @@ import android.os.Looper
 import android.os.SystemClock
 import org.json.JSONObject
 
-/**
- * Gemini/Assistant -> MediaSession.onSetMediaItems(searchQuery + extras) -> here -> Dart.
- * (Or the MEDIA_PLAY_FROM_SEARCH activity intent -> MainActivity -> here.)
- *
- * What travels to Dart is a small JSON payload built by [payload]:
- *   {"focus":"song|artist|album|playlist|genre|any","q":"...","title":"...",
- *    "artist":"...","album":"...","genre":"...","playlist":"..."}
- * Only non-empty fields are present. Dart's VoicePlayService also accepts a
- * plain (non-JSON) string, e.g. "liked songs".
- *
- * If Dart isn't reachable (app killed), the payload is parked in [pending] and
- * the app is launched; Dart pulls it via "getPending" on startup.
- */
 object VoiceBridge {
     const val EXTRA_PAYLOAD = "aurum_voice_payload"
 
@@ -36,20 +23,13 @@ object VoiceBridge {
     @Volatile var sink: ((String) -> Unit)? = null
     @Volatile private var lastVoiceAt: Long = 0L
 
-    /** A voice request was just handed to Dart (it will start the real playback). */
     fun markVoice() { lastVoiceAt = SystemClock.elapsedRealtime() }
 
-    /**
-     * True for a short window after a voice request. Assistants always follow
-     * "set items" with play(); with nothing valid loaded that would resume the
-     * OLD paused song for a moment before Dart swaps in the requested one.
-     */
     fun voiceJustRequested(windowMs: Long = 2000L): Boolean {
         val t = lastVoiceAt
         return t != 0L && SystemClock.elapsedRealtime() - t < windowMs
     }
 
-    /** Builds the JSON payload from the assistant's query + MediaStore-style extras. "" if nothing useful. */
     fun payload(query: String?, extras: Bundle?): String {
         fun str(key: String): String =
             try { extras?.getString(key)?.trim().orEmpty() } catch (_: Exception) { "" }

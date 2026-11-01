@@ -12,15 +12,6 @@ import '../services/audio_prefs.dart';
 import '../theme/aurum_theme.dart';
 import '../utils/aurum_haptics.dart';
 
-/// Full-screen Dynamic Island customization page — replaces the old
-/// bottom sheet (left/center/right dropdown only). Reached by tapping the
-/// "Dynamic Island" row in Settings -> Player & Audio. Every control here
-/// writes straight to SharedPreferences under dedicated dp-based keys and
-/// immediately tells a running overlay to re-apply itself via
-/// AudioPrefs.updateIslandCustomization(), so if the Island is already up
-/// (song playing, app backgrounded) it visibly updates live while this
-/// page is open — same "drag = live preview" contract the old sheet had,
-/// just with real X/Y/width/height control instead of a 3-way dropdown.
 class IslandCustomizeScreen extends StatefulWidget {
   const IslandCustomizeScreen({super.key});
 
@@ -37,20 +28,18 @@ class _IslandCustomizeScreenState extends State<IslandCustomizeScreen> {
   static const _kColor = 'island_accent_color';
   static const _kDoublePrefix = 'VGhpcyBpcyB0aGUgcHJlZml4IGZvciBEb3VibGUu';
 
-  // Defaults chosen to match the old top_center / 1.0 scale look so
-  // existing users see no visual jump the first time they open this page.
   static const double _defaultWidth = 101.0;
   static const double _defaultHeight = 32.0;
   static const int _defaultAccent = 0xFFB89640;
 
   static const _swatches = <int>[
-    0xFFB89640, // Aurum gold (default)
-    0xFFE91429, // Spotify red
-    0xFF1DB954, // Spotify green
-    0xFF3B82F6, // Blue
-    0xFFA855F7, // Purple
-    0xFFEC4899, // Pink
-    0xFFFFFFFF, // White
+    0xFFB89640,
+    0xFFE91429,
+    0xFF1DB954,
+    0xFF3B82F6,
+    0xFFA855F7,
+    0xFFEC4899,
+    0xFFFFFFFF,
   ];
 
   bool _enabled = false;
@@ -69,9 +58,6 @@ class _IslandCustomizeScreenState extends State<IslandCustomizeScreen> {
 
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
-    // Guard against a corrupt/out-of-range persisted value (e.g. from a
-    // future build with a wider range) ever reaching the Slider widget,
-    // which throws if value is NaN or outside min/max.
     double safeDouble(Object? raw, double fallback, double min, double max) {
       double? v;
       if (raw is num) {
@@ -228,15 +214,10 @@ class _IslandCustomizeScreenState extends State<IslandCustomizeScreen> {
     );
   }
 
-  /// The pill IS the position control: drag it anywhere on this mock of the
-  /// top of the phone (up / down / left / right). Same coordinate system as
-  /// the real overlay (dp from horizontal center / dp from top), scaled to
-  /// fit. Snaps softly to the center line. The real island never draws
-  /// inside the app — it only appears once Aurum is minimized.
   Widget _positionStage(BuildContext context) {
-    const stageDpH = 320.0; // top slice of the screen shown in the stage
+    const stageDpH = 320.0;
     final screenW = MediaQuery.of(context).size.width;
-    final stageW = screenW - 40 - 32; // list padding + card padding
+    final stageW = screenW - 40 - 32;
     final scale = stageW / screenW;
     final stageH = stageDpH * scale;
 
@@ -279,7 +260,6 @@ class _IslandCustomizeScreenState extends State<IslandCustomizeScreen> {
             clipBehavior: Clip.antiAlias,
             child: Stack(
               children: [
-                // center guide
                 Positioned(
                   left: stageW / 2 - 0.5,
                   top: 0,
@@ -289,7 +269,6 @@ class _IslandCustomizeScreenState extends State<IslandCustomizeScreen> {
                     color: centered ? accent.withOpacity(0.55) : Colors.white10,
                   ),
                 ),
-                // status-bar hint + camera dot
                 const Positioned(
                   left: 14, top: 8,
                   child: Text('9:41',
@@ -307,7 +286,6 @@ class _IslandCustomizeScreenState extends State<IslandCustomizeScreen> {
                     decoration: const BoxDecoration(color: Colors.white12, shape: BoxShape.circle),
                   ),
                 ),
-                // the island (drag me)
                 Positioned(
                   left: stageW / 2 - pillW / 2 + dx * scale,
                   top: dy * scale,

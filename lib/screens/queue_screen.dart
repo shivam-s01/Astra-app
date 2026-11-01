@@ -5,16 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
-// QueueScreen — "Up Next" queue, redesigned to match the Spotify-style
-// reference: drag handle, current-track card (art + title/artist + like),
-// a meta pill (lock / overflow · song count · total duration), a row of
-// three transport toggles (shuffle / repeat / shuffle-emphasis matching
-// the reference's layout), a source header ("Unknown" / whatever the
-// queue's context label is), then the flat scrollable list itself with
-// the currently-playing row highlighted and an animated "now playing"
-// bars icon in place of a track number.
-// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,9 +20,6 @@ import '../providers/favorites_provider.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../utils/aurum_haptics.dart';
 import '../utils/route_drag_dismiss.dart';
-// Real shared "3-dot" song menu (albums/liked/download/playlist/etc.) —
-// used for the meta pill's overflow button so it opens the same sheet
-// as everywhere else in the app instead of doing nothing.
 import '../widgets/aurum_song_options_sheet.dart' show showAurumSongOptions;
 
 class QueueScreen extends StatefulWidget {
@@ -43,16 +30,6 @@ class QueueScreen extends StatefulWidget {
 }
 
 class _QueueScreenState extends State<QueueScreen> {
-  // ── Swipe-down-to-dismiss ────────────────────────────────────────────────
-  // Driven by the ROUTE'S OWN animation controller (see
-  // utils/route_drag_dismiss.dart): the finger sets the route's value, the
-  // route's SlideTransition moves the whole queue, and releasing lets the
-  // same controller finish. One motion only — no extra transform/layer.
-  //
-  // A raw vertical-drag gesture (not OverscrollNotification) drives it —
-  // gated on "the list is at its very top". On Android, BouncingScrollPhysics
-  // can absorb/settle an overscroll before it is ever reported, which is
-  // why a notification-based dismiss could silently never start.
   final ScrollController _scrollCtrl = ScrollController();
 
   static const double _dismissDistance = 110.0;
@@ -60,10 +37,6 @@ class _QueueScreenState extends State<QueueScreen> {
 
   final PullDownDismissController _pull = PullDownDismissController();
 
-  // ── Queue lock ───────────────────────────────────────────────────────────
-  // Locked = the queue can't be changed by accident: drag-reorder and the ✕
-  // remove buttons are disabled. Tapping a song to play it still works.
-  // Persisted so it stays as the user left it.
   static const String _lockPrefKey = 'queue_locked_v1';
   bool _locked = false;
 
@@ -85,23 +58,12 @@ class _QueueScreenState extends State<QueueScreen> {
         .catchError((_) => false);
   }
 
-  // FIX (drag chhodne ke baad song snap-back + upar-niche jump): pehle
-  // onReorder seedha player.moveQueueItem() chalata tha, jo pehle native
-  // engine ka await karta hai aur uske BAAD hi list ka order badalta tha.
-  // Tab tak drop animation khatam ho chuki hoti thi aur list purane order
-  // me dikhti thi — phir native echo aate hi song achanak naye order me
-  // kood jaata tha. Ab local optimistic order drop ke SAME frame me set
-  // hota hai (list ko ek hi final order dikhta hai), provider call
-  // fire-and-forget chalta hai, aur jab tak provider ka order match na
-  // kare tab tak beech ke stale syncs ignore hote hain.
   List<Song>? _localQueue;
   int? _localCurrent;
   List<String>? _pendingIds;
   DateTime? _pendingAt;
   static const _pendingTimeout = Duration(seconds: 3);
 
-  /// Returns the order to render. Provider's order unless a local reorder
-  /// is still waiting for the provider to catch up.
   List<Song> _resolveQueue(List<Song> providerQueue, int providerCurrent) {
     final pending = _pendingIds;
     if (pending != null && _localQueue != null) {
@@ -174,22 +136,12 @@ class _QueueScreenState extends State<QueueScreen> {
         scrollController: _scrollCtrl,
         dismissDistance: _dismissDistance,
         dismissVelocity: _dismissVelocity,
-        // The route's SlideTransition moves this whole subtree; no
-        // per-frame transform/opacity/rebuild happens here.
         child: RepaintBoundary(
             child: ColoredBox(
-              // Solid base travels WITH the content (was fixed on the
-              // Scaffold, leaving a static layer behind while dragging).
               color: const Color(0xFF121212),
               child: SafeArea(
         bottom: false,
         child: Selector<PlayerProvider, (int, int, int, bool, LoopMode)>(
-          // PERF: was queue.map(id).join(',') — allocated a list + a huge
-          // string on EVERY provider notify (100+ songs, several times a
-          // second). A rolling int hash over the ids is allocation-free
-          // and still changes on add / remove / reorder.
-          // FIX: shuffle + loop are now part of the key, so the pills
-          // actually refresh when toggled (before, they never updated).
           selector: (_, p) {
             final q = p.queue;
             var h = 0;
@@ -203,9 +155,6 @@ class _QueueScreenState extends State<QueueScreen> {
             final queue = _resolveQueue(player.queue, player.currentIndex);
             final currentIndex = _localCurrent ?? player.currentIndex;
             final currentSong = player.currentSong;
-            // Stable per-song keys (id + occurrence) — index in the key made
-            // every moved row remount after a reorder and broke the drop
-            // animation.
             final seenIds = <String, int>{};
             final rowKeys = List<Key>.generate(queue.length, (i) {
               final id = queue[i].id;
@@ -242,8 +191,6 @@ class _QueueScreenState extends State<QueueScreen> {
                     children: [
                       const _DragHandle(),
                       const SizedBox(height: 4),
-                      // Scoped rebuild: a like change repaints only this
-                      // card, never the whole queue.
                       Selector<FavoritesProvider, bool>(
                         selector: (_, f) => f.isFavorite(currentSong.id),
                         builder: (context, isLiked, _) => _CurrentTrackCard(
@@ -280,13 +227,7 @@ class _QueueScreenState extends State<QueueScreen> {
                   padding: const EdgeInsets.only(bottom: 24),
                   sliver: SliverReorderableList(
                     itemCount: queue.length,
-                    // Pakdte hi halka haptic (YouTube Music jaisa).
                     onReorderStart: (_) => AurumHaptics.selection(),
-                    // FIX: dragged row ka background transparent tha, to
-                    // upar-niche karte waqt neeche wale rows ka text
-                    // uske through dikhta tha. Ab solid + halka lift
-                    // (shadow) — sirf dragged row pe, baaki list pe koi
-                    // extra cost nahi.
                     proxyDecorator: (child, index, animation) => AnimatedBuilder(
                       animation: animation,
                       child: child,
@@ -339,10 +280,6 @@ class _QueueScreenState extends State<QueueScreen> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Drag handle — the small pill at the very top matching the reference's
-// bottom-sheet affordance.
-// ─────────────────────────────────────────────────────────────────────────────
 class _DragHandle extends StatelessWidget {
   const _DragHandle();
 
@@ -364,9 +301,6 @@ class _DragHandle extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Current track card — big artwork thumbnail, title/artist, like button.
-// ─────────────────────────────────────────────────────────────────────────────
 class _CurrentTrackCard extends StatelessWidget {
   final Song song;
   final bool isLiked;
@@ -431,10 +365,6 @@ class _CurrentTrackCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Meta pill — lock icon · overflow menu (both visual/tappable, matching
-// reference) · "N songs • total duration".
-// ─────────────────────────────────────────────────────────────────────────────
 class _QueueMetaPill extends StatelessWidget {
   final bool locked;
   final VoidCallback onToggleLock;
@@ -489,10 +419,6 @@ class _QueueMetaPill extends StatelessWidget {
               constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               splashRadius: 18,
             ),
-            // FIX ("upnext ekdam screenshot jaisa" — reference pill shows
-            // lock icon AND a ⋮ overflow icon together on the left): this
-            // only ever rendered the lock icon, with no overflow button
-            // at all next to it.
             IconButton(
               icon: const Icon(Icons.more_vert_rounded,
                   color: Colors.white38, size: 18),
@@ -518,11 +444,6 @@ class _QueueMetaPill extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Transport toggle row — shuffle / repeat / shuffle (emphasis pill), each
-// reflecting and driving the real PlayerProvider state instead of being
-// decorative, matching the reference's three-pill row.
-// ─────────────────────────────────────────────────────────────────────────────
 class _TransportToggleRow extends StatelessWidget {
   final PlayerProvider player;
   const _TransportToggleRow({required this.player});
@@ -610,10 +531,6 @@ class _TogglePill extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Source header — small label group above the flat list (e.g. album /
-// playlist / "Unknown" the queue was built from), matching the reference.
-// ─────────────────────────────────────────────────────────────────────────────
 class _SourceHeader extends StatelessWidget {
   final String title;
   const _SourceHeader({required this.title});
@@ -641,14 +558,6 @@ class _SourceHeader extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Queue row — thumbnail, title/artist, duration, overflow menu. Current
-// track gets a highlighted background + animated equalizer bars in place
-// of artwork dimming, matching the reference's olive-highlighted row.
-// Drag-to-reorder is triggered ONLY from the trailing drag handle (see the
-// long comment this preserves from the previous implementation) so it
-// never fights the row's own tap-to-play or the remove button.
-// ─────────────────────────────────────────────────────────────────────────────
 class _QueueRow extends StatelessWidget {
   final int index;
   final Song song;
@@ -744,10 +653,7 @@ class _QueueRow extends StatelessWidget {
                 )
               else
                 const SizedBox(width: 8),
-              // Reorder handle: this pointer belongs to reordering, never to
-              // the swipe-down-dismiss (child Listener fires first).
               if (locked)
-                // Locked: no handle at all, so a row can't be picked up.
                 const SizedBox(width: 36)
               else
                 Listener(
@@ -771,13 +677,6 @@ class _QueueRow extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Equalizer bars for the current row. One tiny controller, only exists for
-// the single current row, and it STOPS while paused (zero frames, zero
-// CPU). It listens to isPlaying itself, so the queue list is never
-// rebuilt for it. Painted by a CustomPainter inside a RepaintBoundary —
-// no widget tree churn per frame.
-// ─────────────────────────────────────────────────────────────────────────────
 class _EqualizerBars extends StatefulWidget {
   final Color color;
   const _EqualizerBars({required this.color});
@@ -810,7 +709,7 @@ class _EqualizerBarsState extends State<_EqualizerBars>
     if (playing) {
       if (!_c.isAnimating) _c.repeat();
     } else if (_c.isAnimating) {
-      _c.stop(); // freeze bars in place while paused
+      _c.stop();
     }
   }
 
@@ -846,7 +745,6 @@ class _BarsPainter extends CustomPainter {
     final paint = Paint()..color = color;
     final barW = size.width / 5;
     for (var i = 0; i < 3; i++) {
-      // triangle wave 0..1..0, phase-shifted per bar
       final v = ((t.value + _phase[i]) % 1.0);
       final h = 0.25 + 0.75 * (v < 0.5 ? v * 2 : (1 - v) * 2);
       final bh = size.height * h;

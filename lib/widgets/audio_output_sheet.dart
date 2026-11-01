@@ -5,29 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/widgets/audio_output_sheet.dart
-// PROJECT: Astra Music
-// DESCRIPTION: In-app audio output device picker — speaker / wired
-//   headphones / Bluetooth / USB. One of the 3 "confirmed missing"
-//   features from the app review (Chromecast + playlist multi-select
-//   bulk actions are the other two).
-//
-//   Backed by AurumAudioOutputManager.kt via NativeAudioEngine
-//   (getAudioOutputDevices / selectAudioOutputDevice / setForceSpeaker),
-//   with a live EventChannel stream so Bluetooth connect/disconnect
-//   updates the sheet without the user reopening it.
-//
-//   Also hosts the system media-volume slider and a live "Quality" row
-//   (actual resolved kbps of the current stream, not a static label) —
-//   the two other rows a premium output sheet needs alongside device
-//   selection. Volume reads/writes go through getMediaVolume/
-//   setMediaVolume, which only ever touch Android's AudioManager
-//   STREAM_MUSIC — completely isolated from AurumAudioEngine's internal
-//   fade/duck/crossfade volume, so there's no path for this to ever
-//   fight that code for control.
-// =============================================================================
-
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -45,9 +22,6 @@ import '../screens/settings_player_screen.dart' show SettingsPlayerScreen;
 import '../utils/aurum_transitions.dart';
 import 'aurum_artwork.dart';
 
-/// Opens the audio output picker as a bottom sheet. Call this from any
-/// screen with a live PlayerProvider in context (full player, mini
-/// player, etc).
 Future<void> showAudioOutputSheet(BuildContext context) async {
   AurumHaptics.light();
   final isLight = Theme.of(context).brightness == Brightness.light;
@@ -73,34 +47,13 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
   AudioOutputDevices? _devices;
   StreamSubscription<AudioOutputDevices?>? _devSub;
   bool _loading = true;
-  // Tracks an in-flight tap so rapid double-taps on two different rows
-  // can't both be "selecting" at once and race each other's optimistic
-  // UI update.
   int? _pendingDeviceId;
 
-  // Local optimistic volume state. The slider always renders from this,
-  // never straight from a re-fetch — dragging feels instant and never
-  // jitters back from a slightly-stale native read.
   int? _volume;
   int _maxVolume = 15;
-  // Volume Boost slice (100-200) — the slider's 100%-200% range, past
-  // hardware max. Kept separate from _volume/_maxVolume (which stay pure
-  // STREAM_MUSIC as before) and combined into one continuous 0.0-2.0
-  // fraction only at render/drag time — see _sliderFraction /
-  // _onSliderChanged. Starts at 100 (off) until _loadVolume() resolves.
   int _boostPercent = 100;
-  // True only while the user's thumb is actively down on the slider —
-  // see the StreamBuilder around _VolumeRow in build() for why this
-  // exists: it's what stops a live external volume change (hardware
-  // keys, another app) from fighting an in-progress drag gesture.
   bool _isDragging = false;
-  // Debounces setMediaVolume while dragging: only the last value in a
-  // burst is actually sent to the platform channel, so a fast drag
-  // doesn't flood it with dozens of calls.
   Timer? _volumeDebounce;
-  // Same debounce idea for setVolumeBoost — native already ramps the
-  // actual gain smoothly on its side (see AurumAudioEffects.setVolumeBoost),
-  // this just avoids flooding the channel with every pixel of drag.
   Timer? _boostDebounce;
 
   @override
@@ -108,14 +61,11 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
     super.initState();
     _load();
     _loadVolume();
-    // Live route/device updates. Kept in local state (not read straight from
-    // the BehaviorSubject) so a stale replayed snapshot can never override
-    // the fresh one fetched in _load().
     _devSub = context
         .read<PlayerProvider>()
         .engine
         .outputDevicesStream
-        .skip(1) // skip the replayed stale snapshot; _load() fetches fresh
+        .skip(1)
         .listen((d) {
       if (d != null && mounted) setState(() => _devices = d);
     });
@@ -156,10 +106,6 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
       final newVolume = (clamped * _maxVolume).round();
       setState(() {
         _volume = newVolume;
-        // Snapping hardware back down below max always fully disengages
-        // boost too — dragging left off the 200% end should feel like one
-        // continuous motion back toward silence, not leave boost stuck on
-        // at some stale percent while hardware volume drops.
         if (_boostPercent != 100) _boostPercent = 100;
       });
       _volumeDebounce?.cancel();
@@ -168,16 +114,11 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
         if (v == null) return;
         final engine = context.read<PlayerProvider>().engine;
         engine.setMediaVolume(v);
-        // Ensure boost is actually re-sent to native once when crossing
-        // back under 100%, not just optimistically zeroed locally.
         engine.setVolumeBoost(100);
       });
     } else {
       final newBoost = (100 + (clamped - 1.0) * 100).round();
       setState(() {
-        // Hardware volume is pinned at max while in boost territory —
-        // matches how the underlying gain path works (boost only ever
-        // adds on top of a maxed-out hardware stream).
         _volume = _maxVolume;
         _boostPercent = newBoost;
       });
@@ -194,20 +135,6 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
     }
   }
 
-  /// Quality row = exactly what the user picked in Settings > Player &
-  /// Audio, shown as the same kbps text Settings prints under that tier
-  /// (High = 320 kbps, Medium = up to 160 kbps, Low = 48-96 kbps).
-  ///
-  /// FIX ("setting mein user ne jo select kiya wahi kbps show ho"): the
-  /// sheet used to show a raw resolved kbps / bare "Auto". Now it follows
-  /// the Settings choice so the two screens can never disagree.
-  ///   - High       -> "320 kbps"
-  ///   - Medium     -> "Up to 160 kbps"
-  ///   - Low        -> "48-96 kbps"
-  ///   - Smart Saver / Auto -> no fixed kbps exists (Smart Saver adapts to
-  ///     the network, Auto = best per song), so the tier name is shown,
-  ///     plus the real resolved kbps when the current stream reported one.
-  ///   - local file -> "Local · MP3" (Settings tier doesn't apply)
   String _qualityLabel(AppLocalizations l10n) {
     final song = context.read<PlayerProvider>().currentSong;
     if (song != null && song.isLocal) {
@@ -236,17 +163,12 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
   }
 
   Future<void> _onSelect(AudioOutputDevice device) async {
-    if (_pendingDeviceId != null) return; // ignore taps mid-selection
+    if (_pendingDeviceId != null) return;
     final engine = context.read<PlayerProvider>().engine;
     final supportsRouting = _devices?.supportsExplicitRouting ?? false;
     final l10n = AppLocalizations.of(context)!;
 
     if (!supportsRouting) {
-      // Pre-Android-12: no explicit per-device routing exists. Being
-      // honest about this here (rather than pretending the tap worked)
-      // matters more for a "premium, zero-compromise" feel than silently
-      // no-op'ing — the user deserves to know why nothing visibly
-      // changed.
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(l10n.audioOutputAutoRoutingNotice),
         behavior: SnackBarBehavior.floating,
@@ -262,10 +184,6 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
     setState(() => _pendingDeviceId = null);
 
     if (ok) {
-      // Optimistically mark this device selected in the local snapshot —
-      // the live EventChannel stream will also confirm shortly, but
-      // updating immediately avoids a visible lag between tap and
-      // checkmark on devices where the stream takes a beat to fire.
       setState(() {
         final current = _devices;
         if (current != null) {
@@ -311,15 +229,11 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final engine = context.read<PlayerProvider>().engine;
-    // Rebuild only when the track changes, so the Quality row below never
-    // stays stale if the user skips a song while this sheet is open.
     context.select<PlayerProvider, String>((p) => p.currentSong?.id ?? '');
 
     return StreamBuilder<AudioOutputDevices?>(
       stream: engine.outputDevicesStream,
       builder: (context, snapshot) {
-        // Live stream update (device connected/disconnected) takes
-        // priority over the initial one-shot load once it arrives.
         final devices = _devices;
         return SafeArea(
           top: false,
@@ -353,13 +267,6 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        // PERF (consistency with mini_player.dart/queue_screen.dart's
-                        // same fix): Consumer<PlayerProvider> here rebuilt on every
-                        // playback-position notifyListeners() tick — multiple times a
-                        // second — for a title/subtitle Text that only actually needs
-                        // to change when the current song itself changes. A Selector
-                        // scoped to just currentSong?.id/title stops that redundant
-                        // rebuild without changing anything else about this widget.
                         child: Selector<PlayerProvider, (String?, String)>(
                           selector: (_, p) => (p.currentSong?.id, p.currentSong?.title ?? ''),
                           builder: (context, data, _) {
@@ -396,29 +303,10 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
                 Divider(
                     color: AurumTheme.textMutedOf(context).withOpacity(0.1),
                     height: 1),
-                // FEATURE ("volume badane ka option live update nahi hota,
-                // phone button se badhau to bhi wahi rehta hai" —
-                // 2026-09-07): mediaVolumeStream now pushes a fresh value
-                // any time STREAM_MUSIC changes from ANY source (hardware
-                // keys, another app, this app's own slider) — see
-                // native_engine_bridge.dart's mediaVolumeStream doc for
-                // the native side. _isDragging guards against the live
-                // stream fighting the user's own in-progress drag: while
-                // actively dragging, the local optimistic _volume (set
-                // synchronously in _onVolumeChanged) stays authoritative,
-                // exactly like _volume already did before this stream
-                // existed — the live value only takes over once the user
-                // isn't the one currently moving the thumb.
                 StreamBuilder<MediaVolume?>(
                   stream: engine.mediaVolumeStream,
                   builder: (context, volSnapshot) {
                     final live = volSnapshot.data;
-                    // Live hardware-volume events (hardware keys, another
-                    // app) never carry a live boostPercent — see
-                    // native_engine_bridge.dart's mediaVolumeStream doc —
-                    // so only _volume/_maxVolume follow the live stream
-                    // here; _boostPercent always comes from local state,
-                    // which only this sheet ever changes.
                     final effectiveVolume =
                         (!_isDragging && live != null) ? live.level : _volume;
                     final effectiveMax =
@@ -531,31 +419,8 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
                   icon: Icons.high_quality_rounded,
                   label: 'Quality',
                   value: _qualityLabel(l10n),
-                  // FIX ("Bluetooth sheet ki Quality row tappable honi
-                  // chahiye, seedha Settings > Player mein le jaaye"):
-                  // this row used to be purely informational (see the
-                  // class doc comment above, now stale). Close this
-                  // sheet first (Navigator.pop, same as the device-
-                  // select flow just above), then push
-                  // SettingsPlayerScreen with the app's own premium
-                  // AurumDepthRoute transition — same route class every
-                  // other settings navigation in the app already uses,
-                  // so this doesn't introduce a different-feeling push.
                   onTap: () {
                     AurumHaptics.selection();
-                    // FIX (potential crash risk caught on final recheck):
-                    // calling Navigator.push(context, ...) right after
-                    // Navigator.pop(context) on the SAME context is a
-                    // known Flutter footgun — this context belongs to the
-                    // sheet's own element, which pop() immediately starts
-                    // deactivating, so a push on it a statement later can
-                    // throw "Looking up a deactivated widget's ancestor is
-                    // unsafe" or target the wrong navigator depending on
-                    // timing. Capturing the root Navigator's own state
-                    // BEFORE popping, then calling push on that captured
-                    // reference, sidesteps the issue entirely — this
-                    // reference stays valid regardless of what happens to
-                    // the sheet's own context afterward.
                     final rootNavigator =
                         Navigator.of(context, rootNavigator: true);
                     Navigator.pop(context);
@@ -577,23 +442,8 @@ class _AudioOutputSheetState extends State<_AudioOutputSheet> {
   }
 }
 
-/// System media-volume slider, styled to match the rest of the sheet —
-/// a slim gold-gradient track with a small glowing thumb, mute icon that
-/// updates with the current level (matches the reference "Play on" sheet
-/// pattern, just restyled to Aurum's gold-on-dark identity instead of a
-/// generic teal Material slider).
-///
-/// Range is 0.0-2.0: 0.0-1.0 is normal hardware volume (0%-100%, exactly
-/// as before), 1.0-2.0 is Volume Boost (100%-200%, extra electrical gain
-/// on top — see AurumAudioEffects.setVolumeBoost on the native side for
-/// why this is safe to push that far: gain is shared-budget-clamped and
-/// always ramped, never snapped, so there's no click/crackle crossing
-/// into or moving around the boost zone). A thin marker at the 1.0/100%
-/// mark plus an accent-color track change past it makes the boost zone
-/// visually distinct, so a user dragging into it knows they've crossed
-/// into "louder than normal" territory rather than being surprised by it.
 class _VolumeRow extends StatelessWidget {
-  final double fraction; // 0.0 - 2.0
+  final double fraction;
   final bool boosted;
   final ValueChanged<double> onChanged;
   final VoidCallback? onDragStart;
@@ -618,9 +468,6 @@ class _VolumeRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final muted = AurumTheme.textMutedOf(context);
     final accent = AurumTheme.accentOf(context);
-    // Boost zone reads as a warmer/brighter accent than the normal 0-100%
-    // track, purely as a visual "you're past 100% now" cue — no separate
-    // widget, so the whole thing still feels like one continuous slider.
     final boostColor = Color.lerp(accent, const Color(0xFFFFC94A), 0.5)!;
     final trackColor = boosted ? boostColor : accent;
     return Padding(
@@ -633,9 +480,6 @@ class _VolumeRow extends StatelessWidget {
             child: Stack(
               alignment: Alignment.center,
               children: [
-                // 100% mark — a faint tick exactly at the slider's
-                // midpoint, behind the track, so the boost boundary is
-                // visible without needing a label.
                 Align(
                   alignment: Alignment.center,
                   child: Container(
@@ -664,13 +508,6 @@ class _VolumeRow extends StatelessWidget {
                     min: 0.0,
                     max: 2.0,
                     onChanged: onChanged,
-                    // Marks the drag window so the live mediaVolumeStream
-                    // (see the StreamBuilder wrapping this widget) knows to
-                    // stay hands-off of the slider's displayed value until
-                    // the user actually lets go — otherwise a live update
-                    // arriving mid-drag (e.g. this same setMediaVolume call
-                    // echoing back) could yank the thumb out from under the
-                    // user's finger.
                     onChangeStart: onDragStart == null
                         ? null
                         : (_) => onDragStart!(),
@@ -698,9 +535,6 @@ class _VolumeRow extends StatelessWidget {
   }
 }
 
-/// Compact icon + label + value row — used for the "Quality" line.
-/// Optionally tappable (see onTap) — the Quality row uses this to jump
-/// straight into Settings > Player & Audio for the underlying setting.
 class _SheetInfoRow extends StatelessWidget {
   final IconData icon;
   final String label;

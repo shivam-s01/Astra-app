@@ -5,49 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/onboarding_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: First-launch-only onboarding — three quick picker steps shown
-//   exactly once before the user ever sees Home, so their very first feed
-//   already leans toward music they actually like instead of a cold,
-//   generic default. Modeled after Spotify/Apple Music's own "pick a few
-//   things you like" first-run flow: a few taps, then straight into the
-//   app — no forced sign-in, no long form, fully skippable at every step.
-//
-//   STEP 1 — Country: all 195 countries, searchable, each with its flag
-//     rendered from Unicode regional indicator symbols (no image assets
-//     or extra packages needed). Auto-detected instantly from the
-//     device's system locale (Platform.localeName) — no network call, no
-//     permission prompt, resolves in the same frame the screen builds —
-//     with a "not you? tap to change" affordance that opens the same
-//     manual searchable list. Country now DRIVES the two steps after it:
-//     it reorders genre priority and scopes the artist search.
-//   STEP 2 — Genres: a small fixed local list with a live search field
-//     (never a network call, so this step always renders instantly
-//     regardless of connection state) — but re-ordered per selected
-//     country so the most locally-relevant genres surface first (e.g.
-//     India -> Bollywood/Punjabi first, US -> Pop/Hip-Hop first, Japan ->
-//     J-Pop/Anime first). See genreOrderFor() below.
-//   STEP 3 — Artists: REAL, live-searched artists via
-//     ApiService.searchArtists() — one query per selected genre, scoped
-//     with the selected country's name so results skew toward locally
-//     relevant artists for that genre instead of a hardcoded pool. This
-//     is a genuine live network lookup (same source Search already uses),
-//     not a static list, so it stays accurate as the catalog changes. If
-//     the fetch fails or is slow, a timeout falls through to a Skip-only
-//     version of this step rather than blocking first launch.
-//
-// WIRING:
-//   - Shown by _OnboardingGate in main.dart, which checks the
-//     'onboarding_complete' SharedPreferences flag once at launch and
-//     shows this screen instead of MainShell until it's set.
-//   - Genre/artist selections are pushed into RecommendationEngine via
-//     applyOnboardingGenrePreferences()/applyOnboardingArtistPreferences().
-//   - Country is saved directly as 'onboarding_country_code' /
-//     'onboarding_country_name' SharedPreferences strings.
-// =============================================================================
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -64,10 +21,6 @@ import '../services/user_region.dart';
 import '../services/artist_picker_loader.dart';
 import '../services/aurum_image_cache.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Root screen — steps through Country -> Genres -> Artists
-// ─────────────────────────────────────────────────────────────────────────────
-
 class OnboardingScreen extends StatefulWidget {
   final VoidCallback onDone;
   const OnboardingScreen({super.key, required this.onDone});
@@ -77,31 +30,18 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  int _step = 0; // 0 = country, 1 = genres, 2 = artists
+  int _step = 0;
   Country? _selectedCountry;
   final Set<String> _selectedGenres = {};
-  final Set<String> _selectedArtists = {}; // artist names
+  final Set<String> _selectedArtists = {};
 
   bool _detectedAutomatically = false;
-  // True only while the user has explicitly tapped "Auto-Detect" and the
-  // real (network) detection is in flight — drives the scanning/loading-
-  // bar animation on the Country step. Detection no longer runs
-  // automatically on open: the user is shown a choice (Auto-Detect vs.
-  // search manually) first, and nothing fires until they pick one.
   bool _detecting = false;
-  // True only when the user tapped Auto-Detect and it came back empty
-  // (no network, or every provider failed) — surfaced as a small inline
-  // notice above the manual list instead of silently dropping the user
-  // into search with zero explanation of what just happened.
   bool _detectionFailed = false;
 
   @override
   void initState() {
     super.initState();
-    // Intentionally NOT calling _runDetection() here anymore — see the
-    // _detecting comment above. The Country step now opens on a neutral
-    // choice screen; detection only starts if/when the user taps
-    // "Auto-Detect" (wired via _CountryStep.onAutoDetect below).
   }
 
   Future<void> _runDetection() async {
@@ -109,12 +49,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _detecting = true;
       _detectionFailed = false;
     });
-    // Real, accurate detection: IP-based geolocation (what actually
-    // reflects where the user is), with locale only as a last-resort
-    // fallback if every network attempt fails. This replaces the old
-    // locale-only detection, which is why it used to show "UK" for
-    // someone in India — locale reflects the phone's language setting,
-    // not its actual location.
     final detected = await detectCountryReal();
     if (!mounted) return;
     setState(() {
@@ -133,24 +67,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     setState(() => _step = step);
   }
 
-  // FIX ("baar baar onboarding aana" — country/genre/artist re-prompted on
-  // a later app open despite having been skipped/completed already):
-  // the old version wrote 'onboarding_complete' inside a try/catch that
-  // silently swallowed any failure, then called widget.onDone()
-  // unconditionally right after — so if that single SharedPreferences
-  // write failed for any reason (a transient disk/IO hiccup, the OS
-  // reclaiming the process mid-write, etc.), the user still landed on
-  // Home for THIS session (nothing looked wrong), but the flag was never
-  // actually persisted — so _OnboardingGate's next-launch check read
-  // false again and replayed the whole flow from scratch. Root cause was
-  // "fire the write once, ignore whether it actually landed."
-  //
-  // Fix: retry the write a few times with a short backoff, then actually
-  // read the flag back to confirm it landed before treating onboarding as
-  // done. Only fails through to onDone() unconfirmed as an absolute last
-  // resort (never trap a user who has no working storage at all) — the
-  // common transient-failure case now self-heals instead of silently
-  // losing the flag.
   Future<void> _finish() async {
     try {
       if (_selectedGenres.isNotEmpty) {
@@ -164,8 +80,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         );
       }
     } catch (_) {
-      // Never block first launch on a preference-save failure — worst
-      // case the user just gets a neutral, non-personalized feed.
     }
 
     var confirmed = false;
@@ -178,9 +92,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           UserRegion.update(_selectedCountry!.code, _selectedCountry!.name);
         }
         await p.setBool('onboarding_complete', true);
-        // Read it back rather than trusting setBool()'s return value —
-        // this is the actual check that would have caught the silent
-        // failure above.
         confirmed = p.getBool('onboarding_complete') == true;
       } catch (_) {
         confirmed = false;
@@ -246,9 +157,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STEP 1 — Country picker (auto-detected + manual, with search)
-// ─────────────────────────────────────────────────────────────────────────────
 class _CountryStep extends StatefulWidget {
   final Country? selected;
   final bool autoDetected;
@@ -280,12 +188,6 @@ class _CountryStepState extends State<_CountryStep> {
   @override
   void didUpdateWidget(covariant _CountryStep oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Only force the manual list open on a genuine transition out of
-    // detecting (detection finished — success or failure). Checking the
-    // current state alone (old buggy check) fired on ANY rebuild while
-    // still in the neutral/choice state, forcing _showManualList = true
-    // before the user ever tapped anything — which is why "Auto-Detect"
-    // never appeared.
     final justFinishedDetecting = oldWidget.detecting && !widget.detecting;
     if (justFinishedDetecting && widget.detectionFailed) {
       _showManualList = true;
@@ -303,12 +205,6 @@ class _CountryStepState extends State<_CountryStep> {
 
     final showDetectedBanner = widget.autoDetected && widget.selected != null && !_showManualList;
     final showScanning = widget.detecting && !_showManualList;
-    // FIX ("no country pre-selected on open, give a real choice"):
-    // detection no longer auto-fires on open, so by default nothing has
-    // happened yet — neither a detected country nor a manual search.
-    // That neutral state now shows the two-option choice screen
-    // (Auto-Detect vs. search manually) instead of jumping straight into
-    // either flow.
     final showChoice = !showScanning && !showDetectedBanner && !_showManualList;
 
     return Padding(
@@ -457,11 +353,6 @@ class _CountryStepState extends State<_CountryStep> {
             ),
           ],
           const SizedBox(height: 12),
-          // The bottom button only makes sense once a real choice has
-          // been resolved (a country picked, or the user is browsing the
-          // manual list and can Skip). On the neutral choice screen,
-          // "Auto-Detect" and "Search manually" are already the two
-          // actions available, so the button is hidden there.
           if (!showChoice)
             SizedBox(
               width: double.infinity,
@@ -493,17 +384,6 @@ class _CountryStepState extends State<_CountryStep> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Country choice screen — the neutral first state shown when the Country
-// step opens: nothing is pre-selected and nothing runs automatically.
-// The user picks one of two explicit actions:
-//   - "Auto-Detect My Country" -> triggers the real (IP-based) network
-//     detection with the scanning/loading-bar animation.
-//   - "Search Manually" -> opens the same searchable 195-country list
-//     used everywhere else in this step.
-// This replaces the old behavior where detection fired the instant the
-// screen opened with no user action at all.
-// ─────────────────────────────────────────────────────────────────────────────
 class _CountryChoiceView extends StatelessWidget {
   final Color accent;
   final VoidCallback onAutoDetect;
@@ -604,16 +484,6 @@ class _CountryChoiceView extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scanning card — shown while real (network) country detection is in
-// flight. A radar-style sweep + expanding pulse rings around a location
-// pin, entirely built from AnimationControllers/CustomPainter (no new
-// packages, no image/Lottie assets), so it's cheap on low-end devices
-// and starts rendering the instant the Country step builds. This is what
-// makes detection feel deliberate/"real" instead of an instant, opaque
-// guess — the user sees an actual scan happen while the IP lookup races
-// in the background.
-// ─────────────────────────────────────────────────────────────────────────────
 class _ScanningLocationCard extends StatefulWidget {
   final Color accent;
   final VoidCallback onChooseManually;
@@ -629,11 +499,11 @@ class _ScanningLocationCard extends StatefulWidget {
 
 class _ScanningLocationCardState extends State<_ScanningLocationCard>
     with TickerProviderStateMixin {
-  late final AnimationController _sweep; // continuous radar rotation
-  late final AnimationController _pulse; // continuous expanding rings
-  late final AnimationController _entrance; // one-shot card entrance
-  late final AnimationController _progress; // drives the loading bar fill
-  late final AnimationController _shimmer; // moving glow inside the bar
+  late final AnimationController _sweep;
+  late final AnimationController _pulse;
+  late final AnimationController _entrance;
+  late final AnimationController _progress;
+  late final AnimationController _shimmer;
 
   static const List<String> _statusMessages = [
     'Scanning your network...',
@@ -662,27 +532,16 @@ class _ScanningLocationCardState extends State<_ScanningLocationCard>
       duration: const Duration(milliseconds: 1800),
     )..repeat();
 
-    // Loading bar fill: eases up to ~92% on its own over the real network
-    // detection's worst-case window (~3.5s, see detectCountryReal) so it
-    // reads as genuine progress rather than a fake instant-complete bar —
-    // then _CountryStepState jumps it to 100% the moment detection
-    // actually resolves (see the `key` swap on this widget / didUpdateWidget
-    // in the parent, which disposes this state once detecting flips to
-    // false, so the bar is never left visibly stuck under 100%).
     _progress = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 3400),
     )..forward();
 
-    // Continuous moving highlight inside the filled portion of the bar —
-    // the "cool" shimmer sweep, independent of actual fill progress.
     _shimmer = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1100),
     )..repeat();
 
-    // Cycle the status line every ~1.1s so a slower network lookup still
-    // reads as active progress rather than a stuck spinner.
     _statusTimer = Timer.periodic(const Duration(milliseconds: 1100), (_) {
       if (!mounted) return;
       setState(() => _statusIndex = (_statusIndex + 1) % _statusMessages.length);
@@ -774,10 +633,6 @@ class _ScanningLocationCardState extends State<_ScanningLocationCard>
               ),
             ),
             const SizedBox(height: 18),
-            // Animated loading bar — eased fill + a moving shimmer
-            // highlight riding on top of the filled portion, both purely
-            // CustomPaint (no packages), so it stays cheap and matches
-            // the accent color automatically.
             SizedBox(
               width: double.infinity,
               height: 6,
@@ -786,8 +641,6 @@ class _ScanningLocationCardState extends State<_ScanningLocationCard>
                 builder: (context, _) {
                   return CustomPaint(
                     painter: _LoadingBarPainter(
-                      // Ease toward 92%, never claiming 100% until the
-                      // real network result actually lands.
                       fill: Curves.easeOutCubic.transform(_progress.value) * 0.92,
                       shimmer: _shimmer.value,
                       accent: widget.accent,
@@ -816,13 +669,9 @@ class _ScanningLocationCardState extends State<_ScanningLocationCard>
   }
 }
 
-/// Paints the loading bar: a rounded track, an eased accent-colored fill,
-/// and a soft moving highlight band that sweeps left-to-right across the
-/// filled portion on a short loop — the "shimmer" that makes the bar read
-/// as actively working rather than a static filled rectangle.
 class _LoadingBarPainter extends CustomPainter {
-  final double fill; // 0..1 how much of the bar is filled
-  final double shimmer; // 0..1 position of the moving highlight
+  final double fill;
+  final double shimmer;
   final Color accent;
   final Color track;
 
@@ -837,7 +686,6 @@ class _LoadingBarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final radius = Radius.circular(size.height / 2);
 
-    // Track (full-width, faint).
     final trackPaint = Paint()..color = track.withValues(alpha: 0.5);
     canvas.drawRRect(
       RRect.fromRectAndRadius(Offset.zero & size, radius),
@@ -850,13 +698,10 @@ class _LoadingBarPainter extends CustomPainter {
     final fillRect = Rect.fromLTWH(0, 0, fillWidth, size.height);
     final fillRRect = RRect.fromRectAndRadius(fillRect, radius);
 
-    // Base fill.
     canvas.save();
     canvas.clipRRect(fillRRect);
     canvas.drawRect(fillRect, Paint()..color = accent.withValues(alpha: 0.85));
 
-    // Moving shimmer highlight, clipped to the filled region so it never
-    // spills onto the empty track.
     final shimmerCenter = fillWidth * shimmer;
     final shimmerWidth = size.width * 0.35;
     final shimmerRect = Rect.fromLTWH(
@@ -886,10 +731,6 @@ class _LoadingBarPainter extends CustomPainter {
   }
 }
 
-/// Paints the radar: a soft rotating conic sweep wedge, two expanding
-/// pulse rings, and a static faint outer ring — all in the accent color
-/// so it matches the app's dynamic theme automatically. Pure CustomPaint,
-/// no assets, cheap enough to run continuously at 60fps.
 class _RadarPainter extends CustomPainter {
   final double sweepAngle;
   final double pulseValue;
@@ -906,7 +747,6 @@ class _RadarPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final maxRadius = size.width / 2;
 
-    // Static faint outer + mid rings for depth.
     final ringPaint = Paint()
       ..color = accent.withValues(alpha: 0.12)
       ..style = PaintingStyle.stroke
@@ -915,7 +755,6 @@ class _RadarPainter extends CustomPainter {
     canvas.drawCircle(center, maxRadius * 0.66, ringPaint);
     canvas.drawCircle(center, maxRadius * 0.34, ringPaint);
 
-    // Two staggered expanding pulse rings (fade out as they grow).
     for (final offset in [0.0, 0.5]) {
       final progress = (pulseValue + offset) % 1.0;
       final radius = maxRadius * (0.25 + progress * 0.75);
@@ -927,13 +766,11 @@ class _RadarPainter extends CustomPainter {
       canvas.drawCircle(center, radius, pulsePaint);
     }
 
-    // Rotating radar sweep — a conic gradient wedge fading to
-    // transparent, like a classic radar scan line.
     final sweepRect = Rect.fromCircle(center: center, radius: maxRadius);
     final sweepPaint = Paint()
       ..shader = SweepGradient(
         startAngle: 0,
-        endAngle: 3.14159265 / 2, // 90-degree bright wedge
+        endAngle: 3.14159265 / 2,
         colors: [
           accent.withValues(alpha: 0.0),
           accent.withValues(alpha: 0.35),
@@ -951,17 +788,6 @@ class _RadarPainter extends CustomPainter {
   }
 }
 
-// Lightweight, top-grade entrance animation for the auto-detected country
-// card — pure Flutter AnimationControllers only (no new packages, no
-// heavy Lottie/Rive assets), so this stays instant and cheap on any
-// device while still feeling deliberate and polished:
-//   1. Card: fades + slides up + scales in on a slight overshoot curve.
-//   2. A soft accent-colored glow ring pulses outward once behind the
-//      flag right after the card lands, like a locate-me "ping".
-//   3. The flag itself pops in with a short elastic bounce, staggered
-//      slightly after the card so the eye has something to follow.
-//   4. The "DETECTED AUTOMATICALLY" label and country name fade/slide in
-//      last, in a quick stagger, finishing the whole sequence in ~650ms.
 class _DetectedCountryCard extends StatefulWidget {
   final Country country;
   final Color accent;
@@ -1000,9 +826,6 @@ class _DetectedCountryCardState extends State<_DetectedCountryCard>
       duration: const Duration(milliseconds: 650),
     );
 
-    // Card container: quick fade + upward slide + gentle overshoot scale
-    // (easeOutBack gives that "settles with a tiny bounce" premium feel
-    // without needing a physics package).
     _cardFade = CurvedAnimation(
       parent: _entrance,
       curve: const Interval(0.0, 0.45, curve: Curves.easeOut),
@@ -1020,7 +843,6 @@ class _DetectedCountryCardState extends State<_DetectedCountryCard>
       ),
     );
 
-    // Flag: staggered slightly after the card, elastic pop.
     _flagScale = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _entrance,
@@ -1028,7 +850,6 @@ class _DetectedCountryCardState extends State<_DetectedCountryCard>
       ),
     );
 
-    // Label + name: last in the stagger, quick fade/slide.
     _labelFade = CurvedAnimation(
       parent: _entrance,
       curve: const Interval(0.35, 0.7, curve: Curves.easeOut),
@@ -1050,10 +871,6 @@ class _DetectedCountryCardState extends State<_DetectedCountryCard>
       ),
     );
 
-    // A single soft "locate-me" ping ring, fired once right after the
-    // card mostly settles — cheap (one Container + BoxShadow-less circle
-    // painted via a border, no image/shader work) and never repeats, so
-    // it reads as a one-time confirmation rather than a distracting loop.
     _ping = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -1126,7 +943,6 @@ class _DetectedCountryCardState extends State<_DetectedCountryCard>
             const SizedBox(height: 16),
             Row(
               children: [
-                // Flag + one-shot "ping" ring behind it.
                 SizedBox(
                   width: 48,
                   height: 48,
@@ -1209,9 +1025,6 @@ class _DetectedCountryCardState extends State<_DetectedCountryCard>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STEP 2 — Genre picker (with search), re-ordered by selected country
-// ─────────────────────────────────────────────────────────────────────────────
 class _GenreStep extends StatefulWidget {
   final Country? country;
   final Set<String> selected;
@@ -1352,9 +1165,6 @@ class _GenreStepState extends State<_GenreStep> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STEP 3 — Artist picker — LIVE search results, scoped by country + genres
-// ─────────────────────────────────────────────────────────────────────────────
 class _ArtistStep extends StatefulWidget {
   final Country? country;
   final Set<String> genres;
@@ -1378,17 +1188,14 @@ class _ArtistStep extends StatefulWidget {
 }
 
 class _ArtistStepState extends State<_ArtistStep> {
-  List<ArtistSimple>? _artists; // null = loading, [] = failed/empty
+  List<ArtistSimple>? _artists;
   bool _saving = false;
 
-  // ARTIST SEARCH: user apna pasandida artist naam se dhoondh sake (pehle
-  // picker me search hi nahi tha — sirf jo grid me aaya wahi choose hota).
   final TextEditingController _searchCtrl = TextEditingController();
   Timer? _searchDebounce;
-  List<ArtistSimple>? _searchResults; // null = search band
+  List<ArtistSimple>? _searchResults;
   bool _searching = false;
   int _searchToken = 0;
-  // Selected artists ki photo yaad rakhne ke liye (chips me dikhane ko).
   final Map<String, ArtistSimple> _known = {};
 
   @override
@@ -1431,47 +1238,14 @@ class _ArtistStepState extends State<_ArtistStep> {
 
   Future<void> _loadArtists() async {
     try {
-      // FIX ("40 artists minimum"): genre count was capped at 4 and each
-      // genre query capped at limit:10 — worst case that's a hard 40-item
-      // ceiling BEFORE de-duplication even runs, so overlapping results
-      // between genres routinely left the picker well under 40. Now:
-      // pull from every selected genre (not just the first 4) and ask
-      // each query for more (limit: 16) so there's enough raw supply
-      // even after duplicates are dropped and the merge cap (60) still
-      // comfortably clears the 40-artist floor in the common case.
       final genreList = widget.genres.isNotEmpty
           ? kOnboardingGenres.where((g) => widget.genres.contains(g.key)).toList()
           : genreOrderFor(widget.country?.code).take(4).toList();
 
       final countryName = widget.country?.name;
       final countryCode = widget.country?.code;
-      // Computed once up front (also reused by the top-up logic below):
-      // whether Saavn's India-only catalog is a safe source for this
-      // country. See searchArtistsRegionScoped's doc comment — Saavn has
-      // no artist-type filter and no country awareness, so racing it in
-      // for a non-Indian query let mismatched Indian results win the
-      // race purely on speed, which is why picks looked completely
-      // unrelated to the chosen country/genre.
       final isIndiaOrUnset = countryCode == null || countryCode == 'IN';
 
-      // FIX: the old query was a single loose string like "pop United
-      // Kingdom artists" — that's a free-text search with no real filter
-      // behind it, so a country/genre combo with thin native coverage
-      // would silently backfill with generically popular but unrelated
-      // artists. Changes here:
-      //   1. Query phrasing is now genre-aware and region-native where we
-      //      know it (e.g. Bollywood + India -> "bollywood playback
-      //      singers India", not just "bollywood India artists"), which
-      //      biases the underlying search much more tightly.
-      //   2. Every result is tagged with which genre query produced it,
-      //      and results are taken round-robin across genres (instead of
-      //      genre-1's results filling the whole grid) so the picker
-      //      visibly reflects every genre + the chosen country, not just
-      //      whichever query happened to return the most matches.
-      //   3. Saavn is only raced in for India/unset — see isIndiaOrUnset
-      //      above. Every other country now searches YT Music's
-      //      artist-type-filtered shelves only, which is what actually
-      //      fixes results matching the picked country/genre.
       final queries = genreList.map((g) {
         final seed = buildArtistSearchSeed(
           genreSeed: g.searchSeed,
@@ -1484,20 +1258,6 @@ class _ArtistStepState extends State<_ArtistStep> {
             .then((list) => MapEntry(g.key, list));
       }).toList();
 
-      // PERF FIX ("artist select screen bahut time leta hai"): the India
-      // top-up pool below has zero dependency on the genre queries above
-      // — it's a completely separate curated-pool fetch — but it used to
-      // only ever get kicked off AFTER `results` resolved, purely because
-      // it was written as a later step. That's pure added latency stacked
-      // on top of an already-slow first screen: worst case was queries
-      // (6s) + topUp (4s) + extra-genre widen (6s) + fallback (4s) = up to
-      // 20s of sequential network waiting before this step ever finishes.
-      // Starting it here, right alongside the genre queries, means it's
-      // already in flight (or already done) by the time it's actually
-      // needed a few lines down — for the common India/unset case this
-      // removes one whole sequential round-trip from the critical path
-      // for free. Only actually awaited/used later if merged still comes
-      // up short, exactly as before.
       final earlyIndiaTopUp = isIndiaOrUnset
           ? ApiService.fetchHomeArtists()
               .timeout(const Duration(seconds: 3))
@@ -1509,8 +1269,6 @@ class _ArtistStepState extends State<_ArtistStep> {
         onTimeout: () => <MapEntry<String, List<ArtistSimple>>>[],
       );
 
-      // CURATED-FIRST merge: country ke top artists pehle (guaranteed
-      // quality), phir genre-wise search results round-robin, dedup.
       final merged = await ArtistPickerLoader.buildInitialList(
         genreBuckets: results.map((e) => e.value).toList(),
         includeSaavn: isIndiaOrUnset,
@@ -1519,24 +1277,6 @@ class _ArtistStepState extends State<_ArtistStep> {
       for (final m in merged) {
         _known.putIfAbsent(m.name, () => m);
       }
-
-      // FIX: if the genre-scoped queries still come back under the
-      // 40-artist floor (e.g. only 1-2 genres picked, or a niche
-      // genre+country combo with thin native coverage), top up with the
-      // general home-artist pool BEFORE giving up — this is what
-      // actually guarantees "at least 40 artists" instead of silently
-      // showing whatever the genre queries happened to return.
-      //
-      // IMPORTANT: fetchHomeArtists() is a curated pool that's India-
-      // centric (Bollywood/Punjabi/Pop/Retro) — it has no country
-      // parameter. Using it to top up for a non-Indian country would be
-      // a jarring mismatch (a US/Japan user suddenly seeing Arijit
-      // Singh/Diljit Dosanjh). So this top-up only fires for India (or
-      // when no country was picked/detected at all, where there's no
-      // better default). Every other country instead widens its OWN
-      // genre search net first (see the extra queries below) rather
-      // than falling back to a mismatched pool.
-      // (countryCode / isIndiaOrUnset already computed above.)
 
       if (merged.length < 40 && isIndiaOrUnset) {
         try {
@@ -1550,12 +1290,6 @@ class _ArtistStepState extends State<_ArtistStep> {
         } catch (_) {}
       }
 
-      // For every OTHER country, if still under the floor, widen the net
-      // with additional genre queries beyond the ones already tried
-      // (the full country-appropriate genre priority list, not just
-      // what the user picked) — this keeps every top-up artist at least
-      // genre/region-relevant instead of falling back to an unrelated
-      // curated pool.
       if (merged.length < 40 && !isIndiaOrUnset) {
         try {
           final triedKeys = genreList.map((g) => g.key).toSet();
@@ -1590,11 +1324,6 @@ class _ArtistStepState extends State<_ArtistStep> {
         } catch (_) {}
       }
 
-      // Fallback: if genre-scoped search came back thin (e.g. no genres
-      // picked and country search too narrow), fall back to the general
-      // home-artist pool so this step is never empty for no good reason.
-      // Covers the "topUp above wasn't enough either" case too, e.g.
-      // fetchHomeArtists() itself returned an overlapping/small set.
       if (merged.length < 6) {
         try {
           final fallback = await (earlyIndiaTopUp ?? ApiService.fetchHomeArtists()
@@ -1815,10 +1544,6 @@ class _ArtistStepState extends State<_ArtistStep> {
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared small widgets
-// ─────────────────────────────────────────────────────────────────────────────
 
 class _SearchField extends StatelessWidget {
   final String hint;

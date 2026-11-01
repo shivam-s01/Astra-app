@@ -19,42 +19,12 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/**
- * Aurum's own in-app DSP for Premium Sound / Equalizer / Bass Boost / Volume Boost.
- *
- * WHY THIS EXISTS: the old implementation attached the phone vendor's AudioEffects
- * (Equalizer, LoudnessEnhancer, Virtualizer, BassBoost, DynamicsProcessing) to the
- * player's audio session. Those live inside the device audio HAL, differ per phone,
- * and get reset / re-routed / overloaded on every AudioTrack recreate, route change
- * and thermal throttle -> "plays fine for a while, then glitches". Tuning gains could
- * never fix that, because the problem was where the processing ran, not its values.
- *
- * This core runs inside the app, on the decoded PCM, with no vendor code:
- *
- *   input -> stereo widener (side > 250 Hz only) -> smoothed gain (makeup - headroom)
- *         -> 5-band EQ + premium bass shelf (TPT state-variable filters, double precision)
- *         -> look-ahead brick-wall limiter -> output
- *
- *  - Every parameter change is smoothed (40 ms) in the dB domain and biquad
- *    coefficients are recomputed from the smoothed value, so there is no zipper noise.
- *  - Headroom is automatic: the real peak of the combined EQ response is measured
- *    and part of it is subtracted up front, so boosts don't slam the limiter.
- *  - The limiter looks ahead 3 ms, so it never overshoots; attack is a smooth
- *    box-filtered ramp (no hard clipping), release is a slow one-pole (100 ms).
- *  - When every parameter is neutral the core is a pure delay line (bit-exact).
- *
- * Pure Kotlin on purpose (no Android / Media3 imports): it is unit-tested on a JVM.
- * [AurumDspAudioProcessor] is the thin Media3 wrapper around it.
- */
 class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
-
-    /** Immutable parameter set. [bandDb] has [BANDS] entries (dB). */
     class Params(
         bandDb: FloatArray = FloatArray(BANDS),
         val bassShelfDb: Float = 0f,
         val widen: Float = 0f,
         val makeupDb: Float = 0f,
-        /** 0..1 amount of the warm "hall" reverb (Spiritual Sound). 0 = off, bit-exact bypass. */
         val reverb: Float = 0f,
     ) {
         val bandDb: FloatArray = bandDb.copyOf(BANDS)
@@ -63,31 +33,22 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
     companion object {
         const val BANDS = 5
 
-        // 5 user bands + 1 dedicated "premium bass" shelf.
         private const val FILTERS = BANDS + 1
-        private const val TICK = 32                  // control-rate: params updated every 32 frames
+        private const val TICK = 32
         private const val LOOKAHEAD_MS = 3.0
         private const val RELEASE_MS = 100.0
-        /** Default time constant for parameter smoothing. */
         const val DEFAULT_SMOOTH_MS = 40.0
         private const val WIDEN_SPLIT_HZ = 250.0
 
-        /** Time constant of the fade-out when the effect is switched off (still click-free). */
         const val OFF_SMOOTH_MS = 60.0
 
-        /** Limiter ceiling: -0.5 dBFS. */
         const val CEILING = 0.944f
 
-        /**
-         * Fraction of the EQ's positive peak that is pre-attenuated. 0.6 keeps the limiter
-         * almost idle on normal material while not making EQ/Premium audibly quieter.
-         */
         const val HEADROOM_FACTOR = 0.6
 
         private const val MAX_DB = 15f
         private const val DENORM_GUARD = 1e-20
 
-        // 0 = low shelf, 1 = peaking, 2 = high shelf
         private val TYPE = intArrayOf(0, 1, 1, 1, 2, 0)
         private val FREQ = doubleArrayOf(110.0, 230.0, 910.0, 3600.0, 9000.0, 85.0)
         private const val PEAK_Q = 1.0
@@ -97,12 +58,11 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
 
         private val UNITY = Params()
 
-        // ── Spiritual hall reverb (Freeverb topology, tuned dark/warm) ──
         private val COMB_LEN = intArrayOf(1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617)
         private val AP_LEN = intArrayOf(556, 441, 341, 225)
         private const val STEREO_SPREAD = 23
-        private const val REV_FB = 0.90f          // ~1.8 s tail
-        private const val REV_DAMP = 0.58f        // heavy HF damping -> soft, never shrill
+        private const val REV_FB = 0.90f
+        private const val REV_DAMP = 0.58f
         private const val REV_IN_GAIN = 0.015f
         private const val REV_WET_SCALE = 3.0f
         private const val REV_GUARD = 1e-18f
@@ -110,38 +70,28 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
 
     private val target = AtomicReference(UNITY)
 
-    /** Thread-safe: may be called from any thread. */
     fun setParams(p: Params) {
         target.set(p)
     }
 
-    // ── configuration ───────────────────────────────────────────────
     private var sr = 0
     private var ch = 0
-    private var la = 0                       // look-ahead length in frames (L)
+    private var la = 0
 
-    // ── smoothed current values ─────────────────────────────────────
     private val curDb = FloatArray(FILTERS)
     private var curWiden = 0f
     private var curMakeup = 0f
     private var smoothK = 0.0
-    private var smoothKOff = 0.0        // faster fade used when the target is fully neutral (effect OFF)
+    private var smoothKOff = 0.0
     private var headroomDb = 0.0
     private var headroomDirty = false
     private var tickCount = 0
 
-    // ── filters (TPT / Cytomic state-variable filters) ──────────────
-    // Chosen over direct-form biquads on purpose: the integrator states of an SVF do not
-    // depend on the gain coefficient, so changing a band's gain while audio is flowing does
-    // not produce the state-mismatch "zipper" a time-varying biquad does.
     private val fg = DoubleArray(FILTERS)
     private val fk = DoubleArray(FILTERS)
     private val fa1 = DoubleArray(FILTERS)
     private val fa2 = DoubleArray(FILTERS)
     private val fa3 = DoubleArray(FILTERS)
-    // Output-mix coefficients. fm* = value in use right now, tm* = target for this tick,
-    // dm* = per-sample step. They are interpolated sample-by-sample: a step in these
-    // (output = m0*x + m1*bandpass + m2*lowpass) is what would otherwise click.
     private val fm0 = DoubleArray(FILTERS) { 1.0 }
     private val fm1 = DoubleArray(FILTERS)
     private val fm2 = DoubleArray(FILTERS)
@@ -154,20 +104,17 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
     private val act = BooleanArray(FILTERS)
     private val actIdx = IntArray(FILTERS)
     private var actCount = 0
-    private val tanHalfFc = DoubleArray(FILTERS)     // tan(pi * fc / sr)
+    private val tanHalfFc = DoubleArray(FILTERS)
     private val ic1 = Array(2) { DoubleArray(FILTERS) }
     private val ic2 = Array(2) { DoubleArray(FILTERS) }
 
-    // response-peak probe: tan(w/2) at RESP_POINTS log-spaced frequencies
     private val probeTan = DoubleArray(RESP_POINTS)
 
-    // ── widener ─────────────────────────────────────────────────────
     private var sLow = 0.0
     private var sCoef = 0.0
-    private var widenNow = 0f            // value in use (ramped per sample)
+    private var widenNow = 0f
     private var widenStep = 0f
 
-    // ── reverb ──────────────────────────────────────────────────────
     private var curReverb = 0f
     private var reverbNow = 0f
     private var reverbStep = 0f
@@ -183,51 +130,36 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
     private val combFiltR = FloatArray(COMB_LEN.size)
     private var rvL = 0f
     private var rvR = 0f
-    // Reverb *input* fade-in (0 -> 1, ~20 ms time constant). Without it the first delayed
-    // samples of a freshly started reverb appear as a step ("tick") when it is switched on.
     private var revIn = 0f
     private var revInCoef = 0f
 
-    // ── gain ramp ───────────────────────────────────────────────────
     private var gain = 1.0
     private var gainTo = 1.0
     private var gainStep = 0.0
 
-    // ── limiter ─────────────────────────────────────────────────────
-    private var gtRing = FloatArray(0)       // per-frame desired gain history
-    private var boxRing = FloatArray(0)      // released-gain history (box filter)
+    private var gtRing = FloatArray(0)
+    private var boxRing = FloatArray(0)
     private var ti = 0
     private var sinceReduce = 0
     private var rVal = 1f
     private var boxSum = 0.0
     private var onesRun = 0
     private var relCoef = 0f
-    // False while every parameter is neutral: the limiter then stops *detecting* (it only
-    // finishes releasing), so a hot master (peaks above -0.5 dBFS) is NOT altered when the
-    // effect is off, and the core can return to the bit-exact bypass afterwards.
     private var limDetect = true
 
-    // ── delay line (look-ahead) ─────────────────────────────────────
     private var ring = FloatArray(0)
     private var head = 0
     private var count = 0
 
-    // ── bookkeeping ─────────────────────────────────────────────────
     private var phase = 0
     private var identity = true
 
-    /** True if the last [process] call ran the active (non-bit-exact) path at least once. */
     var lastCallActive = false
         private set
 
-    /** Frames received but not yet delivered (what [process] with flushing=true must drain). */
     val pendingFrames: Int get() = count
 
     val lookaheadFrames: Int get() = la
-
-    // ════════════════════════════════════════════════════════════════
-    // Setup
-    // ════════════════════════════════════════════════════════════════
 
     fun configure(sampleRate: Int, channels: Int) {
         require(channels in 1..2) { "AurumDspCore supports 1 or 2 channels" }
@@ -272,7 +204,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
         gainStep = 0.0
     }
 
-    /** Drops all audio history (seek / new stream). Parameters and their smoothing are kept. */
     fun reset() {
         if (ch == 0) return
         resetState()
@@ -362,10 +293,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
         onesRun = la
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // Filters
-    // ════════════════════════════════════════════════════════════════
-
     private fun recompute(f: Int) {
         val db = curDb[f].toDouble()
         if (db == 0.0) {
@@ -384,21 +311,21 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
         val g: Double
         val k: Double
         when (TYPE[f]) {
-            1 -> {                                   // bell
+            1 -> {
                 g = tanHalfFc[f]
                 k = 1.0 / (PEAK_Q * aa)
                 tm0[f] = 1.0
                 tm1[f] = k * (aa * aa - 1.0)
                 tm2[f] = 0.0
             }
-            0 -> {                                   // low shelf
+            0 -> {
                 g = tanHalfFc[f] / sqrt(aa)
                 k = 1.0 / SHELF_Q
                 tm0[f] = 1.0
                 tm1[f] = k * (aa - 1.0)
                 tm2[f] = aa * aa - 1.0
             }
-            else -> {                                // high shelf
+            else -> {
                 g = tanHalfFc[f] * sqrt(aa)
                 k = 1.0 / SHELF_Q
                 tm0[f] = aa * aa
@@ -420,7 +347,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
         actCount = n
     }
 
-    /** Peak (dB) of the combined EQ magnitude response over 20 Hz..20 kHz. */
     private fun measurePeakDb(): Double {
         if (actCount == 0) return 0.0
         var peak = -1e9
@@ -428,7 +354,7 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
             var db = 0.0
             for (n in 0 until actCount) {
                 val f = actIdx[n]
-                val om = probeTan[p] / fg[f]                 // normalised analog frequency
+                val om = probeTan[p] / fg[f]
                 val dr = 1.0 - om * om
                 val di = fk[f] * om
                 val den = dr * dr + di * di
@@ -443,10 +369,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
 
     private fun outGain(): Double =
         10.0.pow((curMakeup - HEADROOM_FACTOR * headroomDb) / 20.0)
-
-    // ════════════════════════════════════════════════════════════════
-    // Control (once per TICK frames)
-    // ════════════════════════════════════════════════════════════════
 
     private fun sane(v: Float): Float = if (v.isFinite()) v.coerceIn(-MAX_DB, MAX_DB) else 0f
 
@@ -492,8 +414,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
             curMakeup = n
         }
 
-        // Headroom is derived from the *smoothed* filters, re-measured every 4th tick
-        // while they move (and once more when they settle).
         if (filtersChanged) {
             headroomDirty = true
             headroomDb = measurePeakDb().coerceAtLeast(0.0)
@@ -522,7 +442,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
         val limiterIdle = rVal == 1f && onesRun >= la
         val nowIdentity = allZero && limiterIdle && headroomDb == 0.0
         if (nowIdentity && !identity) {
-            // entering bit-exact mode: drop stale (≈ -80 dB) filter tails
             for (c in 0..1) { ic1[c].fill(0.0); ic2[c].fill(0.0) }
             sLow = 0.0
             limiterToIdle()
@@ -533,10 +452,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
         }
         identity = nowIdentity
     }
-
-    // ════════════════════════════════════════════════════════════════
-    // Audio
-    // ════════════════════════════════════════════════════════════════
 
     private fun bq(c: Int, x: Double, ph: Int): Double {
         var v0 = x
@@ -557,12 +472,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
         return v0
     }
 
-    /**
-     * Processes [frames] interleaved frames in place and returns how many output frames were
-     * written to the front of [data]. Because of the look-ahead, the first (lookahead-1) input
-     * frames produce no output; they come out at the end via a flushing call
-     * (pass [pendingFrames] zero frames with flushing = true).
-     */
     fun process(data: FloatArray, frames: Int, flushing: Boolean = false): Int {
         if (ch == 0 || la == 0) return frames
         val cc = ch
@@ -591,7 +500,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
                     y0 = x0.toFloat()
                     y1 = x1.toFloat()
                 } else {
-                    // widener (stereo only): boost side content above ~250 Hz
                     if (cc == 2) {
                         val m = (x0 + x1) * 0.5
                         val s = (x0 - x1) * 0.5
@@ -603,8 +511,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
                             x1 = m - s2
                         }
                     }
-                    // Spiritual hall: soft, dark reverb blended in before the EQ, so the
-                    // EQ's high-cut also smooths the tail.
                     val rw = (reverbNow + reverbStep * ph) * REV_WET_SCALE
                     if (rw > 0f) {
                         revIn += (1f - revIn) * revInCoef
@@ -621,7 +527,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
                     y0 = v0.toFloat()
                     y1 = v1.toFloat()
 
-                    // ── look-ahead limiter: gain computed for this frame, applied L-1 frames later
                     val pk = max(abs(y0), abs(y1))
                     val gt = if (limDetect && pk > CEILING) CEILING / pk else 1f
                     val idx = ti
@@ -637,9 +542,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
                     if (m < rVal) {
                         rVal = m
                     } else {
-                        // Float step near 1.0 is ~6e-8: a pure one-pole release stalls just below 1
-                        // (-0.001 dB forever) and the core could never return to bit-exact bypass.
-                        // A tiny minimum step guarantees it always finishes.
                         var inc = (m - rVal) * relCoef
                         if (inc < 1e-7f) inc = 1e-7f
                         rVal += inc
@@ -658,7 +560,6 @@ class AurumDspCore(private val smoothMs: Double = DEFAULT_SMOOTH_MS) {
                     if (lim > 1f) lim = 1f
                 }
 
-                // ── delay line
                 val wp = ((head + count) % laF) * cc
                 ring[wp] = y0
                 if (cc == 2) ring[wp + 1] = y1

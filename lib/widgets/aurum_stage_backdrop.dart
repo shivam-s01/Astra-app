@@ -19,32 +19,9 @@ import '../services/aurum_image_cache.dart';
 import '../providers/player_provider.dart';
 import '../theme/aurum_theme.dart';
 
-/// AurumStageBackdrop — Echo Nightly-style home background.
-///
-/// Echo's actual "makkhan" look is NOT a color glow — it's the current
-/// track's own album art, blurred and grain-textured, sitting behind the
-/// top of the screen (Coil's one-shot BlurTransformation, drawn once,
-/// composited with a noise bitmap so it reads as tactile material instead
-/// of a flat gradient PNG).
-///
-/// Two things make this both "ekdum makkhan" AND lightweight/fast:
-///   1. The expensive blur shader runs ONCE per song, not every frame.
-///      It's baked to a static bitmap via RenderRepaintBoundary.toImage()
-///      (same technique already proven in full_player_screen.dart's
-///      _BlurredArtworkCore) and from then on it's just a RawImage blit —
-///      as cheap as drawing any other photo, however long the song plays.
-///   2. The grain texture is a tiny (64x64) procedurally generated noise
-///      bitmap, built once per app session and tiled — no bundled asset,
-///      no extra APK weight, no per-frame cost.
 class AurumStageBackdrop extends StatelessWidget {
   final double height;
 
-  /// When given, the whole stage scrolls away WITH the page (1:1, like
-  /// Spotify's top glow) instead of staying pinned behind the content.
-  /// Pinned art behind scrolling cards is what made the top look awkward,
-  /// especially in light mode where list content slides over a coloured
-  /// patch. Cost: one Transform per scroll frame — the stage itself sits in
-  /// a RepaintBoundary, so nothing inside it is repainted while scrolling.
   final ScrollController? scrollController;
   const AurumStageBackdrop({
     super.key,
@@ -56,34 +33,8 @@ class AurumStageBackdrop extends StatelessWidget {
   Widget build(BuildContext context) {
     final song = context.select<PlayerProvider, Song?>((p) => p.currentSong);
     final isLight = Theme.of(context).brightness == Brightness.light;
-    // FIX ("wallpaper theme mein awkward patch dikh raha hai"): this used
-    // to blend into the hardcoded AurumTheme.darkBg/lightBg constants,
-    // which is correct for the fixed Dark/Light themes but WRONG for
-    // Material You "wallpaper" mode (AurumTheme.dynamicTheme()) — that
-    // mode's actual page background is a device-specific dynamic.surface
-    // color that has nothing to do with darkBg/lightBg. Blending to the
-    // wrong color is exactly what created the visible seam/patch right
-    // where this backdrop's scrim meets the page underneath it. bgOf()
-    // reads the THEME'S OWN resolved scaffoldBackgroundColor (same value
-    // the Scaffold itself is already painted with, whichever theme is
-    // active), so this now always blends into whatever's actually behind
-    // it — Dark, Light, or wallpaper-derived — instead of a fixed guess.
     final pageBg = AurumTheme.bgOf(context);
 
-    // PREMIUM UPGRADE ("Spotify-level top glow, light mode mein bahut
-    // awkward/hard dikh raha tha"): a plain 2-stop linear fade from
-    // accent@opacity straight to pageBg reads fine in dark mode (a dark
-    // page forgives a visible color wash) but in light mode the same
-    // technique shows as a hard, saturated color band that cuts sharply
-    // into the white page — exactly the teal patch in the reported
-    // screenshot, made worse whenever Dynamic Color resolves the accent
-    // to a punchier light-theme primary. Real premium references
-    // (Spotify's own home glow) never do a flat 2-stop fade — they ease
-    // through several stops so the color visibly THINS before it
-    // dissolves, and they deliberately run the glow softer and shorter
-    // in light mode than in dark mode rather than reusing one curve for
-    // both. Home feed CONTENT is untouched by this — purely the backdrop
-    // visual behind it.
     final glowOpacity = isLight ? 0.06 : 0.14;
     final glowStops = isLight
         ? const [0.0, 0.22, 0.48, 0.72, 1.0]
@@ -96,7 +47,6 @@ class AurumStageBackdrop extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // ── Base fallback (idle / no artwork) ──
             DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -116,12 +66,6 @@ class AurumStageBackdrop extends StatelessWidget {
                 ),
               ),
             ),
-            // ── Theme bloom: two soft, off-centre pools of the active theme's
-            // own accent colours (top-left accent, top-right light accent).
-            // They are what makes the top of Home read as part of the chosen
-            // colour theme in BOTH modes — gentler in light so it stays a
-            // clean pastel wash, richer in dark. Static, inside the same
-            // RepaintBoundary, so zero per-frame cost. ──
             DecoratedBox(
               decoration: BoxDecoration(
                 gradient: RadialGradient(
@@ -148,10 +92,6 @@ class AurumStageBackdrop extends StatelessWidget {
                 ),
               ),
             ),
-            // ── Baked blurred artwork (the actual Echo-style photo wash) ──
-            // LIGHT MODE: the art is only a soft pastel hint (40% strength)
-            // — at full strength a saturated cover became a hard coloured
-            // blob on the white page. Dark mode keeps the full-strength wash.
             if (song != null && song.artworkUrl.isNotEmpty)
               Opacity(
                 opacity: isLight ? 0.34 : 0.92,
@@ -161,16 +101,7 @@ class AurumStageBackdrop extends StatelessWidget {
                   isLight: isLight,
                 ),
               ),
-            // ── Grain texture — gives dark mode its tactile "material"
-            // feel. Skipped in light mode: overlay-blended noise on a
-            // near-white page only reads as dirty speckle. ──
             if (!isLight) const _GrainOverlay(),
-            // ── Readability scrim: fades this stage into the flat page
-            // background underneath the scroll content. Same multi-stop
-            // easing as the base gradient above — a single 0→0.55 jump
-            // (the old middle stop) was itself a visible seam once the
-            // base gradient was smoothed, so this needed the same
-            // treatment to stay seam-free end to end.
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -183,8 +114,6 @@ class AurumStageBackdrop extends StatelessWidget {
                     pageBg.withOpacity(0.78),
                     pageBg,
                   ],
-                  // Light mode dissolves into the page earlier, so no
-                  // coloured band is ever left near the first row.
                   stops: isLight
                       ? const [0.0, 0.40, 0.62, 0.82, 1.0]
                       : const [0.0, 0.55, 0.72, 0.86, 1.0],
@@ -204,8 +133,6 @@ class AurumStageBackdrop extends StatelessWidget {
       builder: (context, child) {
         var dy = 0.0;
         if (ctrl.hasClients) {
-          // Only follows downward scrolling; overscroll bounce keeps the
-          // stage pinned so no empty band opens above it.
           dy = -ctrl.position.pixels.clamp(0.0, height);
         }
         return Transform.translate(offset: Offset(0, dy), child: child);
@@ -214,14 +141,6 @@ class AurumStageBackdrop extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Bakes the blur once per song (ValueKey at the call site guarantees this
-// only rebuilds on a real song change) instead of running a live shader
-// every composited frame. Same technique as full_player_screen.dart's
-// _BlurredArtworkCore, tuned lighter for a background-strip use case:
-// smaller decode target, lower sigma, no Ken Burns pan (this sits behind
-// scrolling content, not a focused full-screen stage).
-// ─────────────────────────────────────────────────────────────────────────
 class _BakedBlurStage extends StatefulWidget {
   final Song song;
   final bool isLight;
@@ -266,9 +185,6 @@ class _BakedBlurStageState extends State<_BakedBlurStage> {
         }
         return;
       }
-      // pixelRatio 1.0 — same reasoning as the full player: the source
-      // decodes at a small capped width already, and a heavy blur
-      // destroys detail a higher-res capture would've preserved anyway.
       final image = await boundary.toImage(pixelRatio: 1.0);
       if (!mounted) {
         image.dispose();
@@ -279,8 +195,6 @@ class _BakedBlurStageState extends State<_BakedBlurStage> {
       setState(() => _snapshot = image);
       old?.dispose();
     } catch (_) {
-      // Live blur just stays on screen if a capture attempt fails —
-      // never worse than not baking, never a crash.
     } finally {
       _capturing = false;
     }
@@ -299,12 +213,10 @@ class _BakedBlurStageState extends State<_BakedBlurStage> {
           children: [...previousChildren, if (currentChild != null) currentChild],
         ),
         child: snapshot != null
-            // Post-bake: plain bitmap blit, zero shader cost from here on.
             ? SizedBox.expand(
                 key: const ValueKey('baked'),
                 child: RawImage(image: snapshot, fit: BoxFit.cover),
               )
-            // Pre-bake: the one time the real blur shader runs for this song.
             : RepaintBoundary(
                 key: _repaintKey,
                 child: _LiveBlur(song: widget.song, isLight: widget.isLight),
@@ -321,24 +233,6 @@ class _LiveBlur extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // FIX ("thumbnail background akward lag raha hai, blob/border jaisa
-    // dikh raha hai"): two things were causing the visible patch/seam —
-    //   1. TileMode.clamp stretches the artwork's EDGE pixels outward to
-    //      fill the blur's spread. If the edge happened to land on a
-    //      bright or saturated part of the art, that stretched smear
-    //      showed up as an obvious, unnatural blob — exactly the round
-    //      patch visible in the reported screenshot.
-    //   2. The overscan (1.15x) wasn't nearly enough to absorb a sigma-30
-    //      blur's spread, so the blur's own soft-but-still-visible edge
-    //      sat close to the widget's actual bounds — reading as a faint
-    //      "border" around the backdrop instead of a seamless wash.
-    // Fix: mirror the edges instead of clamping them (TileMode.mirror —
-    // no stretched smear, since it reflects real image content instead
-    // of repeating a single edge pixel), scale up enough that the blur's
-    // spread is fully absorbed before it reaches the visible bounds, and
-    // radially fade the artwork's own alpha toward the edges so what
-    // little of the blur boundary remains dissolves into the base
-    // gradient rather than ending in a hard line.
     return Transform.scale(
       scale: 1.6,
       child: ImageFiltered(
@@ -347,8 +241,6 @@ class _LiveBlur extends StatelessWidget {
           sigmaY: isLight ? 26 : 30,
           tileMode: TileMode.mirror,
         ),
-        // Uses the shared AurumImageCache disk cache — same file the
-        // mini player/hero already downloaded, so no extra network fetch.
         child: ShaderMask(
           shaderCallback: (rect) => const RadialGradient(
             radius: 0.85,
@@ -369,15 +261,10 @@ class _ArtworkFill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Reuses AurumArtwork's own resolution paths (network/content/file)
-    // via the app's existing widget so cache hits are shared with every
-    // other place this song's art is already displayed on screen.
     return SizedBox.expand(
       child: FittedBox(
         fit: BoxFit.cover,
         child: SizedBox(
-          // Small fixed decode size — matches AurumArtwork's own
-          // "why decode more than the blur can preserve" logic.
           width: 200,
           height: 200,
           child: _NoFadeArtwork(url: url),
@@ -387,9 +274,6 @@ class _ArtworkFill extends StatelessWidget {
   }
 }
 
-// Thin wrapper so this file doesn't need to import aurum_artwork.dart's
-// full surface — kept local and minimal since this call site never needs
-// fade/placeholder polish (it's hidden behind the blur immediately).
 class _NoFadeArtwork extends StatelessWidget {
   final String url;
   const _NoFadeArtwork({required this.url});
@@ -404,12 +288,8 @@ class _NoFadeArtwork extends StatelessWidget {
   }
 }
 
-/// Shared resolver so this widget and AurumArtwork agree on how a URL maps
-/// to an ImageProvider — kept tiny and dependency-free here.
 ImageProvider resolveAurumImageProvider(String url) {
   if (url.startsWith('http')) {
-    // Disk-cached via the shared AurumImageCache (was NetworkImage: RAM-only,
-    // re-downloaded on every cold start / cache eviction).
     return CachedNetworkImageProvider(url, cacheManager: AurumImageCache());
   }
   if (url.startsWith('file://')) {
@@ -418,8 +298,6 @@ ImageProvider resolveAurumImageProvider(String url) {
   if (url.startsWith('/')) {
     return FileImage(_fileFromUri(url));
   }
-  // content:// URIs have no direct ImageProvider — fall back to a 1x1
-  // transparent placeholder; the flat base gradient beneath still shows.
   return MemoryImage(_kTransparentPixel);
 }
 
@@ -435,14 +313,6 @@ final Uint8List _kTransparentPixel = Uint8List.fromList(const [
   0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ]);
 
-// ─────────────────────────────────────────────────────────────────────────
-// _GrainOverlay — Echo's grain_noise ingredient, built procedurally so
-// there's no bundled asset (zero extra APK weight). A tiny 64x64 RGBA
-// noise bitmap is generated ONCE per app session (static cache) and tiled
-// across the stage at very low opacity — this is what stops the backdrop
-// reading as a flat gradient PNG and makes it feel like tactile material,
-// exactly like Echo's DST_IN noise composite in GradientDrawable.kt.
-// ─────────────────────────────────────────────────────────────────────────
 class _GrainOverlay extends StatelessWidget {
   const _GrainOverlay();
 
@@ -459,7 +329,7 @@ class _GrainOverlay extends StatelessWidget {
 
   static Future<ui.Image> _build() async {
     const size = 64;
-    final rnd = math.Random(7); // fixed seed — identical texture every run
+    final rnd = math.Random(7);
     final bytes = Uint8List(size * size * 4);
     for (var i = 0; i < size * size; i++) {
       final v = rnd.nextInt(256);
@@ -486,7 +356,7 @@ class _GrainOverlay extends StatelessWidget {
       builder: (context, snap) {
         if (!snap.hasData) return const SizedBox.shrink();
         return Opacity(
-          opacity: 0.035, // subtle — texture, not visible static
+          opacity: 0.035,
           child: SizedBox.expand(
             child: CustomPaint(
               painter: _GrainPainter(snap.data!),

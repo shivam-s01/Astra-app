@@ -5,28 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/utils/artwork_palette_cache.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Small in-memory cache + fast extractor for artwork-derived
-//   palette colors, shared by the Full Player screen (and available to
-//   Album/Mix screens too).
-//
-//   Why this exists: PaletteGenerator.fromImageProvider decodes the image
-//   and runs quantization every single call — for a song the user has
-//   already played (skip back, replay, shuffle loop) or one whose artwork
-//   was just pre-warmed from the queue, that's wasted work and wasted time.
-//   Caching by artwork URL makes every repeat-look instant, and shrinking
-//   the decode target from 120x120 to 40x40 (plenty for 4 flat palette
-//   swatches — this isn't rendering the image, just averaging colors)
-//   cuts the cold-path decode time down substantially too.
-//
-//   Capped at 60 entries (an LRU-ish drop-oldest policy) so a long
-//   listening session doesn't grow this unboundedly — palette colors are
-//   four small Color values each, so even 60 entries is trivial memory,
-//   but there's no reason not to bound it.
-// =============================================================================
-
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -36,37 +14,9 @@ import 'package:palette_generator/palette_generator.dart';
 import 'player_color_extractor.dart';
 import '../services/aurum_image_cache.dart';
 
-// FIX ("white/flat flash much worse on device/local song play than on
-// streamed songs"): every entry point below used to gate on
-// `url.startsWith('http')` before doing ANY extraction — for a local/
-// downloaded song, artworkUrl is a MediaStore `content://...` URI (see
-// LocalMusicService.scanLibrary), never an http(s) URL. That check silently
-// short-circuited to null for every local song, every time — no fast
-// average color, no accurate palette, ever. Full Player's `.get()` caller
-// then fell straight to the hardcoded near-black/purple fallback swatch
-// and just sat there, since nothing was ever going to overwrite it. On a
-// streamed song this same gap gets partly hidden behind the network's own
-// stream-resolve delay, which finishes at roughly the same time the
-// (working, http-based) extraction does. Local songs have no such delay to
-// hide behind AND the extraction was never even running — so it read as
-// the flash being "much worse" specifically for local/offline playback,
-// when the real issue was local artwork never being extracted at all.
-//
-// Fix: recognize `content://` (MediaStore album art, fetched via the same
-// MethodChannel aurum_artwork.dart's _ContentUriImage already uses) and
-// local file paths (`file://` or a bare `/...` path) as valid inputs too,
-// resolving each to a `MemoryImage`/`FileImage` provider instead of
-// `CachedNetworkImageProvider`. Only a genuinely empty/unrecognized URL now
-// falls through to the no-op path.
 const MethodChannel _mediaStoreChannel =
     MethodChannel('com.aurum.music/media_store');
 
-// Small in-process cache for content:// album-art bytes, separate from (but
-// same shape/cap as) aurum_artwork.dart's own _ContentUriImage cache — kept
-// independent so this file has no widget-layer dependency, at the cost of
-// one extra MethodChannel round trip the first time a given song's art is
-// needed for palette extraction specifically. Subsequent looks (replay,
-// shuffle loop) hit this cache instantly either way.
 const int _kContentArtCacheCap = 60;
 final Map<String, Uint8List?> _contentArtCache = {};
 
@@ -87,10 +37,6 @@ Future<Uint8List?> _loadContentUriBytes(String uri) async {
   return bytes;
 }
 
-/// Resolves any of the three artwork URL shapes this app produces
-/// (http(s) network URL, content:// MediaStore URI, or a local file path)
-/// into an ImageProvider PaletteGenerator can decode. Returns null only if
-/// the URL is empty or a content:// lookup came back with no bytes.
 Future<ImageProvider?> _resolveArtworkProvider(String url) async {
   if (url.startsWith('content://')) {
     final bytes = await _loadContentUriBytes(url);
@@ -115,14 +61,6 @@ class ArtworkPalette {
   final Color darkMuted;
   final Color lightVibrant;
 
-  /// Full ranked gradient color list from PlayerColorExtractor
-  /// (ArchiveTune's exact population/vibrancy-weighted algorithm — see
-  /// player_color_extractor.dart) — up to 6 colors, ranked strongest
-  /// first. This is what full-player screens should actually build their
-  /// mesh gradient from, since it reproduces ArchiveTune's swatch choice
-  /// (which isn't always literally "vibrant") rather than always using
-  /// the [vibrant] field below. The four named fields are kept only for
-  /// existing call sites that haven't migrated to [gradientColors] yet.
   final List<Color> gradientColors;
 
   const ArtworkPalette({
@@ -134,47 +72,14 @@ class ArtworkPalette {
   });
 }
 
-/// Clamps a color's perceived luminance into a safe range for the given
-/// mode, so background colors derived from artwork can never end up too
-/// close to the fixed white/dark text color drawn on top of them.
-///
-/// Why this exists: raw extracted palette colors (vibrant/dominant/etc.)
-/// can legitimately be pale/light even for an album whose artwork mostly
-/// reads as "dark" to the eye — a bright accent swatch, a pastel poster
-/// background, a washed-out scan. Full Player's text color is fixed per
-/// theme mode (white in dark mode, near-black in light mode), NOT derived
-/// from the background — so an unclamped light color in dark mode (or an
-/// unclamped dark color in light mode) silently produces a background the
-/// fixed text can barely be read against. This has shown up as "the song
-/// title/artist/controls are basically invisible" on specific album arts.
-///
-/// [maxLuma]/[minLuma] bound WCAG relative luminance (0=black, 1=white).
 Color ensureContrastSafe(Color c, {required bool isLight}) {
   final luma = c.computeLuminance();
   if (isLight) {
-    // Light mode draws dark text — background must stay light enough.
     const minLuma = 0.55;
     if (luma >= minLuma) return c;
-    // FIX ("mini player ek dam white ho jata hai kabhi kabhi" — root
-    // cause, traced past both the initState seed fix and the fallback-
-    // color fix in mini_player.dart): this used to lerp toward
-    // Colors.white with a clamp up to 1.0. For very dark album art
-    // (near-black covers, night-mode style artwork — luma close to 0),
-    // (minLuma - luma) / (1 - luma) approaches 1.0, so the result wasn't
-    // a "light tint of the artwork" anymore, it was functionally pure
-    // white — no hint of the original color left. That's a real,
-    // reproducible white-tint source that's completely independent of
-    // mini_player.dart's own null/fallback handling, since here
-    // _tintColor itself becomes white, not null. Capping the lerp factor
-    // at 0.85 guarantees at least a 15% contribution from the original
-    // artwork color always survives, so the output is always a tinted
-    // light color — never indistinguishable from flat white — while
-    // still comfortably clearing the minLuma contrast target in
-    // practice.
     final t = ((minLuma - luma) / (1 - luma)).clamp(0.0, 0.85);
     return Color.lerp(c, Colors.white, t)!;
   } else {
-    // Dark mode draws white text — background must stay dark enough.
     const maxLuma = 0.22;
     if (luma <= maxLuma) return c;
     return Color.lerp(c, Colors.black, ((luma - maxLuma) / luma).clamp(0.0, 1.0))!;
@@ -187,30 +92,12 @@ class ArtworkPaletteCache {
   static const int _maxEntries = 60;
   static final Map<String, ArtworkPalette> _cache = {};
 
-  // Tracks in-flight extractions so a rapid double-trigger (e.g. the
-  // screen building twice on the same frame) doesn't kick off two
-  // redundant decodes for the same URL.
   static final Map<String, Future<ArtworkPalette>> _inFlight = {};
 
   static ArtworkPalette? peek(String url) => _cache[url];
 
-  // Tracks in-flight fast (average-color) extractions separately from the
-  // accurate PaletteGenerator ones above, so the two paths never collide
-  // or dedupe against each other incorrectly.
   static final Map<String, Future<ArtworkPalette?>> _fastInFlight = {};
 
-  // PERF FIX ("Playlists tab lags/hangs hard on open"): every playlist
-  // tile without a custom cover mounts a PlaylistColorCover, whose
-  // initState() immediately fires two real PaletteGenerator decodes
-  // (fast + accurate) for its first song's artwork. With N playlists on
-  // screen at once (initial build + fast scroll-ahead), that's up to 2*N
-  // concurrent image decode+quantize operations racing on the UI thread
-  // at the exact moment the tab opens — this is what reads as "lag/hang
-  // bahut jyada" right when switching into Playlists. A small concurrency
-  // gate below caps how many of these run at once; everything past the
-  // cap just waits its turn in a FIFO queue instead of all firing
-  // simultaneously. Doesn't change what gets computed or cached — only
-  // when — so results are identical, just spread out instead of bursty.
   static const int _maxConcurrent = 3;
   static int _activeCount = 0;
   static final List<Completer<void>> _waitQueue = [];
@@ -227,9 +114,6 @@ class ArtworkPaletteCache {
 
   static void _releaseSlot() {
     if (_waitQueue.isNotEmpty) {
-      // Hand the slot straight to the next waiter instead of
-      // decrementing — keeps _activeCount accurate without a gap where
-      // another caller could sneak in ahead of the queue.
       final next = _waitQueue.removeAt(0);
       next.complete();
     } else {
@@ -237,14 +121,6 @@ class ArtworkPaletteCache {
     }
   }
 
-  /// Quick, coarse average-color approximation — NOT the accurate
-  /// PaletteGenerator extraction above. Used by full_player_screen.dart's
-  /// cold-cache path to give the background SOME real tint the moment
-  /// artwork pixels exist, rather than sitting on the hardcoded near-black
-  /// default for the ~1.2s the accurate extraction can take. Deliberately
-  /// does not write into the main `_cache`/`peek()` store — that store is
-  /// reserved for the accurate result, so a later `peek()` never returns
-  /// this rough approximation as if it were the real palette.
   static Future<ArtworkPalette?> getFast(String url) {
     if (url.isEmpty) return Future.value(null);
     final existing = _fastInFlight[url];
@@ -262,12 +138,6 @@ class ArtworkPaletteCache {
     try {
       final provider = await _resolveArtworkProvider(url);
       if (provider == null) return null;
-      // Small size + single color bucket (maximumColorCount: 1) is what
-      // makes this "fast" — PaletteGenerator still does a real decode, but
-      // skips the multi-swatch quantization pass the accurate call above
-      // relies on. Short timeout so a slow network (or, for local art, a
-      // slow MethodChannel round trip) still falls back to the pipeline's
-      // existing near-black default rather than hanging.
       final pg = await PaletteGenerator.fromImageProvider(
         provider,
         size: const Size(16, 16),
@@ -277,9 +147,6 @@ class ArtworkPaletteCache {
           pg.vibrantColor?.color ??
           pg.mutedColor?.color;
       if (avg == null) return null;
-      // Single averaged color reused across all four palette slots — this
-      // is an approximation standing in for the real multi-swatch palette
-      // until the accurate extraction lands and overwrites it.
       return ArtworkPalette(
         vibrant: avg,
         dominant: avg,
@@ -293,8 +160,6 @@ class ArtworkPaletteCache {
     }
   }
 
-  /// Returns the cached palette instantly if present, otherwise decodes
-  /// (deduped against any identical in-flight request) and caches it.
   static Future<ArtworkPalette> get(String url) {
     final cached = _cache[url];
     if (cached != null) return Future.value(cached);
@@ -317,15 +182,10 @@ class ArtworkPaletteCache {
     return future;
   }
 
-  /// Fire-and-forget warm-up — used to pre-decode the next queued song's
-  /// artwork while the current one is still playing, so by the time
-  /// playback actually reaches it the palette is already sitting in
-  /// cache and the background morph is instant.
   static void warm(String url) {
     if (url.isEmpty || _cache.containsKey(url) || _inFlight.containsKey(url)) {
       return;
     }
-    // Deliberately not awaited — this is opportunistic background work.
     get(url);
   }
 
@@ -342,30 +202,12 @@ class ArtworkPaletteCache {
     try {
       final provider = await _resolveArtworkProvider(url);
       if (provider == null) return null;
-      // FIX (the "player stays black for a minute+" bug): on a slow/weak
-      // connection (screenshots showed ~1 KB/s), PaletteGenerator's own
-      // image fetch+decode could take well over a minute with nothing
-      // bounding it — the caller just awaited forever, so _BgLayer sat on
-      // its hardcoded near-black default the entire time, then snapped to
-      // the real palette the instant it finally arrived. A firm timeout
-      // means the UI is never left waiting indefinitely: past 1.2s we give
-      // up on THIS attempt and fall through to the neutral fallback below,
-      // so the background always settles quickly even when the network
-      // (or, for local art, the MethodChannel/file read) doesn't
-      // cooperate. (If an http fetch does complete later, the shared
-      // CachedNetworkImageProvider disk cache means any retry — e.g. the
-      // next time this song plays — resolves instantly from disk; local
-      // content:///file art is likewise cached in-process above.)
       final pg = await PaletteGenerator.fromImageProvider(
         provider,
         size: const Size(40, 40),
         maximumColorCount: 12,
       ).timeout(const Duration(milliseconds: 1200));
 
-      // Same population/vibrancy-weighted ranking ArchiveTune's
-      // PlayerColorExtractor.kt uses — this is what actually decides
-      // "which swatch wins" (often not literally the vibrant one), so it
-      // has to run before the four legacy fields below are filled in.
       final gradientColors = PlayerColorExtractor.extractGradientColors(
         pg,
         fallbackColor: const Color(0xFF1A1630),

@@ -5,42 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/settings_region_screen.dart
-// PROJECT: Astra Music
-// DESCRIPTION: Settings > Region & Music Preferences. Lets a user who has
-//   already finished onboarding come back at any time and change their
-//   country, genres, and followed artists — the same three inputs
-//   onboarding collects once, but editable for the lifetime of the app
-//   instead of a one-shot first-launch flow.
-//
-//   Built as ONE scrollable screen (country picker -> genre chips -> artist
-//   grid -> Save), not a multi-step wizard like onboarding: this is an
-//   editing surface for someone who already has an account and a feed.
-//   Country is pre-filled from the current saved value; genres/artists
-//   intentionally start blank on every visit (see _loadCurrentPrefs'
-//   comment for why boosted weights can't be reverse-mapped back to a
-//   display selection) — anything picked here adds a fresh onboarding-
-//   strength boost on top of the existing feed rather than replacing it.
-//
-// WIRING:
-//   - Reuses lib/config/region_catalog.dart for the country list, genre
-//     catalog, genre-priority-by-country ordering, and the artist
-//     search-seed builder — the exact same data/logic onboarding uses, so
-//     the two surfaces can never drift out of sync.
-//   - Reads the CURRENT country from 'onboarding_country_code' /
-//     'onboarding_country_name' SharedPreferences (written by onboarding,
-//     or by this screen after a previous edit).
-//   - On Save: writes the new country back to those same two keys, and
-//     pushes the newly-picked genres/artists into RecommendationEngine via
-//     applyOnboardingGenrePreferences()/applyOnboardingArtistPreferences()
-//     — the identical calls onboarding makes. Both are additive boosts
-//     (existing weights are nudged up, never reset), so re-picking a
-//     region never erases listening history that's already shaped the
-//     feed; it just gives the new picks the same strong head-start
-//     onboarding gives a first-time pick.
-// =============================================================================
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -71,22 +35,19 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
   bool _saving = false;
 
   Country? _country;
-  Country? _initialCountry; // snapshot at load time, to detect a real change on Save
+  Country? _initialCountry;
   final Set<String> _selectedGenres = {};
   final Set<String> _selectedArtists = {};
 
-  // Artist search state — re-runs whenever the effective genre/country
-  // selection changes (see _reloadArtists below).
-  List<ArtistSimple>? _artists; // null = loading, [] = failed/empty
-  int _artistLoadToken = 0; // guards against a stale, slow search overwriting a newer one
+  List<ArtistSimple>? _artists;
+  int _artistLoadToken = 0;
 
   bool _countryExpanded = false;
   String _countryQuery = '';
 
-  // Artist name-search (onboarding jaisa) + pinned artists ki photo.
   final TextEditingController _artistSearchCtrl = TextEditingController();
   Timer? _artistSearchDebounce;
-  List<ArtistSimple>? _artistSearchResults; // null = search band
+  List<ArtistSimple>? _artistSearchResults;
   bool _artistSearching = false;
   int _artistSearchToken = 0;
   final Map<String, ArtistSimple> _knownArtists = {};
@@ -135,21 +96,6 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
       final code = p.getString('onboarding_country_code');
       final savedCountry = countryByCode(code);
 
-      // NOTE: genres/artists intentionally start unselected rather than
-      // trying to "reverse" the current boosted weights back into a
-      // selection. RecommendationEngine stores artist weights under a
-      // normalized key (all non-alphanumeric characters, spaces
-      // included, stripped — see _normalizeKey) with no separate
-      // display-name field, so "Arijit Singh" is stored as
-      // "arijitsingh" with the original casing/spacing gone for good.
-      // There's no lossless way to turn that back into a real display
-      // name for pre-filling this screen, and guessing would risk
-      // showing a garbled or wrong-cased artist chip. Starting blank
-      // means every pick made here is unambiguous and additive on top
-      // of whatever the feed has already learned.
-      // Pehle se chune (pinned) artists ab REAL naam ke saath store hote
-      // hain (RecommendationEngine.pinnedArtists), to Settings unhe
-      // pre-select karke dikhata hai — user add/remove dono kar sake.
       try {
         await RecommendationEngine.load();
         _selectedArtists.addAll(RecommendationEngine.pinnedArtists);
@@ -193,7 +139,7 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
 
   Future<void> _reloadArtists() async {
     final token = ++_artistLoadToken;
-    setState(() => _artists = null); // show loading state immediately
+    setState(() => _artists = null);
 
     try {
       final genreList = _selectedGenres.isNotEmpty
@@ -202,13 +148,6 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
 
       final countryName = _country?.name;
       final countryCode = _country?.code;
-      // Same reasoning as onboarding's artist loader (see
-      // region_catalog.dart / searchArtistsRegionScoped doc comment):
-      // Saavn's catalog is India-only and has no artist-type filter, so
-      // it only gets raced in when the picked country is India/unset —
-      // every other country searches YT Music's artist-filtered shelves
-      // only, which is what keeps results genuinely matching the picked
-      // country/genre instead of a fast-but-wrong Saavn match winning.
       final isIndiaOrUnset = countryCode == null || countryCode == 'IN';
 
       final queries = genreList.map((g) {
@@ -227,8 +166,6 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
         onTimeout: () => <List<ArtistSimple>>[],
       );
 
-      // CURATED-FIRST (onboarding jaisa): country ke top artists pehle,
-      // phir genre results round-robin.
       final merged = await ArtistPickerLoader.buildInitialList(
         genreBuckets: results,
         includeSaavn: isIndiaOrUnset,
@@ -249,9 +186,6 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
         } catch (_) {}
       }
 
-      // A newer reload started while this one was in flight (user kept
-      // tapping genres/country) — drop this stale result instead of
-      // clobbering whatever the latest reload already produced.
       if (!mounted || token != _artistLoadToken) return;
       setState(() => _artists = merged);
     } catch (_) {
@@ -274,11 +208,8 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
           _selectedGenres.toList(),
         );
       }
-      // Exact final selection: jo add kiye wo pinned, jo hataye wo unpinned.
       await RecommendationEngine.setPinnedArtists(_selectedArtists.toList());
     } catch (_) {
-      // Never block on a preference-save failure — worst case the country
-      // still saves below and genres/artists just don't get their boost.
     }
 
     try {
@@ -300,12 +231,6 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
 
     if (!mounted) return;
     setState(() => _saving = false);
-    // Message reflects what actually changed — saying "your feed will
-    // reflect this" when the person only changed the country (no
-    // genres/artists tapped, which is the common case since this screen
-    // intentionally starts both blank) would promise a feed change that
-    // didn't happen. Likewise, tapping Save with nothing changed at all
-    // shouldn't claim anything was updated.
     final message = hadNewPicks
         ? 'Preferences updated — your feed will reflect this shortly.'
         : countryChanged
@@ -513,10 +438,6 @@ class _SettingsRegionScreenState extends State<SettingsRegionScreen> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Section label — matches _SectionHeader's style in settings_screen.dart
-// (kept as a private local copy since that one is private to its own file).
-// ─────────────────────────────────────────────────────────────────────────────
 class _SectionLabel extends StatelessWidget {
   final String text;
   const _SectionLabel(this.text);
@@ -535,12 +456,6 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Country picker — collapsed shows the current selection as a tappable
-// row; expanded shows the full searchable 195-country list inline (no
-// separate screen/route — this is meant to feel like one continuous edit
-// surface, not another wizard step).
-// ─────────────────────────────────────────────────────────────────────────────
 class _CountryPicker extends StatelessWidget {
   final Country? selected;
   final bool expanded;
@@ -706,10 +621,6 @@ class _CountryPicker extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Genre chip grid — reuses the same country-aware ordering onboarding
-// uses (genreOrderFor from region_catalog.dart).
-// ─────────────────────────────────────────────────────────────────────────────
 class _GenreChipGrid extends StatelessWidget {
   final Country? country;
   final Set<String> selected;
@@ -775,9 +686,6 @@ class _GenreChipGrid extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Artist grid — same visual language as onboarding's artist picker.
-// ─────────────────────────────────────────────────────────────────────────────
 class _ArtistPickerGrid extends StatelessWidget {
   final List<ArtistSimple>? artists;
   final Set<String> selected;

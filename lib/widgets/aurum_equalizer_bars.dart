@@ -9,21 +9,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import '../utils/aurum_motion.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AurumEqualizerBars — live "now playing" equalizer, YT Music style.
-//
-// Drop-in replacement for the old static `Icons.equalizer_rounded` used
-// across the Home carousel, Search browse rows, and the SongTile index
-// column. Three bars independently animate height with staggered,
-// randomised durations so the motion never looks like a mechanical loop —
-// same trick YT Music / Spotify use so it reads as "alive" instead of a
-// looping GIF.
-//
-// • playing == true  → bars continuously animate (random height, staggered)
-// • playing == false → bars ease to a low resting height and freeze,
-//   matching the paused state instead of continuing to pulse.
-// ─────────────────────────────────────────────────────────────────────────────
-
 class AurumEqualizerBars extends StatefulWidget {
   final bool playing;
   final Color color;
@@ -78,11 +63,10 @@ class _AurumEqualizerBarsState extends State<AurumEqualizerBars>
   }
 
   Duration _randomDuration() =>
-      Duration(milliseconds: 260 + _rand.nextInt(260)); // 260–520ms per leg
+      Duration(milliseconds: 260 + _rand.nextInt(260));
 
   void _startAll() {
     for (var i = 0; i < _controllers.length; i++) {
-      // Stagger each bar's start slightly so they don't move in lockstep.
       Future.delayed(Duration(milliseconds: i * 90), () {
         if (mounted && widget.playing) _controllers[i].forward();
       });

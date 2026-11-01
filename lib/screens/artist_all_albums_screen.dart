@@ -5,17 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// =============================================================================
-// FILE: lib/screens/artist_all_albums_screen.dart
-// PROJECT: Aurum Music
-// DESCRIPTION: Full "all albums" page for an artist — opened from the arrow
-// icon next to ArtistScreen's "Albums" header. Shows the artist's complete
-// topAlbums list (already fetched by ArtistScreen — nothing is re-fetched
-// here) as a proper 2-column grid, same treatment as LibraryScreen's saved
-// albums grid, so this reads as a genuine top-level screen rather than a
-// cut-down inline row stretched vertically.
-// =============================================================================
-
 import 'package:flutter/material.dart';
 import '../models/artist.dart';
 import '../providers/player_provider.dart';
@@ -33,7 +22,7 @@ import 'album_screen.dart';
 
 class ArtistAllAlbumsScreen extends StatelessWidget {
   final String artistName;
-  final String title; // "Albums" or "Singles" — whichever shelf was tapped
+  final String title;
   final List<ArtistAlbum> albums;
 
   const ArtistAllAlbumsScreen({
@@ -47,15 +36,10 @@ class ArtistAllAlbumsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AurumTheme.bgOf(context),
-      // Same mini-player-follows-you treatment as every other screen
-      // pushed on top of MainShell.
       bottomNavigationBar: const MiniPlayerSlot(),
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
-        // PERF: matches artist_screen.dart's _albumGrid cacheExtent
-        // reasoning — album art decodes over the network, so a generous
-        // cacheExtent keeps a fast fling from showing blank cells.
-        cacheExtent: 1200,
+        cacheExtent: 600,
         slivers: [
           SliverAppBar(
             expandedHeight: 96,
@@ -129,13 +113,6 @@ class _ArtistAlbumGridTile extends StatefulWidget {
 class _ArtistAlbumGridTileState extends State<_ArtistAlbumGridTile> {
   bool _loading = false;
 
-  // FEATURE ("play button add karo, tap se seedha album play ho" —
-  // reference: the screenshot's play-overlay grid): ArtistAlbum only
-  // carries header metadata (id/name/artwork/year), never a song list —
-  // same reason AlbumScreen itself has to fetch before it can play. Uses
-  // the exact same ApiService.fetchAlbumSongsWithArtwork call AlbumScreen
-  // already relies on, so this plays from the identical source instead
-  // of a second, divergent code path.
   Future<void> _playAlbum() async {
     if (_loading) return;
     setState(() => _loading = true);
@@ -162,9 +139,6 @@ class _ArtistAlbumGridTileState extends State<_ArtistAlbumGridTile> {
   @override
   Widget build(BuildContext context) {
     final album = widget.album;
-    // PERF: isolate each grid cell into its own compositor layer — same
-    // reasoning as _FollowedAlbumTile on Library and _albumGrid's cards on
-    // ArtistScreen, so scrolling a large grid doesn't repaint siblings.
     return RepaintBoundary(
       child: AurumPressable(
         onTap: () {
@@ -191,19 +165,6 @@ class _ArtistAlbumGridTileState extends State<_ArtistAlbumGridTile> {
                     size: 300,
                     borderRadius: 10,
                   ),
-                  // Play overlay — matches the reference screenshot's
-                  // centered translucent circle exactly. Only the 44x44
-                  // circle itself is a separate tap target (not a
-                  // fill-the-card InkWell) — the outer AurumPressable is
-                  // a GestureDetector, and stacking a full-size second
-                  // tap recognizer directly on top of it inside the same
-                  // arena is unreliable (both can fire, or the outer one
-                  // wins depending on hit-test order). Scoping this
-                  // circle to its own bounds means Flutter's hit-testing
-                  // naturally resolves it as the innermost, most-specific
-                  // target — no arena ambiguity — while everywhere else
-                  // on the card still opens AlbumScreen via the outer
-                  // AurumPressable as before.
                   Center(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,

@@ -5,151 +5,37 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-// languages.dart
-// Aurum Music — Single source of truth for every language the app can
-// display its UI in.
-//
-// HOW THIS FILE WORKS WITH THE REST OF THE APP:
-// Every screen (home, search, settings, player, everywhere) reads its
-// strings through `AppLocalizations` (e.g. `l10n.navHome`) — never
-// through this file directly. Screens never need to know how many
-// languages exist or what they're called. That means adding a language
-// here never requires touching home_screen.dart, search_screen.dart, or
-// any other UI file — they already work in every language automatically.
-//
-// TO ADD A NEW LANGUAGE:
-//   1. Add one `Locale('xx')` line to `kSupportedLocales` below.
-//   2. Add its native-script name to `kLocaleDisplayNames`.
-//   3. Add its English name to `kLocaleEnglishNames`.
-//   4. Add its flag emoji to `kLocaleFlags`.
-//   5. Commit and push. The CI workflow's auto-translate step
-//      (.github/scripts/auto_translate.py) detects the new locale code,
-//      auto-generates lib/l10n/app_xx.arb by machine-translating
-//      app_en.arb, and the normal Flutter build picks it up from there.
-//      You never hand-write or hand-edit an .arb file yourself.
-//
-// That's the entire workflow — one file, four short additions, no other
-// file in the project needs to change.
 import 'package:flutter/material.dart';
 
-/// Every locale Aurum's UI can be displayed in. The auto-translate CI
-/// step keys off this exact list to know which lib/l10n/app_<code>.arb
-/// files must exist before the build runs.
 const List<Locale> kSupportedLocales = [
-  Locale('en'), // English
-  Locale('hi'), // Hindi
-  Locale('ta'), // Tamil
-  Locale('fr'), // French
-  Locale('ja'), // Japanese
-  Locale('ru'), // Russian
-  Locale('es'), // Spanish
-  Locale('ur'), // Urdu
-  Locale('zh'), // Chinese (Simplified)
-  Locale('de'), // German
-  Locale('it'), // Italian
-  Locale('ko'), // Korean
-  Locale('ar'), // Arabic
-  Locale('tr'), // Turkish
-  Locale('id'), // Indonesian
-  Locale('vi'), // Vietnamese
-  // HIDDEN (no app_bn.arb yet) — uncomment after adding the .arb file
-  // Locale('bn'), // Bengali
-  Locale('pt'), // Portuguese
-  Locale('nl'), // Dutch
-  Locale('pl'), // Polish
-  Locale('th'), // Thai
-  Locale('sv'), // Swedish
-  Locale('el'), // Greek
-  // HIDDEN (no app_he.arb yet) — uncomment after adding the .arb file
-  // Locale('he'), // Hebrew
-  Locale('uk'), // Ukrainian
-  Locale('ro'), // Romanian
-  // HIDDEN (no app_hu.arb yet) — uncomment after adding the .arb file
-  // Locale('hu'), // Hungarian
-  // HIDDEN (no app_cs.arb yet) — uncomment after adding the .arb file
-  // Locale('cs'), // Czech
-  // HIDDEN (no app_fi.arb yet) — uncomment after adding the .arb file
-  // Locale('fi'), // Finnish
-  // HIDDEN (no app_da.arb yet) — uncomment after adding the .arb file
-  // Locale('da'), // Danish
-  // HIDDEN (no app_no.arb yet) — uncomment after adding the .arb file
-  // Locale('no'), // Norwegian
-  // HIDDEN (no app_sk.arb yet) — uncomment after adding the .arb file
-  // Locale('sk'), // Slovak
-  // HIDDEN (no app_bg.arb yet) — uncomment after adding the .arb file
-  // Locale('bg'), // Bulgarian
-  // HIDDEN (no app_hr.arb yet) — uncomment after adding the .arb file
-  // Locale('hr'), // Croatian
-  // HIDDEN (no app_sr.arb yet) — uncomment after adding the .arb file
-  // Locale('sr'), // Serbian
-  // HIDDEN (no app_lt.arb yet) — uncomment after adding the .arb file
-  // Locale('lt'), // Lithuanian
-  // HIDDEN (no app_lv.arb yet) — uncomment after adding the .arb file
-  // Locale('lv'), // Latvian
-  // HIDDEN (no app_et.arb yet) — uncomment after adding the .arb file
-  // Locale('et'), // Estonian
-  // HIDDEN (no app_sl.arb yet) — uncomment after adding the .arb file
-  // Locale('sl'), // Slovenian
-  // HIDDEN (no app_ms.arb yet) — uncomment after adding the .arb file
-  // Locale('ms'), // Malay
-  // HIDDEN (no app_fil.arb yet) — uncomment after adding the .arb file
-  // Locale('fil'), // Filipino
-  // HIDDEN (no app_sw.arb yet) — uncomment after adding the .arb file
-  // Locale('sw'), // Swahili
-  // HIDDEN (no app_am.arb yet) — uncomment after adding the .arb file
-  // Locale('am'), // Amharic
-  Locale('fa'), // Persian
-  Locale('pa'), // Punjabi
-  // HIDDEN (no app_gu.arb yet) — uncomment after adding the .arb file
-  // Locale('gu'), // Gujarati
-  // HIDDEN (no app_mr.arb yet) — uncomment after adding the .arb file
-  // Locale('mr'), // Marathi
-  // HIDDEN (no app_kn.arb yet) — uncomment after adding the .arb file
-  // Locale('kn'), // Kannada
-  // HIDDEN (no app_ml.arb yet) — uncomment after adding the .arb file
-  // Locale('ml'), // Malayalam
-  // HIDDEN (no app_te.arb yet) — uncomment after adding the .arb file
-  // Locale('te'), // Telugu
-  // HIDDEN (no app_ne.arb yet) — uncomment after adding the .arb file
-  // Locale('ne'), // Nepali
-  // HIDDEN (no app_si.arb yet) — uncomment after adding the .arb file
-  // Locale('si'), // Sinhala
-  // HIDDEN (no app_my.arb yet) — uncomment after adding the .arb file
-  // Locale('my'), // Burmese
-  // HIDDEN (no app_km.arb yet) — uncomment after adding the .arb file
-  // Locale('km'), // Khmer
-  // HIDDEN (no app_az.arb yet) — uncomment after adding the .arb file
-  // Locale('az'), // Azerbaijani
-  // HIDDEN (no app_kk.arb yet) — uncomment after adding the .arb file
-  // Locale('kk'), // Kazakh
-  // HIDDEN (no app_uz.arb yet) — uncomment after adding the .arb file
-  // Locale('uz'), // Uzbek
-  // HIDDEN (no app_mn.arb yet) — uncomment after adding the .arb file
-  // Locale('mn'), // Mongolian
-  // HIDDEN (no app_is.arb yet) — uncomment after adding the .arb file
-  // Locale('is'), // Icelandic
-  // HIDDEN (no app_sq.arb yet) — uncomment after adding the .arb file
-  // Locale('sq'), // Albanian
-  // HIDDEN (no app_af.arb yet) — uncomment after adding the .arb file
-  // Locale('af'), // Afrikaans
-  // HIDDEN (no app_zu.arb yet) — uncomment after adding the .arb file
-  // Locale('zu'), // Zulu
-  // HIDDEN (no app_xh.arb yet) — uncomment after adding the .arb file
-  // Locale('xh'), // Xhosa
-  // HIDDEN (no app_ha.arb yet) — uncomment after adding the .arb file
-  // Locale('ha'), // Hausa
-  // HIDDEN (no app_yo.arb yet) — uncomment after adding the .arb file
-  // Locale('yo'), // Yoruba
-  // HIDDEN (no app_ig.arb yet) — uncomment after adding the .arb file
-  // Locale('ig'), // Igbo
-  // HIDDEN (no app_so.arb yet) — uncomment after adding the .arb file
-  // Locale('so'), // Somali
+  Locale('en'),
+  Locale('hi'),
+  Locale('ta'),
+  Locale('fr'),
+  Locale('ja'),
+  Locale('ru'),
+  Locale('es'),
+  Locale('ur'),
+  Locale('zh'),
+  Locale('de'),
+  Locale('it'),
+  Locale('ko'),
+  Locale('ar'),
+  Locale('tr'),
+  Locale('id'),
+  Locale('vi'),
+  Locale('pt'),
+  Locale('nl'),
+  Locale('pl'),
+  Locale('th'),
+  Locale('sv'),
+  Locale('el'),
+  Locale('uk'),
+  Locale('ro'),
+  Locale('fa'),
+  Locale('pa'),
 ];
 
-/// Native-script names shown in the language picker (not translated into
-/// the currently-selected app language) — matches how most apps present
-/// a language list, so a Japanese speaker can find "日本語" even while
-/// the app is currently showing Russian.
 const Map<String, String> kLocaleDisplayNames = {
   'en': 'English',
   'hi': 'हिन्दी',
@@ -220,9 +106,6 @@ const Map<String, String> kLocaleDisplayNames = {
   'so': 'Soomaali',
 };
 
-/// English name shown as the secondary line under each native name in
-/// the language picker (skipped for English itself, which has only one
-/// line since native name == English name there).
 const Map<String, String> kLocaleEnglishNames = {
   'hi': 'Hindi',
   'ta': 'Tamil',
@@ -292,12 +175,6 @@ const Map<String, String> kLocaleEnglishNames = {
   'so': 'Somali',
 };
 
-/// Real country flag emoji representing each language, keyed by language
-/// code. Flag emoji are just two Regional Indicator Symbol code points,
-/// so these render as the actual flag glyph on-device (Android's Noto
-/// Color Emoji / Apple's Emoji font) — no bundled flag image assets
-/// needed, no extra package weight, crisp at any text scale/density.
-/// Each language is mapped to its principal/origin country's flag.
 const Map<String, String> kLocaleFlags = {
   'en': '🇬🇧',
   'hi': '🇮🇳',

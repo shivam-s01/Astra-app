@@ -32,74 +32,39 @@ class SettingsAppearanceScreen extends StatefulWidget {
 }
 
 class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
-  // Theme
   bool _highRefreshRate = false;
   Color _accentColor = AurumTheme.accent;
-  // Player
   String _playerBgStyle = 'Blur';
   bool _dynamicPlayerColor = true;
   String _playerButtonColors = 'Primary';
   String _playerSliderStyle = 'Waveform';
   String _fullPlayerStyle = 'Edge to Edge';
-  // SPEED FIX (Spotify-level lightweight): these three local fallback
-  // defaults must match their AudioPrefs notifier counterparts exactly
-  // (showBlurredBgNotifier, navBarBlurSigmaNotifier,
-  // miniPlayerBlurSigmaNotifier — see audio_prefs.dart). This screen's
-  // own _loadPrefs() only overwrites them once SharedPreferences finishes
-  // loading (see the p.getDouble(...) ?? fallback calls a few lines
-  // below) — until that resolves, whatever's hardcoded here is what a
-  // first-ever-open of this settings screen actually shows. Leaving
-  // these at the OLD defaults (true/24.0/14.0) after the notifiers were
-  // changed to the new lightweight defaults would show the slider at 24
-  // for a moment before snapping down once prefs load — a visible,
-  // confusing flash of the wrong value on a screen about performance
-  // settings specifically. Keeping both sides in sync avoids that.
   bool _showBlurredBg = false;
   bool _liquidGlass = false;
   double _navBarBlurSigma = 18.0;
   double _miniPlayerBlurSigma = 12.0;
-  // Lyrics
   String _lyricsTextPosition = 'Left';
   double _lyricsTextSize = 26.0;
   double _lyricsLineSpacing = 1.25;
   bool _showLyricsOnPlayer = true;
   LyricsViewMode _lyricsViewMode = LyricsViewMode.inline;
-  // New
   String _fontStyle = 'Default';
-  // Guards against a rapid second font tap starting a second transition
-  // (and a second dialog) while the first one is still loading/pending —
-  // without this, fast double-taps on two different fonts could stack
-  // two showDialog calls and leave one scrim orphaned on screen.
   bool _fontTransitionInFlight = false;
   String _artworkShape = 'Rounded';
-  // Animations
   bool _enableAnimations = true;
   bool _backAnimations = true;
   bool _scrollAnimations = true;
   bool _bgGradientAnimation = true;
 
-  // FIX (toggle flash): every field above defaults to `true`/some default
-  // BEFORE _load() has actually read SharedPreferences (that read is async,
-  // so the very first build() always paints with these hardcoded defaults
-  // for at least one frame). If the user had actually turned a setting OFF
-  // previously, the toggle would render ON for that first frame, then snap
-  // to OFF the instant _load()'s setState lands a moment later — reading as
-  // "I open settings and it looks on, then it turns off by itself."
-  // _loaded gates the real content behind a tiny loader until the actual
-  // saved values are in hand, so the screen only ever paints once, with the
-  // correct values already in place — no flash, no snap.
   bool _loaded = false;
 
-  // Curated to 6: gold (free) + 5 premium accents, chosen for maximum
-  // visual separation against the dark theme and clean contrast with
-  // white iconography/text drawn on top of the selected swatch.
   static const List<Color> _accentOptions = [
-    AurumTheme.accent,       // free
-    Color(0xFF6D5DF6),     // violet
-    Color(0xFF4F8CFF),     // azure
-    Color(0xFFE91E63),     // rose
-    Color(0xFF2ECC71),     // emerald
-    Color(0xFFFF7A45),     // amber-orange
+    AurumTheme.accent,
+    Color(0xFF6D5DF6),
+    Color(0xFF4F8CFF),
+    Color(0xFFE91E63),
+    Color(0xFF2ECC71),
+    Color(0xFFFF7A45),
   ];
 
   @override
@@ -111,14 +76,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
 
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
-    // FIX: setState() was called unconditionally right after an await
-    // gap. If the user backs out of this screen before
-    // SharedPreferences.getInstance() resolves (easy to do — Settings
-    // screens are quick to bounce off of), this widget is already
-    // disposed by the time the await returns, and calling setState() on
-    // a disposed State throws "setState() called after dispose()" —
-    // a real, if intermittent, crash. Guarding with `mounted` is the
-    // standard fix: if the widget's gone, there's nothing to update.
     if (!mounted) return;
     setState(() {
       _highRefreshRate = p.getBool('high_refresh_rate') ?? false;
@@ -128,15 +85,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
       _playerButtonColors = p.getString('player_button_colors') ?? 'Primary';
       _playerSliderStyle = p.getString('player_slider_style') ?? 'Waveform';
       _fullPlayerStyle = p.getString('full_player_style') ?? 'Edge to Edge';
-      // SPEED FIX (Spotify-level lightweight): fallback defaults here
-      // matched to the new AudioPrefs notifier defaults (false/0.0/0.0)
-      // — see the matching comment on the field declarations above for
-      // why these three must always stay in sync. A user who has never
-      // touched these settings (no saved SharedPreferences key yet) now
-      // gets the lightweight blur-off experience by default, same as
-      // every other entry point in the app — not just on first app
-      // launch, but every time this specific key was never explicitly
-      // set.
       _showBlurredBg = p.getBool('show_blurred_bg') ?? false;
       _liquidGlass = p.getBool('liquid_glass_enabled') ?? false;
       _navBarBlurSigma = p.getDouble('nav_bar_blur_sigma') ?? 18.0;
@@ -170,9 +118,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     final l10n = AppLocalizations.of(context)!;
     final tp = context.watch<ThemeProvider>();
 
-    // See _loaded's declaration above: skip painting the (possibly wrong)
-    // hardcoded defaults for a frame — show a tiny loader instead until the
-    // real saved values are ready, then paint once, correctly.
     if (!_loaded) {
       return Scaffold(
         backgroundColor: AurumTheme.bgOf(context),
@@ -190,12 +135,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
         children: [
-          // ── Theme ──
-          // Every major section on this screen is wrapped in the same
-          // AurumStaggerItem entrance used by every other Settings screen
-          // (Privacy/Storage/Language/Notifications/About/Player/main
-          // Settings list) — one section per stagger slot keeps the
-          // cascade timing identical across all of Settings.
           AurumStaggerItem(index: 0, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _sectionLabel(context, l10n.saTheme),
           _card(context, child: Column(children: [
@@ -226,51 +165,20 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
             },
           ),
           ])),
-          // Color Theme — named full-palette presets (Ocean/Forest/Sunset/
-          // Midnight/Aurora), ported from Astra Browser's theme catalog.
-          // Replaces the old flat accent-color dot picker: picking one of
-          // these now swaps background/card/surface/text/accent together
-          // as one matched set instead of only recoloring buttons.
-          //
-          // FIX (user request — iOS-style redesign, round 2): the
-          // horizontal-strip-of-cards version was rejected as "awkward" —
-          // replaced with a single iOS-style hero summary row (one card,
-          // the CURRENT selection only — no scrolling strip) that opens
-          // an iOS-style picker sheet: light blur (not the heavy 24-sigma
-          // frosted look), a grid of plain color circles (no cards/boxes,
-          // just a swatch + a name underneath, the way iOS's own accent-
-          // color / wallpaper pickers present choices), a small top-right
-          // "Done" text button instead of a bottom action bar, and a
-          // checkmark ring on the selected circle instead of a full
-          // accent-bordered card. _colorPresetTile (the old ListTile row)
-          // is intentionally left defined below, unused, in case a future
-          // revision wants it back — nothing currently calls it.
           AurumStaggerItem(index: 1, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _sectionLabel(context, l10n.saColorTheme),
           _colorThemeHeroRow(context, l10n),
           ])),
-          // ── Font Style ──
           AurumStaggerItem(index: 2, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _sectionLabel(context, l10n.saFontStyle),
           _buildFontSelector(context),
 
-          // ── Artwork Shape ──
           _sectionLabel(context, l10n.saArtworkShape),
           _buildArtworkShapeSelector(context),
           ])),
 
-          // ── Player ──
           AurumStaggerItem(index: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _sectionLabel(context, l10n.saPlayer),
-          // FIX (user request): "Floating" nav bar style dropdown removed
-          // from Settings → Appearance entirely — the bar is now always
-          // Docked (AudioPrefs.navBarStyleNotifier defaults to, and stays,
-          // 'Docked'). Docked itself now responds to the "Liquid Glass"
-          // toggle above (see AurumBottomNavBar in main_shell.dart, and the
-          // matching fix in mini_player.dart's docked branch): glass ON
-          // gives the exact SimpMusic-style frosted pill look on both the
-          // nav bar and the mini player above it; glass OFF keeps the flat
-          // transparent SimpMusic look this already had.
           _dropdownTile(context,
             title: l10n.saPlayerBgStyle,
             subtitle: l10n.saPlayerBgStyleSubtitle,
@@ -301,8 +209,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
             title: l10n.saFullPlayerStyle,
             subtitle: l10n.saFullPlayerStyleSubtitle,
             value: _fullPlayerStyle,
-            // Stored values stay 'Classic' / 'Edge to Edge' / 'Spotify' so
-            // existing users keep their choice; only the labels change.
             options: const ['Classic', 'Edge to Edge', 'Spotify'],
             labels: const {
               'Classic': 'Astra Model 1',
@@ -317,14 +223,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
             value: _showBlurredBg,
             onChanged: (v) { setState(() => _showBlurredBg = v); _save('show_blurred_bg', v); AudioPrefs.setShowBlurredBg(v); },
           ),
-          // Single ON/OFF for the liquid glass on the nav bar and mini
-          // player — there is exactly one glass look (no style picker).
-          // ON uses fixed, tuned sigma values (18 nav bar / 12 mini
-          // player) so it stays lightweight; OFF skips the
-          // BackdropFilter + shader entirely (flat panel — cheapest).
-          // Rendered by the liquid_glass_easy package's LiquidGlassLens
-          // (needs Impeller). The glass body is always neutral — never
-          // the song artwork colour.
           _inlineSwitch(context,
             title: l10n.saLiquidGlass,
             subtitle: l10n.saLiquidGlassSubtitle,
@@ -335,15 +233,7 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
               AudioPrefs.setLiquidGlassEnabled(v);
             },
           ),
-          // ── Mini Player ──
-          // Mini player settings removed — the widget was rewritten to a
-          // single fixed, minimal design with no configurable style,
-          // background, or swipe sensitivity anymore (see mini_player.dart
-          // v4.0 for why: the old style/animation machinery was the source
-          // of a class of "mini player disappears, only fixed by app
-          // restart" bugs).
           ])),
-          // ── Lyrics ──
           AurumStaggerItem(index: 4, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _sectionLabel(context, l10n.saLyrics),
           _inlineSwitch(context,
@@ -353,12 +243,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
             onChanged: (v) {
               setState(() {
                 _showLyricsOnPlayer = v;
-                // Mutually exclusive with Immersive below: turning the
-                // inline strip ON while Immersive is also on doesn't
-                // make sense (Immersive already opens full-screen from
-                // the same button) — so switching this on turns
-                // Immersive off, same as toggling Immersive on turns
-                // this off further down.
                 if (v && _lyricsViewMode == LyricsViewMode.fullscreen) {
                   _lyricsViewMode = LyricsViewMode.inline;
                   _save('lyrics_view_mode', LyricsViewMode.inline.index);
@@ -369,15 +253,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
               AudioPrefs.setShowLyricsOnPlayer(v);
             },
           ),
-          // "Immersive Lyrics" — a plain switch styled exactly like
-          // every other _inlineSwitch on this screen (Show Lyrics on
-          // Player above, Blur toggles elsewhere). Deliberately NOT
-          // visually highlighted/badged as a "new" feature — it should
-          // read as an ordinary setting a user might casually toggle,
-          // not something calling extra attention to itself. Turning
-          // this ON automatically turns the inline strip above OFF, and
-          // vice versa — only one lyrics display mode can be active at
-          // a time.
           _inlineSwitch(context,
             title: l10n.saLyricsViewMode,
             subtitle: l10n.saLyricsViewModeSubtitle,
@@ -417,13 +292,7 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
             displayValue: _lyricsLineSpacing.toStringAsFixed(1),
             onChanged: (v) { setState(() => _lyricsLineSpacing = v); _save('lyrics_line_spacing', v); AudioPrefs.setLyricsLineSpacing(v); },
           ),
-          // NOTE: "Word Animation Style" and "Glowing Lyrics Effect" were
-          // removed — Aurum's lyrics are a single static text block (no
-          // LRC timestamps / word-level sync), so a per-word highlight or
-          // active-line glow has nothing to attach to. Re-add these once
-          // synced lyrics are implemented.
           ])),
-          // ── Animations ──
           AurumStaggerItem(index: 5, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _sectionLabel(context, l10n.saAnimations),
           _inlineSwitch(context,
@@ -456,7 +325,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     );
   }
 
-  // ── Font Selector ────────────────────────────────────────────────────────
   Widget _buildFontSelector(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     const fonts = {
@@ -468,12 +336,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     };
     const premiumFonts = {'Rounded', 'Mono', 'Sans', 'Serif'};
 
-    // Preview glyph style per font. These are Google Fonts, downloaded/
-    // cached at runtime — passing a bare `fontFamily: 'Manrope'` string
-    // does nothing without the font bundled as a static asset (it was
-    // silently falling back to the default font for every preview card,
-    // including the pre-existing Rounded/Mono ones). GoogleFonts.getFont
-    // resolves the actual cached/downloading font correctly.
     TextStyle previewStyle(String key, {required Color color}) {
       const base = TextStyle(fontSize: 22, fontWeight: FontWeight.w700);
       switch (key) {
@@ -586,27 +448,11 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     });
   }
 
-  // ── Font change transition ─────────────────────────────────────────────
-  // Applying a Google Font swaps the entire app TextTheme, which used to
-  // happen instantly on tap — felt cheap/abrupt for something this
-  // visually large. Now shows a brief M3 loading state (dim scrim +
-  // circular progress) before committing the change, matching how
-  // premium apps (Spotify/YT Music settings) gate heavier theme changes
-  // behind a beat of feedback instead of an instant jump-cut.
   Future<void> _applyFontWithTransition(BuildContext context, String fontKey) async {
     _fontTransitionInFlight = true;
     AurumHaptics.light();
     final themeProvider = context.read<ThemeProvider>();
 
-    // Capture the dialog's own Navigator via a dedicated context passed
-    // out through the builder, instead of reusing the tile's `context`
-    // to pop later. If the user backs out of this screen while the font
-    // is still loading, the screen's own BuildContext/State becomes
-    // invalid, but the dialog route is independent of it — popping via
-    // this screen's `context` after the screen unmounts would either
-    // throw or (with rootNavigator:true) risk popping the wrong route
-    // entirely. Grabbing the dialog's context off its own builder keeps
-    // the pop scoped to exactly the route we opened.
     BuildContext? dialogContext;
     showDialog(
       context: context,
@@ -618,19 +464,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
       },
     );
 
-    // Wait for the actual font to finish loading — not a fixed timer.
-    // GoogleFonts.pendingFonts() resolves only once the requested font's
-    // HTTP fetch (or cache read) has completed and it's ready to render,
-    // so the dialog now tracks real load state instead of guessing a
-    // duration: fast connections/cached fonts close quickly, slow
-    // connections keep the spinner up until the font is actually ready
-    // — either way the font never applies before it can render, so
-    // there's no flash-to-fallback-font frame once the dialog closes.
-    //
-    // A small minimum floor keeps the spinner from strobing on/off in a
-    // single frame when the font is already cached, which reads as a
-    // glitch rather than "smooth" — 350ms is short enough to still feel
-    // instant, long enough to always render as a deliberate beat.
     final loadFont = () {
       switch (fontKey) {
         case 'Rounded': return GoogleFonts.pendingFonts([GoogleFonts.nunito()]);
@@ -642,32 +475,14 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     }();
     final minFloor = Future.delayed(const Duration(milliseconds: 350));
 
-    // If the font fetch ever fails (offline, blocked network, etc.) fall
-    // back to just the floor delay instead of hanging the dialog open
-    // forever — the font still applies (GoogleFonts silently falls back
-    // to the platform default glyphs when it can't fetch), so the user
-    // always gets an unstuck UI even without a network.
     await Future.wait([
       loadFont.catchError((_) => <String>[]),
       minFloor,
     ]);
 
-    // Only touch this screen's own state if it's still alive — but the
-    // dialog must close regardless of whether the settings screen is
-    // still mounted, otherwise navigating away mid-transition leaves an
-    // undismissable scrim stuck on top of whatever screen the user is
-    // now on.
-    // themeProvider.setFontStyle() already persists to SharedPreferences
-    // internally (see theme_provider.dart) — a separate _save() call here
-    // would just be a redundant second write to the same key on every
-    // font change.
     if (mounted) setState(() => _fontStyle = fontKey);
     themeProvider.setFontStyle(fontKey);
 
-    // Prefer popping via the dialog's own captured context (scoped to
-    // exactly the route we opened). Fall back to the tile's context only
-    // if the dialog somehow never reported one back — belt-and-braces
-    // against ever leaving the scrim stuck on screen.
     if (dialogContext != null && dialogContext!.mounted) {
       Navigator.of(dialogContext!).pop();
     } else if (context.mounted) {
@@ -676,10 +491,9 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     _fontTransitionInFlight = false;
   }
 
-  // ── Artwork Shape ─────────────────────────────────────────────────────────
   Widget _buildArtworkShapeSelector(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    const shapes = ['Square', 'Rounded', 'Circle']; // internal keys — persisted, matched by AudioPrefs
+    const shapes = ['Square', 'Rounded', 'Circle'];
     final labels = {
       'Square': l10n.saShapeSquare,
       'Rounded': l10n.saShapeRounded,
@@ -738,10 +552,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     ));
   }
 
-  // Order used everywhere the full preset list is shown (hero row +
-  // the picker sheet) — None first, then the 5 named palettes, same
-  // order as the very first vertical list so nothing shuffles for
-  // existing users.
   static const List<AurumColorPreset> _colorPresetOrder = [
     AurumColorPreset.none,
     AurumColorPreset.ocean,
@@ -761,22 +571,9 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
           ? l10n.saColorThemeNoneDesc
           : AurumColorPresetCatalog.forId(preset)!.subtitle;
 
-  /// The preset that should read as "currently active". Color themes work
-  /// with Dark / Light / AMOLED / System; `null` only while Dynamic Color is
-  /// genuinely in control (color themes are off then).
   AurumColorPreset? _activeColorPreset(ThemeProvider tp) =>
       tp.dynamicOverridesPreset ? null : tp.colorPreset;
 
-  /// iOS-style hero summary row — ONE card showing only the current
-  /// selection (no horizontal strip, no scrolling), the way iOS Settings
-  /// shows a single row for "Wallpaper" or "Accent Color" with just the
-  /// active value visible; tapping it opens the full picker. A large
-  /// circular swatch on the left carries the preset's own accent color
-  /// (or a plain icon-in-circle for "None"), with name + subtitle next
-  /// to it and a chevron on the right — a single ListTile-like row
-  /// exactly like every other current-value row in iOS Settings, backed
-  /// by the same _card()/divider styling every other section on this
-  /// screen already uses so it doesn't look like a one-off insert.
   Widget _colorThemeHeroRow(BuildContext context, AppLocalizations l10n) {
     final tp = context.watch<ThemeProvider>();
     final activeOrNull = _activeColorPreset(tp);
@@ -833,15 +630,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     ));
   }
 
-  /// iOS-style picker sheet: light blur (not the heavy frosted look),
-  /// a rounded-top sheet with a grab handle, an inline title row with a
-  /// small top-right "Done" TEXT button (never a bottom action bar —
-  /// matches how iOS's own modal pickers place their dismiss action),
-  /// and a grid of plain color CIRCLES (no card/box chrome per option —
-  /// just a swatch + a name, the same presentation as iOS's own accent-
-  /// color / wallpaper-tint pickers). Selection is local to the sheet
-  /// until "Done" is tapped — Cancel-equivalent (drag down / tap outside
-  /// / system back) leaves the live theme untouched.
   Future<void> _showColorThemeSheet(
     BuildContext context,
     AppLocalizations l10n, {
@@ -850,8 +638,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
   }) async {
     final tp = context.read<ThemeProvider>();
     var sheetSelected = initial;
-    // Nothing is applied unless the user actually picks a swatch — so just
-    // opening the sheet and pressing Done never silently turns Dynamic off.
     var touched = false;
 
     await showAurumModalBottomSheet<void>(
@@ -865,10 +651,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
             return ClipRRect(
               borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               child: BackdropFilter(
-                // iOS's own sheets use a light "materials" blur, nowhere
-                // near as heavy as the 24-sigma frosted look from the
-                // previous revision — a low sigma here reads as a subtle
-                // translucency rather than a thick frosted pane.
                 filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                 child: Container(
                   padding: EdgeInsets.only(
@@ -893,13 +675,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
                           ),
                         ),
                       ),
-                      // Inline title row — centered title, small top-right
-                      // "Done" text button. No leading widget on the left
-                      // (iOS's equivalent sheets are frequently
-                      // title+Done-only with no symmetric leading action);
-                      // an invisible same-width Text is used on the left
-                      // purely so the centered title doesn't visually
-                      // drift toward the Done button's side.
                       Padding(
                         padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
                         child: Row(
@@ -916,11 +691,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
                             SizedBox(
                               width: 56,
                               child: TextButton(
-                                // Apply-on-Done: this is the ONLY place
-                                // setColorPreset() is called from this
-                                // flow — tapping circles below only
-                                // updates the sheet's own local
-                                // sheetSelected state.
                                 onPressed: () {
                                   if (touched) tp.setColorPreset(sheetSelected);
                                   Navigator.of(sheetContext).pop();
@@ -981,12 +751,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     );
   }
 
-  /// A single circular swatch option inside the picker sheet — plain
-  /// color circle (or icon-in-outlined-circle for "None"), a thin
-  /// accent ring when selected (iOS-style selection ring around an
-  /// already-colored circle, not a separate checkmark badge sitting on
-  /// top of it), and the name in a small label underneath. Sized for a
-  /// 3-per-row grid on a typical phone width via Wrap above.
   Widget _colorSwatchOption(
     BuildContext context,
     AppLocalizations l10n,
@@ -1041,35 +805,16 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
     );
   }
 
-
   Widget _colorPresetTile(
     BuildContext context,
     AurumColorPreset preset, {
     IconData? icon,
     required String label,
     required String subtitle,
-    // Sheet usage passes both of these to run off local sheet state
-    // instead of the live ThemeProvider (nothing is applied until OK).
-    // Main-list usage (none currently — the horizontal preview above
-    // doesn't call this) would fall back to reading tp.colorPreset
-    // directly, same as before this fix.
     bool? selectedOverride,
     VoidCallback? onTap,
   }) {
     final tp = context.watch<ThemeProvider>();
-    // "None" is only meaningfully "selected" when the active theme is
-    // genuinely the plain Dark theme (mode == dark AND no preset) — since
-    // _colorPreset defaults to `none` even while the user is on Light/
-    // System/Dynamic/AMOLED, checking colorPreset alone would show "None"
-    // as selected on every one of those screens too, which is misleading
-    // (there's no "preset" concept active there at all). Real presets
-    // don't need the mode check since setColorPreset() always forces
-    // _mode to dark together with the preset itself.
-    //
-    // selectedOverride (passed by the sheet in _showColorThemeSheet) takes
-    // priority when present, so the tile reflects the sheet's own local
-    // in-progress choice rather than the still-unapplied live provider
-    // state — the two only converge once OK is tapped.
     final selected = selectedOverride ?? (preset == AurumColorPreset.none
         ? (tp.colorPreset == AurumColorPreset.none && tp.mode == AurumThemeMode.dark)
         : tp.colorPreset == preset);
@@ -1080,11 +825,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
       leading: Container(
         width: 38, height: 38,
         decoration: BoxDecoration(
-          // Real preset: solid swatch of its own accent so the tile
-          // previews the color before it's even selected — matches how
-          // Astra's own theme picker shows a live color chip per theme.
-          // "None" has no palette of its own, so it falls back to the
-          // same icon-in-a-box style as the Dark/AMOLED/Light tiles above.
           color: data != null
               ? data.accent
               : (selected ? AurumTheme.accentOf(context).withOpacity(0.15) : AurumTheme.bgOf(context)),
@@ -1113,8 +853,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
   }
 
   Widget _themeTile(BuildContext context, ThemeProvider tp, IconData icon, String label, String sub, AurumThemeMode mode, {bool disabled = false}) {
-    // Color themes are independent of the mode (each has a dark and a light
-    // palette), so the mode tile is simply selected when it is the mode.
     final selected = tp.mode == mode && !disabled;
     return ListTile(
       onTap: disabled ? null : () { AurumHaptics.selection(); tp.setMode(mode); },
@@ -1146,7 +884,6 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
   }
 }
 
-// ── Appearance-specific helpers ────────────────────────────────────
 AppBar _appBar(BuildContext context, String title, {List<Widget>? actions}) {
   return AppBar(
     backgroundColor: AurumTheme.bgOf(context),
@@ -1202,15 +939,6 @@ Widget _inlineSwitch(
   );
 }
 
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Player Slider Style — tap-to-open bottom sheet, 2x2 grid of live-preview
-// cards. Each card renders a mini "stage" that mirrors the real full player
-// backdrop (dark artwork-blur gradient) with the seekbar drawn using the
-// EXACT track/thumb geometry used in full_player_screen.dart's _SeekBar,
-// so what the user sees here is what they'll get, not an approximation.
-// Flat matte cards, no glow/shadow — border-only selected state, muted
-// title that brightens on select. Tap applies + closes immediately.
 Widget _sliderStylePickerTile(
   BuildContext context, {
   required String title,
@@ -1254,8 +982,6 @@ void _showSliderStyleSheet(
   String current,
   ValueChanged<String> onChanged,
 ) {
-  // FIX: routed through showAurumModalBottomSheet (lib/utils/aurum_sheet.dart)
-  // so the scrim always has an explicit barrierColor.
   showAurumModalBottomSheet(
     context: context,
     backgroundColor: Colors.transparent,
@@ -1391,10 +1117,6 @@ class _SliderStyleCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Mini "stage" — flat dark surface, same tone as the real
-              // full player's base backdrop. No gradient/glow: a real
-              // player screen reads as a calm dark surface, not a
-              // decorative purple glow — that's what read as "AI-made".
               Expanded(
                 child: Container(
                   color: const Color(0xFF0C0C13),
@@ -1403,10 +1125,6 @@ class _SliderStyleCard extends StatelessWidget {
                     widthFactor: 0.72,
                     child: AnimatedBuilder(
                       animation: ticker,
-                      // Isolates this tiny animating preview into its own
-                      // compositing layer so the repeating ticker only
-                      // repaints this small strip, not the whole card tree
-                      // around it — cheap insurance on low-end GPUs.
                       builder: (_, __) => RepaintBoundary(
                         child: Opacity(
                           opacity: _sweepOpacity(ticker.value),
@@ -1457,17 +1175,9 @@ class _SliderStyleCard extends StatelessWidget {
     );
   }
 
-  // Forward-only progress: 0 → 1 then hard-resets to 0, matching how a
-  // real seek bar actually behaves (plays forward, never rewinds on its
-  // own). A sine-based back-and-forth here read as the slider glitching
-  // in reverse, so this stays strictly monotonic within each loop.
-  // Small opacity dip right at the reset point hides the jump-cut instead
-  // of showing a visible snap back to the start.
   double _sweep(double t) => t;
 
   double _sweepOpacity(double t) {
-    // Fade out over the last ~6% and fade back in over the first ~6% of
-    // each loop, so the 1→0 reset happens while invisible.
     if (t > 0.94) return (1.0 - t) / 0.06;
     if (t < 0.06) return t / 0.06;
     return 1.0;
@@ -1528,9 +1238,6 @@ class _SliderStyleCard extends StatelessWidget {
   }
 }
 
-// Mirrors full_player_screen.dart's _WaveformPainter math (10% amplitude,
-// same wavelength ratio, flat unplayed tail, playhead dot) at miniature
-// scale so the waveform preview isn't a stand-in shape but the same curve.
 class _MiniWavePainter extends CustomPainter {
   final double progress;
   final double scrollX;
@@ -1540,7 +1247,7 @@ class _MiniWavePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final centerY = size.height / 2;
     final progressX = size.width * progress;
-    final maxAmp = size.height * 0.16; // matches the real player's calm "barely there" ripple
+    final maxAmp = size.height * 0.16;
     const wavelength = 15.0;
     final k = (2 * math.pi) / wavelength;
 
@@ -1576,7 +1283,6 @@ class _MiniWavePainter extends CustomPainter {
   bool shouldRepaint(covariant _MiniWavePainter old) =>
       old.progress != progress || old.scrollX != scrollX;
 }
-
 
 Widget _dropdownTile(
   BuildContext context, {
@@ -1642,13 +1348,6 @@ Widget _sliderTile(
   );
 }
 
-// ── Font change loading overlay ──────────────────────────────────────────
-// Uses the app's own AurumM3Loader — the same fluid morphing M3 bar shown
-// under the search bar and on the home feed while content loads — so this
-// reads as the same "Aurum is working" moment everywhere instead of
-// introducing a second, different-looking spinner just for fonts.
-// Purely presentational; the actual font apply/save happens in
-// _applyFontWithTransition once the real font load resolves.
 class _FontLoadingOverlay extends StatelessWidget {
   const _FontLoadingOverlay();
 

@@ -31,13 +31,12 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
   bool   _checking        = true;
   bool   _biometric       = false;
   bool   _appLockOn       = false;
-  bool   _dontLockPlaying = false; // NEW
+  bool   _dontLockPlaying = false;
   String _savedPin        = '';
   int    _delayMins       = 10;
 
   DateTime? _backgroundedAt;
 
-  // PIN UI
   String _enteredPin = '';
   String _error      = '';
   bool   _shaking    = false;
@@ -67,13 +66,12 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
       final elapsed = DateTime.now().difference(_backgroundedAt!).inMinutes;
       _backgroundedAt = null;
 
-      if (elapsed < _delayMins) return; // not enough time passed
+      if (elapsed < _delayMins) return;
 
-      // Check if music is playing and user wants to skip lock
       if (_dontLockPlaying) {
         try {
           final player = context.read<PlayerProvider>();
-          if (player.isPlaying) return; // music chal rahi hai — lock mat karo
+          if (player.isPlaying) return;
         } catch (_) {}
       }
 
@@ -125,7 +123,6 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
       );
       if (ok && mounted) setState(() => _locked = false);
     } on PlatformException {
-      // PIN fallback already showing
     }
   }
 
@@ -156,29 +153,6 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     if (_checking) {
-      // FIX (awkward loading flash right after the splash animation ends):
-      // this state is reached while the splash's SplashScreen overlay is
-      // STILL painting on top (this whole widget is splash's `child`, so
-      // it mounts and starts _init()'s SharedPreferences read immediately,
-      // in parallel with the ~3.2s splash animation). Two things made a
-      // brief, already-resolving state read as a jarring flash instead of
-      // an invisible non-event:
-      //   1. AurumMorphLoader here was a spinner — any real content in
-      //      this frame reads as "something is loading", even at ~16-32ms.
-      //      No spinner is genuinely correct: this state is normally only
-      //      up for a couple of frames, and a spinner appearing then
-      //      vanishing looks worse than no spinner at all, not better.
-      //   2. AurumTheme.bgOf(context) is the THEME's scaffold background,
-      //      which can be light-mode white while splash's overlay is
-      //      always AurumTheme.darkBg (fixed, theme-independent). If the
-      //      SharedPreferences read hadn't resolved by the time splash's
-      //      fade finished, this frame could momentarily flash a
-      //      different (even light) color underneath a dark splash —
-      //      the actual "awkward flash" being reported, not just timing.
-      // Now: plain darkBg-colored screen, no spinner, no theme dependency
-      // — if this state is ever visible for a frame or two under/after
-      // splash's fade, it is visually indistinguishable from the splash
-      // background itself, so there is nothing to perceive as a flash.
       return const Scaffold(
         backgroundColor: AurumTheme.darkBg,
         body: SizedBox.shrink(),
@@ -199,9 +173,6 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
   }
 }
 
-// =============================================================================
-// Lock UI
-// =============================================================================
 class _LockUI extends StatelessWidget {
   final AppLocalizations l10n;
   final String enteredPin;
@@ -245,7 +216,6 @@ class _LockUI extends StatelessWidget {
 
           const Spacer(),
 
-          // PIN dots with shake animation
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: shaking ? 1 : 0),
             duration: AurumMotion.durationOrZero(AurumMotion.long2),
@@ -291,7 +261,6 @@ class _LockUI extends StatelessWidget {
 
           const Spacer(),
 
-          // Numpad
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 40),
             child: Column(children: [
