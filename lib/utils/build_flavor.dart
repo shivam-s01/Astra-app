@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────
+// Astra Music (Aurum) — Proprietary Software
+// Copyright (c) 2026 Shivam Sharma. All rights reserved.
+// Unauthorized copying, modification, distribution, or use of this
+// file, via any medium, is strictly prohibited. See LICENSE.
+// ─────────────────────────────────────────────────────────────────
+
 // Build-time constants injected by CI via --dart-define.
 //
 // BUILD_LABEL is a short, human-friendly build id (IST date yymmdd + CI

@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────
+// Astra Music (Aurum) — Proprietary Software
+// Copyright (c) 2026 Shivam Sharma. All rights reserved.
+// Unauthorized copying, modification, distribution, or use of this
+// file, via any medium, is strictly prohibited. See LICENSE.
+// ─────────────────────────────────────────────────────────────────
+
 // Firebase Analytics wrapper. Fails soft (no-op) if Firebase isn't
 // configured for the build. Respects Incognito Mode: while incognito is ON,
 // collection is switched off entirely (no events, no sessions).

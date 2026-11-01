@@ -1,0 +1,90 @@
+ASTRA MUSIC (AURUM) — PROPRIETARY SOURCE-AVAILABLE LICENSE
+Version 1.0
+
+Copyright (c) 2026 Shivam Sharma (GitHub: shivam-s01). All rights reserved.
+
+This repository and everything in it (source code, assets, images, icons,
+animations, UI designs, audio-engine architecture, localization files,
+build/CI configuration, documentation, and the names "Astra Music" and
+"Aurum") (together, the "Software") is the proprietary work of Shivam
+Sharma (the "Owner"). The Software is NOT open source. No license is granted
+except the limited permissions in Section 1.
+
+1. LIMITED PERMISSION (VIEW ONLY)
+   You may view the source code on GitHub for the sole purpose of personal
+   reading and evaluation. Using GitHub's own features (viewing, and forking
+   inside GitHub strictly as permitted by the GitHub Terms of Service) is
+   allowed only to the extent GitHub's Terms require. This gives you no
+   right to do anything listed in Section 2.
+
+2. PROHIBITED WITHOUT PRIOR WRITTEN PERMISSION FROM THE OWNER
+   You may NOT, in whole or in part:
+   a) copy, clone for reuse, download for reuse, reproduce, or redistribute
+      the Software or any file, snippet, design, or asset from it;
+   b) modify, adapt, translate, port, or create derivative works;
+   c) compile, build, package, sign, or publish the Software or any
+      derivative as an app, APK, AAB, website, or service (including on
+      Google Play, third-party app stores, or any mod/"fork" distribution);
+   d) use the code, UI design, layout, animations, audio-engine design, or
+      assets in any personal, commercial, or open-source project;
+   e) sell, sublicense, rent, lease, or otherwise commercialize it;
+   f) remove, alter, or obscure any copyright, license, or attribution
+      notice;
+   g) use the names "Astra Music" or "Aurum", the logo, or branding, or
+      imply affiliation with or endorsement by the Owner;
+   h) use the Software, its code, or its outputs to train, fine-tune, or
+      evaluate any machine-learning or AI model, or to build datasets;
+   i) scrape, mirror, or bulk-extract the repository by automated means;
+   j) reverse engineer, decompile, or extract secrets, keys, endpoints, or
+      backend logic from the Software or its released builds, except where
+      applicable law expressly allows despite this restriction.
+
+3. OWNERSHIP
+   All right, title, and interest in the Software remain with the Owner.
+   Nothing here transfers ownership. All rights not expressly granted are
+   reserved.
+
+4. THIRD-PARTY COMPONENTS
+   Third-party code and dependencies (for example, the package under
+   packages/expressive_loading_indicator and packages listed in
+   pubspec.yaml) remain under their own licenses, which are not changed by
+   this license. This license covers only the Owner's original work.
+
+5. TERMINATION
+   Any breach ends the limited permission in Section 1 automatically. You
+   must then delete all copies in your possession.
+
+6. ENFORCEMENT
+   The Owner may enforce these terms through all available legal remedies,
+   including DMCA and equivalent takedown notices to GitHub, app stores,
+   hosting providers, and search engines; injunctive relief; statutory and
+   actual damages; and recovery of legal costs where the law allows. Each
+   unauthorized copy or distribution is a separate violation. Violations
+   may be reported to the Owner at the contact below.
+
+7. NO WARRANTY; LIMITATION OF LIABILITY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. THE
+   OWNER IS NOT LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+   FROM OR IN CONNECTION WITH THE SOFTWARE.
+
+8. GOVERNING LAW AND JURISDICTION
+   This license is governed by the laws of the country where the Owner
+   resides, without regard to conflict-of-law rules. The Owner may also
+   enforce his rights in any jurisdiction where an infringement occurs or
+   where the infringer resides, under that jurisdiction's copyright laws
+   and international copyright treaties (including the Berne Convention).
+
+9. NO IMPLIED LICENSE; ANTI-CIRCUMVENTION
+   No license is granted by implication, estoppel, or conduct. The Owner's
+   public hosting of this repository, silence, or delay in enforcement is
+   not a waiver. You may not bypass any technical or legal protection
+   (including obfuscation, integrity checks, or access controls) used with
+   the Software.
+
+10. SEVERABILITY
+   If any part of this license is held unenforceable, the rest stays in
+   full effect.
+
+Contact for permissions or violation reports:
+Telegram: https://t.me/mr_s_s01
+GitHub:   https://github.com/shivam-s01 (open an Issue titled "Copyright")

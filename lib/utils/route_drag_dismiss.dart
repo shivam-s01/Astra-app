@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────
+// Astra Music (Aurum) — Proprietary Software
+// Copyright (c) 2026 Shivam Sharma. All rights reserved.
+// Unauthorized copying, modification, distribution, or use of this
+// file, via any medium, is strictly prohibited. See LICENSE.
+// ─────────────────────────────────────────────────────────────────
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RouteDragDismiss — swipe-down-to-dismiss that is driven by the ROUTE'S OWN
 // animation controller (the exact mechanism CupertinoPageRoute uses for its

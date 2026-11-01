@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────
+// Astra Music (Aurum) — Proprietary Software
+// Copyright (c) 2026 Shivam Sharma. All rights reserved.
+// Unauthorized copying, modification, distribution, or use of this
+// file, via any medium, is strictly prohibited. See LICENSE.
+// ─────────────────────────────────────────────────────────────────
+
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 

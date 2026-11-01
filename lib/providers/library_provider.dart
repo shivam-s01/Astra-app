@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────
+// Astra Music (Aurum) — Proprietary Software
+// Copyright (c) 2026 Shivam Sharma. All rights reserved.
+// Unauthorized copying, modification, distribution, or use of this
+// file, via any medium, is strictly prohibited. See LICENSE.
+// ─────────────────────────────────────────────────────────────────
+
 import 'package:flutter/foundation.dart';
 import '../models/song.dart';
 import '../services/local_music_service.dart';

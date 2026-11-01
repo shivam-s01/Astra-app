@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────
+// Astra Music (Aurum) — Proprietary Software
+// Copyright (c) 2026 Shivam Sharma. All rights reserved.
+// Unauthorized copying, modification, distribution, or use of this
+// file, via any medium, is strictly prohibited. See LICENSE.
+// ─────────────────────────────────────────────────────────────────
+
 // Anonymous usage stats -> Aurum Stats Worker (own Cloudflare Worker + D1).
 // Sends only: random install id, event name, song title/artist, app version.
 // City/country are derived server-side by Cloudflare; no IP/email/GPS stored.
