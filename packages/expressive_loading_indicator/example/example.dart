@@ -41,7 +41,6 @@ class MyHomePage extends StatelessWidget {
               style: TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 16),
-            // Default loading indicator
             const ExpressiveLoadingIndicator(),
 
             const SizedBox(height: 32),
@@ -50,7 +49,6 @@ class MyHomePage extends StatelessWidget {
               style: TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 16),
-            // Customized with color
             const ExpressiveLoadingIndicator(color: Colors.orange),
 
             const SizedBox(height: 32),
@@ -59,7 +57,6 @@ class MyHomePage extends StatelessWidget {
               style: TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 16),
-            // Customized with size
             const ExpressiveLoadingIndicator(
               constraints: BoxConstraints(
                 minWidth: 72.0,
@@ -75,7 +72,6 @@ class MyHomePage extends StatelessWidget {
               style: TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 16),
-            // Customized with shapes
             ExpressiveLoadingIndicator(
               polygons: [
                 MaterialShapes.softBurst,

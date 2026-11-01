@@ -13,81 +13,37 @@ dependencies:
     sdk: flutter
   intl: any
 
-  # Audio
-  # NOTE: just_audio stays as a dependency even though AurumAudioHandler is
-  # gone — api_service.dart's diagnostics throwaway AudioPlayer still uses
-  # it, and its LoopMode enum is reused (as a shared value type only, no
-  # Player constructed) by player_provider.dart / full_player_screen.dart.
-  # audio_service is REMOVED — replaced entirely by native_engine_bridge.dart
-  # (NativeAudioEngine) talking to AurumAudioEngine.kt, with the
-  # MediaSession/notification/background-service role now owned by
-  # AurumMediaSessionService.kt (Media3-native) instead of the audio_service
-  # plugin's AudioService.
   just_audio: ^0.9.40
   audio_session: ^0.1.18
   just_waveform: ^0.0.7
 
-  # State Management
   provider: ^6.1.1
 
-  # Payments
   flutter_cashfree_pg_sdk: ^2.4.0+52
 
-  # HTTP
   http: ^1.2.0
   html: ^0.15.4
 
-  # Push notifications ("update available" alert reaching users even when
-  # the app is fully killed — see UpdateService/update_push_service.dart).
-  # Free Google service, same one Spotify/Instagram-class apps use for
-  # this exact purpose; requires android/app/google-services.json from
-  # the Firebase console (see FCM_SETUP.md).
   firebase_core: ^3.6.0
   firebase_messaging: ^15.1.3
-  # Visitor/device/country/city + usage analytics (free, no location permission).
   firebase_analytics: ^11.3.3
 
-  # YouTube
   youtube_explode_dart: ^3.1.0
 
-  # UI
   cached_network_image: ^3.3.1
-  # Explicit dependency (was already pulled in transitively by
-  # cached_network_image) so we can cap its disk cache — see main.dart's
-  # AurumImageCache config. Matches Echo Nightly's own Coil setup
-  # (100MB disk cache, size-bounded) instead of the default unbounded
-  # (age-only, 30-day) cache_manager policy, which could otherwise grow
-  # disk usage indefinitely on a heavy-browsing session.
   flutter_cache_manager: ^3.3.1
   shimmer: ^3.0.0
   palette_generator: ^0.3.3+3
   google_fonts: ^6.2.1
-  # Material You — reads the system's wallpaper-derived color scheme on
-  # Android 12+ (S+). No-ops (returns null light/dark schemes) on older
-  # Android, other platforms, or devices without dynamic color support —
-  # callers must always have a static-palette fallback ready.
-  # PINNED (exact, not ^) to 1.7.0: 1.9.0's android/build.gradle.kts uses
-  # the newer `kotlin { compilerOptions { jvmTarget = ... } }` DSL block,
-  # which requires Flutter's "built-in Kotlin" feature (AGP 9+ and the
-  # android.builtInKotlin gradle.properties flag) to resolve. This
-  # project is on AGP 8.9.1, so that block fails with "Unresolved
-  # reference: kotlin/compilerOptions/jvmTarget" during
-  # :dynamic_color:compileReleaseKotlin — the exact CI failure this pin
-  # fixes. 1.7.0 uses the older, compatible kotlinOptions syntax. The
-  # caret (^1.7.0) previously let pub silently resolve to 1.9.0 on any
-  # fresh `flutter pub get` — pinning exact prevents that regression
-  # until the project is deliberately upgraded to AGP 9+/built-in Kotlin.
   dynamic_color: 1.7.0
   expressive_loading_indicator:
     path: packages/expressive_loading_indicator
 
-  # Persistence
   shared_preferences: ^2.2.2
   image_picker: ^1.0.7
   hive: ^2.2.3
   hive_flutter: ^1.1.0
 
-  # Utils
   rxdart: ^0.27.7
   uuid: ^4.3.3
   crypto: ^3.0.3
@@ -96,33 +52,24 @@ dependencies:
   permission_handler: ^11.3.1
   async: ^2.11.0
 
-  # Offline
   dio: ^5.4.0
   package_info_plus: ^4.2.0
   device_info_plus: ^10.1.2
   path_provider: ^2.1.1
 
-  # Notifications (download progress)
   flutter_local_notifications: ^17.2.3
 
-  # Settings features
   sensors_plus: ^5.0.1
   local_auth: ^2.3.0
 
-  # Auth & Cloud Sync
   supabase_flutter: ^2.5.6
   app_links: 6.3.2
-  # QR scanner for Settings -> Link TV (approve a TV sign-in)
   mobile_scanner: ^5.2.3
 
-  # Network detection (auto Online/Offline switching)
   connectivity_plus: ^6.0.5
   google_sign_in: ^6.2.1
 
-  # Real iOS 26 Liquid Glass (nav bar + mini player) — drives AurumGlass,
-  # see widgets/aurum_glass.dart for the wiring.
   liquid_glass_easy: ^4.3.1
-
 
 dev_dependencies:
   flutter_test:

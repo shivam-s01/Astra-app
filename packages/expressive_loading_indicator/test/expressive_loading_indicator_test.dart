@@ -6,21 +6,17 @@ import 'package:expressive_loading_indicator/expressive_loading_indicator.dart';
 void main() {
   group('ExpressiveLoadingIndicator', () {
     testWidgets('renders with default polygons', (WidgetTester tester) async {
-      // Build our widget
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(body: Center(child: ExpressiveLoadingIndicator())),
         ),
       );
 
-      // Verify the widget renders
       expect(find.byType(ExpressiveLoadingIndicator), findsOneWidget);
 
-      // Let the animation run for a bit
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // No errors should occur during animation
       expect(tester.takeException(), isNull);
     });
 
@@ -62,7 +58,6 @@ void main() {
 
       expect(find.byType(ExpressiveLoadingIndicator), findsOneWidget);
 
-      // Extract the widget to verify its properties
       final ExpressiveLoadingIndicator widget = tester.widget(
         find.byType(ExpressiveLoadingIndicator),
       );
@@ -90,7 +85,6 @@ void main() {
 
       expect(find.byType(ExpressiveLoadingIndicator), findsOneWidget);
 
-      // Find the ConstrainedBox widget
       final ConstrainedBox constrainedBox = tester.widget(
         find.descendant(
           of: find.byType(ExpressiveLoadingIndicator),
@@ -122,7 +116,6 @@ void main() {
 
       expect(find.byType(ExpressiveLoadingIndicator), findsOneWidget);
 
-      // Verify semantics are applied to the widget
       final semanticsWidget = find.byType(Semantics);
       expect(semanticsWidget, findsWidgets);
     });
@@ -158,13 +151,11 @@ void main() {
 
       await tester.pump(const Duration(milliseconds: 100));
 
-      // The widget should use the theme color
-      // This test verifies the widget respects the theme
       final ExpressiveLoadingIndicator widget = tester.widget(
         find.byType(ExpressiveLoadingIndicator),
       );
 
-      expect(widget.color, isNull); // Widget itself doesn't have a color set
+      expect(widget.color, isNull);
     });
 
     testWidgets('renders in theme with custom constraints', (
@@ -192,7 +183,6 @@ void main() {
 
       expect(find.byType(ExpressiveLoadingIndicator), findsOneWidget);
 
-      // The ConstrainedBox should use theme constraints
       final ConstrainedBox constrainedBox = tester.widget(
         find.descendant(
           of: find.byType(ExpressiveLoadingIndicator),
@@ -212,7 +202,6 @@ void main() {
 
       expect(find.byType(ExpressiveLoadingIndicator), findsOneWidget);
 
-      // Replace the widget with something else
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(body: Center(child: Text('No indicator'))),
@@ -222,7 +211,6 @@ void main() {
       expect(find.byType(ExpressiveLoadingIndicator), findsNothing);
       expect(find.text('No indicator'), findsOneWidget);
 
-      // No errors should occur during disposal
       expect(tester.takeException(), isNull);
     });
 
@@ -235,20 +223,16 @@ void main() {
         ),
       );
 
-      // Let animation start
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Rebuild with the same widget
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(body: Center(child: ExpressiveLoadingIndicator())),
         ),
       );
 
-      // Continue animation
       await tester.pump(const Duration(milliseconds: 100));
 
-      // No exceptions should occur
       expect(tester.takeException(), isNull);
     });
 
@@ -259,12 +243,10 @@ void main() {
         ),
       );
 
-      // Rapid succession of small animation steps
       for (int i = 0; i < 5; i++) {
-        await tester.pump(const Duration(milliseconds: 16)); // ~60fps
+        await tester.pump(const Duration(milliseconds: 16));
       }
 
-      // Widget should handle rapid animation frames without issues
       expect(find.byType(ExpressiveLoadingIndicator), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -285,17 +267,14 @@ void main() {
         ),
       );
 
-      // Start animation
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Navigate away
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(body: Center(child: Text('Next Page'))),
         ),
       );
 
-      // No exceptions should occur
       expect(tester.takeException(), isNull);
     });
   });

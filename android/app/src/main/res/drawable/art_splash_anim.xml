@@ -1,50 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt">
-    <!--
-      Aurum's OS-level animated splash icon. Timeline, stage count, group
-      nesting, durations, offsets and easings are copied directly from
-      Echo Nightly's own art_splash_anim.xml (2400ms total, wrapper at
-      0.6 scale, bg/ring/note_group/note four independently-timed
-      targets) - only the actual shapes are Aurum's own, traced from the
-      real logo PNG (36039.png). See art_splash_anim.xml (the static
-      version) for the trace/extraction method.
-
-      DELIBERATE DIFFERENCE FROM ECHO: Echo's own "note" target morphs
-      away from its play-triangle and then, at 1600ms, morphs BACK to
-      the play-triangle (so Echo's splash ends on the same icon it
-      started with - a decorative wobble, not a reveal). That reverse
-      morph is dropped here on purpose: the whole point of this splash
-      is to end on Aurum's real note, not snap back to the placeholder
-      triangle. Echo's "path_5"/"path_6" - two tiny decorative accent
-      marks specific to Echo's own play-icone artwork with no
-      equivalent in Aurum's logo - are dropped for the same reason:
-      they have nothing to attach to here.
-
-      Morph safety: the play-triangle below is NOT Echo's curved
-      triangle pathData - it's a from-scratch 19-point straight-line
-      polygon (M + 19 L's + Z) built to have the exact same command
-      count and type as Aurum's real note shape (also M + 19 L's + Z),
-      with each point manually corresponded to its counterpart on the
-      note. Verified by rendering interpolated in-between frames before
-      use - no self-intersection or zigzag.
-
-      TWO REAL BUGS FIXED after seeing this fail on a physical device:
-      1) Timeline was 2400ms total, but Android hard-caps
-         windowSplashScreenAnimationDuration at 1000ms (device screenshot
-         confirmed the icon just sat static/blank — most of this
-         timeline was being truncated before it could run). Every
-         duration and startOffset below has been rescaled by 0.375x
-         (900/2400) so the full sequence now finishes inside 900ms,
-         matching styles.xml's windowSplashScreenAnimationDuration=900.
-      2) note's fillColor was #16191C (near-black) against this app's
-         #050508 (near-black) splash background — zero contrast, so the
-         icon was invisible even during the sliver of time it did run.
-         Changed to white (#FFFFFF), matching the real logo's actual
-         white note in scallop_ring.png. (Echo's own #1d1d1b works fine
-         for them only because Echo's splash background resolves to
-         white, not black - opposite contrast situation.)
-    -->
     <aapt:attr name="android:drawable">
         <vector
             android:name="vector"
@@ -61,20 +17,6 @@
                     android:name="bg"
                     android:pivotX="12"
                     android:pivotY="12">
-                    <!-- Plain circle, same role as Echo's own "bg" -
-                         a soft duplicate spinning underneath everything,
-                         not the scalloped badge shape itself. -->
-                    <!-- Circle radius 6.348 - deliberately kept BELOW
-                       the badge's minimum radius (6.683, the depth of
-                       its innermost scallop notch), with a ~5% safety
-                       margin, not just below its maximum radius (8.14,
-                       the outermost scallop tip). A radius between
-                       those two numbers (which an earlier version used)
-                       stays hidden at the tips but pokes out through
-                       the scallop valleys - confirmed by rendering the
-                       bg circle in isolation against the badge outline
-                       and finding it peeked through at two points
-                       before this correction. -->
                     <path android:pathData="M 12 5.652 C 15.506 5.652 18.348 8.494 18.348 12.000 C 18.348 15.506 15.506 18.348 12.000 18.348 C 8.494 18.348 5.652 15.506 5.652 12.000 C 5.652 8.494 8.494 5.652 12.000 5.652 Z">
                         <aapt:attr name="android:fillColor">
                             <gradient
@@ -92,21 +34,6 @@
                     android:name="note_group"
                     android:pivotX="12"
                     android:pivotY="12">
-                    <!-- Same role as Echo's "play" group: rotation +
-                         translateY wobble on the wrapper, independent
-                         of the pathData morph on the path inside it. -->
-                    <!-- Color fixed to white: the previous #16191C is a
-                         near-black that has essentially zero contrast
-                         against this app's splash background (#050508,
-                         also near-black) — confirmed by user screenshot
-                         showing the note invisible. Echo Nightly's own
-                         #1d1d1b note works fine because Echo's own splash
-                         background (amoled_bg) actually resolves to
-                         @color/white, not black — same near-black icon
-                         color, opposite (light) background. Aurum's real
-                         background is dark, so the note needs to be
-                         light, matching the real logo's own white note
-                         in scallop_ring.png. -->
                     <path
                         android:name="note"
                         android:fillColor="#FFFFFF"
@@ -116,7 +43,6 @@
                     android:name="ring"
                     android:pivotX="12"
                     android:pivotY="12">
-                    <!-- Aurum's real scallop badge silhouette. -->
                     <path
                         android:name="ring_path"
                         android:pathData="M 11.546 3.850 L 11.060 4.079 L 10.641 4.398 L 10.282 4.799 L 9.865 5.125 L 9.346 5.198 L 8.820 5.106 L 8.292 5.133 L 7.772 5.252 L 7.292 5.493 L 6.897 5.857 L 6.553 6.267 L 6.335 6.757 L 6.281 7.284 L 6.281 7.821 L 6.200 8.347 L 5.861 8.760 L 5.398 9.032 L 4.996 9.378 L 4.662 9.795 L 4.467 10.296 L 4.367 10.818 L 4.386 11.348 L 4.556 11.858 L 4.811 12.321 L 5.146 12.741 L 5.312 13.240 L 5.224 13.756 L 5.029 14.255 L 4.933 14.779 L 4.984 15.309 L 5.135 15.825 L 5.416 16.282 L 5.789 16.667 L 6.237 16.963 L 6.756 17.091 L 7.255 17.268 L 7.615 17.650 L 7.820 18.147 L 8.136 18.573 L 8.527 18.937 L 9.021 19.140 L 9.538 19.266 L 10.075 19.266 L 10.559 19.458 L 10.954 19.819 L 11.424 20.076 L 11.953 20.150 L 12.476 20.079 L 12.973 19.874 L 13.388 19.536 L 13.840 19.300 L 14.377 19.277 L 14.901 19.186 L 15.411 19.016 L 15.821 18.670 L 16.153 18.257 L 16.388 17.777 L 16.680 17.339 L 17.160 17.123 L 17.681 16.998 L 18.138 16.724 L 18.531 16.357 L 18.834 15.921 L 18.996 15.414 L 19.076 14.886 L 19.017 14.355 L 18.821 13.855 L 18.664 13.347 L 18.787 12.831 L 19.131 12.419 L 19.409 11.964 L 19.610 11.468 L 19.633 10.933 L 19.588 10.403 L 19.402 9.902 L 19.111 9.450 L 18.723 9.080 L 18.270 8.797 L 17.868 8.446 L 17.745 7.933 L 17.768 7.396 L 17.708 6.868 L 17.529 6.366 L 17.213 5.937 L 16.832 5.556 L 16.369 5.293 L 15.863 5.119 L 15.332 5.071 L 14.810 5.179 L 14.275 5.198 L 13.820 4.935 L 13.460 4.536 L 13.088 4.152 L 12.614 3.906 L 12.083 3.850 Z">
@@ -138,8 +64,6 @@
         </vector>
     </aapt:attr>
 
-    <!-- ring: identical timing to Echo's own "ring" target - two
-         back-to-back 1200ms bursts, net 240° rotation. -->
     <target android:name="ring">
         <aapt:attr name="android:animation">
             <set>
@@ -162,11 +86,6 @@
         </aapt:attr>
     </target>
 
-    <!-- note: play-triangle morphs into Aurum's real note shape.
-         Same start offset/duration as Echo's own first "note" morph
-         (200ms offset, 400ms duration) - but no reverse morph at
-         1600ms, since the goal is to land on and stay on the real
-         logo, not snap back to the triangle placeholder. -->
     <target android:name="note">
         <aapt:attr name="android:animation">
             <objectAnimator
@@ -180,10 +99,6 @@
         </aapt:attr>
     </target>
 
-    <!-- note_group: same rotation+translateY wobble timing as Echo's
-         "play" target (400ms offset rotate out, hold, 1700ms offset
-         rotate back) - the triangle-shaped note tilts as it morphs,
-         then settles back level once it's the real note shape. -->
     <target android:name="note_group">
         <aapt:attr name="android:animation">
             <set>
@@ -219,7 +134,6 @@
                     android:valueFrom="2"
                     android:valueTo="0"
                     android:valueType="floatType" />
-                <!-- scale-pulse, same role as Echo's "media" target -->
                 <objectAnimator
                     android:duration="112"
                     android:interpolator="@android:interpolator/fast_out_slow_in"
@@ -288,9 +202,6 @@
         </aapt:attr>
     </target>
 
-    <!-- bg: compressed to 900ms (was 2400ms — see file header note on
-         why the whole timeline was rescaled by 0.375x). Same full-turn
-         spin role as Echo's own "bg" target. -->
     <target android:name="bg">
         <aapt:attr name="android:animation">
             <set>

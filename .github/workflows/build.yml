@@ -5,9 +5,6 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-# Naya push aaye to purani chal rahi build cancel ho jaye (queue me atakna band).
-# Release build (commit message me "release") ka alag group hai, taaki baad ka
-# normal push release build ko cancel na kar de.
 concurrency:
   group: build-${{ github.ref }}-${{ contains(github.event.head_commit.message, 'release') && 'release' || 'dev' }}
   cancel-in-progress: true
@@ -17,25 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
-      contents: write  # needed so the "Create Release" step can publish the built APK as a GitHub release
+      contents: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # persist-credentials required (true) — the "Publish check.json
-          # to 'update' branch" step later on still pushes a commit
-          # using this checkout's saved GITHUB_TOKEN credentials. (The
-          # old build-number bump-and-commit step no longer exists, so
-          # this is no longer needed for that — kept for check.json.)
           persist-credentials: true
           fetch-depth: 0
 
       - name: Free disk space (runner was hitting "No space left on device")
-        # The APK build died in :app:stripReleaseDebugSymbols with "No space
-        # left on device". Delete big preinstalled toolchains this job never
-        # uses (Android SDK/NDK and Java are kept — Java is reinstalled by
-        # the next step anyway).
         run: |
           df -h / | tail -1
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
@@ -72,52 +60,20 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Compute build number (timestamp-based — always increasing, zero maintenance)
-        # SIMPLEST POSSIBLE FIX — replaces the entire floor-tracking +
-        # git-commit + push-retry/rebase machinery above (four separate
-        # manual "resyncs" over time, and it STILL drifted — repo showed
-        # +3137 while build5137 was already on real phones) with
-        # something that structurally cannot drift again: the build
-        # number is just "seconds since a fixed reference date"
-        # (2024-01-01 UTC). Time only ever moves forward, on every
-        # machine, in every run — manual dispatch, retry, re-run,
-        # doesn't matter — so this number is *guaranteed* to always be
-        # higher than any previous build. No floor to track, no
-        # pubspec.yaml write-back, no git commit, no push race, no
-        # rebase retry logic, no GitHub API calls needed at all.
-        # Comfortably fits Android's versionCode ceiling (~2.1 billion)
-        # until roughly the year 2090.
         id: build_number
         run: |
           BASE_VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //;s/+.*//' | tr -d '\r')
-          EPOCH_BASE=1704067200   # 2024-01-01T00:00:00Z reference point
+          EPOCH_BASE=1704067200
           BUILD_NUMBER=$(( $(date -u +%s) - EPOCH_BASE ))
           echo "BASE_VERSION=${BASE_VERSION}" >> "$GITHUB_ENV"
           echo "BUILD_NUMBER=${BUILD_NUMBER}" >> "$GITHUB_ENV"
           echo "build=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
-          # Short, human-friendly label shown in Settings → About
-          # (IST date yymmdd + CI run number, e.g. 261027.142). Display
-          # only — the real versionCode above is untouched, so update
-          # checks for existing website-APK users keep working.
           BUILD_LABEL="$(TZ=Asia/Kolkata date +%y%m%d).${GITHUB_RUN_NUMBER}"
           echo "BUILD_LABEL=${BUILD_LABEL}" >> "$GITHUB_ENV"
           echo "Building version ${BASE_VERSION}, build ${BUILD_NUMBER}, label ${BUILD_LABEL}"
 
       - name: Build Release APK
-        # FIX (build failures from transient upstream 429 "Too Many
-        # Requests" on plugins.gradle.org / repo.maven.apache.org):
-        # Gradle's own internal dependency-download retry only waits
-        # ~100ms between attempts — nowhere near long enough to outlast
-        # a server-side rate-limit window, so it was hitting the same
-        # 429 again immediately and failing the whole build. This wraps
-        # the actual build command in its own retry loop with real
-        # backoff (30s, then 60s) so a transient rate-limit has an
-        # actual chance to clear before the next attempt, instead of
-        # requiring a manual empty-commit re-run every time it happens.
         run: |
-          # --build-name/--build-number override whatever's in
-          # pubspec.yaml with the values computed in "Compute build
-          # number" above, so pubspec.yaml never needs to be edited or
-          # committed for this at all.
           for attempt in 1 2 3; do
             D=/usr/local/lib/android/sdk/ndk/27.0.12077973; if [ -d "$D" ] && [ ! -f "$D/source.properties" ]; then echo "Removing broken NDK"; sudo rm -rf "$D"; fi
             if flutter build apk --release --split-per-abi --target-platform android-arm64 \
@@ -139,25 +95,7 @@ jobs:
       - name: Generate polished changelog
         id: changelog
         if: contains(github.event.head_commit.message, 'release')
-        # Turns raw commit messages into a clean, categorized release
-        # body WITHOUT any AI/API call — pure text processing, so it
-        # costs nothing and needs no secret key. Sorts each commit into
-        # one of a fixed set of sections by its conventional-commit-style
-        # prefix (fix:/add:/feat:/improve:/perf:/remove:/docs:), title-
-        # cases the message, and only prints sections that actually have
-        # content — so a push with just one fix never shows four empty
-        # headers. This is what UpdateService's _parseHighlights() reads
-        # on-device to build the "WHAT'S NEW" list in the update popup,
-        # so the section headers/bullets emitted here are intentionally
-        # plain markdown ("## Heading", "- bullet") with NO emoji baked
-        # directly into the text — _parseHighlights() strips markdown
-        # heading/bullet markers but keeps emoji, so emoji are added
-        # per-section below and survive into the on-device popup, while
-        # raw "## " noise never does.
         run: |
-          # Commits since the previous tag only (not the whole repo
-          # history) — falls back to the last 20 commits on the very
-          # first release, when no previous tag exists yet.
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s")
@@ -176,9 +114,6 @@ jobs:
 
           while IFS= read -r line; do
             [ -z "$line" ] && continue
-            # Never surface the bot's own bump commits as a user-facing
-            # changelog line — [skip ci] already keeps them from
-            # retriggering CI, this keeps them out of what users read.
             case "$line" in
               *"[skip ci]"*) continue ;;
             esac
@@ -194,10 +129,6 @@ jobs:
               *)                         key=other;   msg="$line" ;;
             esac
 
-            # Trim leading space left after stripping "prefix:", then
-            # capitalize just the first letter — title-casing the WHOLE
-            # message would mangle proper nouns/code identifiers that
-            # are already correctly cased (e.g. "SongTile", "GitHub").
             msg=$(echo "$msg" | sed 's/^ *//')
             first_char=$(echo "${msg:0:1}" | tr '[:lower:]' '[:upper:]')
             msg="${first_char}${msg:1}"
@@ -244,10 +175,6 @@ jobs:
             fi
           } > /tmp/changelog_body.md
 
-          # Guaranteed non-empty fallback: if every commit in this
-          # range was filtered out (e.g. the only commit was a
-          # [skip ci] bump), still ship a body instead of an empty
-          # release description.
           if [ ! -s /tmp/changelog_body.md ]; then
             echo "## ⚡ Improved" > /tmp/changelog_body.md
             echo "- General improvements and stability fixes" >> /tmp/changelog_body.md
@@ -262,8 +189,6 @@ jobs:
              build/app/outputs/flutter-apk/astra-music-arm64-v8a-release.apk
 
       - name: Upload APK
-        # continue-on-error: the same APK is attached to the GitHub release in
-        # the next step, so a full Actions artifact quota must not block it.
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -272,15 +197,6 @@ jobs:
           retention-days: 1
 
       - name: Create Release
-        # Gate: release (aur update popup) sirf tab jab commit message me
-        # "release" likha ho. Normal push pe sirf APK build hoti hai (Actions
-        # artifact me milti hai), GitHub release / check.json / push
-        # notification kuch nahi jata.
-        #
-        # body_path points at the categorized changelog generated above
-        # instead of relying on this action's own default (raw commit
-        # log dump) — that raw dump is what used to show up verbatim as
-        # a single flat bullet in the on-device "WHAT'S NEW" list.
         if: contains(github.event.head_commit.message, 'release')
         uses: softprops/action-gh-release@v2
         with:
@@ -292,15 +208,6 @@ jobs:
 
       - name: Publish check.json to 'update' branch
         if: contains(github.event.head_commit.message, 'release')
-        # Drives the in-app update popup. Rewritten to be failure-proof:
-        #  * versionCode is read from the BUILT APK (aapt2) — Flutter's
-        #    --split-per-abi adds an ABI offset to the versionCode, so the
-        #    raw BUILD_NUMBER can differ from what PackageInfo reports on
-        #    the phone. Comparing against the real number is always right.
-        #  * publishes from a throwaway repo and force-pushes a single
-        #    commit — no checkout of the 'update' branch inside the dirty
-        #    build workspace (that checkout could abort on modified files),
-        #    no rebase/retry races. check.json only ever needs the latest.
         run: |
           set -e
           BUILD_NUM="${{ steps.build_number.outputs.build }}"
@@ -337,15 +244,8 @@ jobs:
           exit 1
 
       - name: Notify users of new update (FCM push)
-        # Best-effort: a push-notification hiccup must never fail the build.
         continue-on-error: true
         if: contains(github.event.head_commit.message, 'release')
-        # Runs only on release commits (see Create Release above).
-        # Separately, and regardless of that: silently skipped
-        # (not failed) if the FIREBASE_SERVICE_ACCOUNT secret hasn't been
-        # added yet, so this step is a no-op until FCM_SETUP.md's steps
-        # are done, rather than breaking the whole release pipeline for
-        # anyone who hasn't set up push notifications yet.
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
@@ -356,21 +256,6 @@ jobs:
           echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/fcm-service-account.json
           PROJECT_ID=$(python3 -c "import json; print(json.load(open('/tmp/fcm-service-account.json'))['project_id'])")
 
-          # OAuth2 access token via the service account's private key (JWT
-          # bearer flow) — no extra CLI/tooling needed beyond openssl+curl,
-          # which every ubuntu-latest runner already has.
-          #
-          # YAML-SAFETY NOTE: every line of this embedded Python script is
-          # kept indented at least as far as this `run: |` block's own
-          # baseline indentation (10 spaces) — a literal block scalar in
-          # YAML ends at the first line indented LESS than its first
-          # content line, so a flush-left heredoc body here would
-          # silently truncate the workflow (everything after would be
-          # parsed as sibling YAML keys, not job steps) rather than
-          # failing loudly. textwrap.dedent() strips that shared leading
-          # whitespace back off before Python actually runs the code, so
-          # this indentation is purely to keep YAML's parser happy and
-          # has zero effect on the script's actual behavior.
           python3 - <<'PYEOF'
           import json, time, base64, subprocess, textwrap
 
@@ -431,18 +316,7 @@ jobs:
 
           rm -f /tmp/fcm-service-account.json /tmp/pkey.pem /tmp/jwt.txt
 
-  # ════════════════════════════════════════════════════════════════════════
-  # WEB PREVIEW — builds a browser-viewable version of the UI and publishes
-  # it to GitHub Pages, so the design can be checked from a phone browser
-  # in ~2-3 min instead of waiting on a full APK build. This is UI/layout
-  # preview only: native-only features (Hive local storage, background
-  # audio, downloads, native login flows, etc.) will not work identically
-  # on web — treat this as "does the screen look right", not a functional
-  # test. Runs independently of the `build` job above (separate job, same
-  # trigger) so it can never block or slow down the real APK pipeline; if
-  # this job fails, the APK build is unaffected.
   web-preview:
-    # Sirf manual run pe — har push pe chalane se artifact quota bhar raha tha
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -461,11 +335,6 @@ jobs:
           channel: 'stable'
 
       - name: Enable web support and scaffold web/ if missing
-        # FIX (no web/ folder in this repo yet — it's a mobile-only
-        # project): `flutter create --platforms=web .` is safe to run
-        # every time — it only adds/updates the web/ scaffolding files
-        # and never touches lib/ or any other existing source, so it
-        # won't conflict with or overwrite app code on repeat runs.
         run: |
           flutter config --enable-web
           flutter create --platforms=web .

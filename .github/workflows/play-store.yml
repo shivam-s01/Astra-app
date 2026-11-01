@@ -1,7 +1,5 @@
 name: Build Astra Music (Play Store AAB)
 
-# Manual only — never runs on push. Produces a signed .aab for Google Play.
-# The website APK workflow (build.yml) is untouched by this file.
 on:
   workflow_dispatch:
 
@@ -42,9 +40,6 @@ jobs:
           printf 'storePassword=${{ secrets.STORE_PASSWORD }}\nkeyPassword=${{ secrets.KEY_PASSWORD }}\nkeyAlias=${{ secrets.KEY_ALIAS }}\nstoreFile=aurum-release.jks\n' > android/key.properties
 
       - name: Strip Play-restricted permission (this CI workspace only)
-        # Play restricts REQUEST_INSTALL_PACKAGES (self-installing APKs).
-        # Removed here, in the throwaway CI checkout only — the repo
-        # manifest and the website APK keep it.
         run: |
           sed -i '/android.permission.REQUEST_INSTALL_PACKAGES/d' android/app/src/main/AndroidManifest.xml
           if grep -q "REQUEST_INSTALL_PACKAGES" android/app/src/main/AndroidManifest.xml; then
@@ -57,7 +52,6 @@ jobs:
       - name: Compute version
         run: |
           BASE_VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //;s/+.*//' | tr -d '\r')
-          # Same scheme as build.yml: seconds since 2024-01-01 UTC, always increasing.
           BUILD_NUMBER=$(( $(date -u +%s) - 1704067200 ))
           BUILD_LABEL="$(TZ=Asia/Kolkata date +%y%m%d).${GITHUB_RUN_NUMBER}"
           echo "BASE_VERSION=${BASE_VERSION}" >> "$GITHUB_ENV"
