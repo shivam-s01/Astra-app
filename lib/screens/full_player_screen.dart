@@ -35,6 +35,7 @@ import '../models/lyrics.dart';
 import '../theme/aurum_theme.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../services/audio_prefs.dart';
+import '../services/lyrics_translation_service.dart';
 import '../widgets/aurum_artwork.dart';
 import '../widgets/aurum_pressable.dart';
 import '../widgets/aurum_like_button.dart';
@@ -3604,10 +3605,142 @@ class _LyricsPageState extends State<AurumLyricsPage> {
   GlobalKey _keyFor(int index) =>
       _lineKeys.putIfAbsent(index, () => GlobalKey());
 
+  LyricsTranslation? _tr;
+  bool _trLoading = false;
+  bool _trFailed = false;
+  int _trGen = 0;
+  List<LyricLine>? _trLinesCache;
+
+  LyricsTranslation? get _activeTr =>
+      (_tr != null && !_tr!.sameLanguage) ? _tr : null;
+
+  @override
+  void initState() {
+    super.initState();
+    LyricsTranslatePrefs.targetNotifier.addListener(_onTrPrefChanged);
+    LyricsTranslatePrefs.modeNotifier.addListener(_onTrModeChanged);
+    LyricsTranslatePrefs.ensureLoaded().then((_) {
+      if (mounted) _maybeTranslate();
+    });
+  }
+
   @override
   void dispose() {
+    LyricsTranslatePrefs.targetNotifier.removeListener(_onTrPrefChanged);
+    LyricsTranslatePrefs.modeNotifier.removeListener(_onTrModeChanged);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onTrPrefChanged() {
+    if (mounted) _maybeTranslate();
+  }
+
+  void _onTrModeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  List<String> _sourceLines() {
+    final r = _result;
+    if (r == null) return const [];
+    if (r.hasSynced) return [for (final l in r.synced!) l.text];
+    return (r.plain ?? '').split('\n');
+  }
+
+  List<LyricLine> _translatedOnlyLines(
+      List<LyricLine> raw, LyricsTranslation tr) {
+    return _trLinesCache ??= [
+      for (var i = 0; i < raw.length; i++)
+        LyricLine(
+          time: raw[i].time,
+          text: (i < tr.lines.length && tr.lines[i].trim().isNotEmpty)
+              ? tr.lines[i]
+              : raw[i].text,
+        ),
+    ];
+  }
+
+  Future<void> _maybeTranslate() async {
+    final target = LyricsTranslatePrefs.targetNotifier.value;
+    final result = _result;
+    final song = _loadedFor;
+    final gen = ++_trGen;
+    if (target == null || result == null || song == null || _loading) {
+      if (_tr != null || _trLoading || _trFailed) {
+        setState(() {
+          _tr = null;
+          _trLoading = false;
+          _trFailed = false;
+          _trLinesCache = null;
+        });
+      }
+      return;
+    }
+    final src = _sourceLines();
+    final cacheKey = '${song.id}|${result.hasSynced ? 's' : 'p'}';
+    final cached = LyricsTranslationService.peek(cacheKey, target);
+    if (cached != null && cached.lines.length == src.length) {
+      setState(() {
+        _tr = cached;
+        _trLoading = false;
+        _trFailed = false;
+        _trLinesCache = null;
+      });
+      return;
+    }
+    setState(() {
+      _trLoading = true;
+      _trFailed = false;
+      _tr = null;
+      _trLinesCache = null;
+    });
+    final r = await LyricsTranslationService.translate(
+      cacheKey: cacheKey,
+      lines: src,
+      target: target,
+      songLanguageHint: song.language,
+    );
+    if (!mounted || gen != _trGen) return;
+    setState(() {
+      _trLoading = false;
+      _tr = r;
+      _trFailed = r == null;
+      _trLinesCache = null;
+    });
+    if (r == null) {
+      AurumSnack.show(
+        context,
+        "Couldn't translate lyrics. Check your connection.",
+        duration: const Duration(seconds: 4),
+        actionLabel: 'Retry',
+        onAction: _maybeTranslate,
+      );
+    } else if (r.sameLanguage) {
+      final n = translationLangFor(target)?.name ?? target;
+      AurumSnack.show(context, 'Lyrics are already in $n');
+    }
+  }
+
+  String? _translateInfo() {
+    final tr = _tr;
+    if (tr == null) return null;
+    final tName = translationLangFor(tr.target)?.name ?? tr.target;
+    if (tr.sameLanguage) return 'Already in $tName';
+    final code = tr.sourceLang?.split('-').first;
+    final sName = translationLangFor(code)?.name ?? code;
+    if (sName == null) return null;
+    return tr.transliterated ? '$sName (romanised) → $tName' : '$sName → $tName';
+  }
+
+  void _openTranslateSheet() {
+    AurumHaptics.light();
+    showAurumModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _TranslateSheet(info: _translateInfo()),
+    );
   }
 
   Future<void> _fetchLyrics() async {
@@ -3616,11 +3749,16 @@ class _LyricsPageState extends State<AurumLyricsPage> {
     final requestedForId = _loadedFor?.id;
     _lineKeys.clear();
     _needsInstantScroll = true;
+    _trGen++;
     setState(() {
       _loading = true;
       _notFound = false;
       _result = null;
       _activeIndex = -1;
+      _tr = null;
+      _trLoading = false;
+      _trFailed = false;
+      _trLinesCache = null;
     });
     final result = await context
         .read<PlayerProvider>()
@@ -3637,6 +3775,7 @@ class _LyricsPageState extends State<AurumLyricsPage> {
         _notFound = true;
       }
     });
+    if (result.hasAny) _maybeTranslate();
   }
 
   void _onPositionChanged(Duration position) {
@@ -3756,14 +3895,22 @@ class _LyricsPageState extends State<AurumLyricsPage> {
       );
     } else if (_result!.hasSynced) {
       final rawLines = _result!.synced!;
-      final displayLines = rawLines;
+      final tr = _activeTr;
+      final trOnly = tr != null &&
+          LyricsTranslatePrefs.modeNotifier.value ==
+              TranslationDisplay.translationOnly;
+      final displayLines =
+          trOnly ? _translatedOnlyLines(rawLines, tr!) : rawLines;
+      final subLines = (tr != null && !trOnly) ? tr.lines : null;
+      final constellationLines =
+          tr != null ? _translatedOnlyLines(rawLines, tr) : rawLines;
       content = ValueListenableBuilder<LyricsViewMode>(
         key: const ValueKey('synced-lyrics'),
         valueListenable: AudioPrefs.lyricsViewModeNotifier,
         builder: (context, mode, _) {
           if (widget.onDarkBackdrop && mode == LyricsViewMode.fullscreen) {
             return ConstellationLyrics(
-              lines: displayLines,
+              lines: constellationLines,
               accent: lyricsAccent,
               isLight: isLight,
             );
@@ -3776,12 +3923,23 @@ class _LyricsPageState extends State<AurumLyricsPage> {
             lineKeyFor: _keyFor,
             onPositionChanged: _onPositionChanged,
             isLight: isLight,
+            subLines: subLines,
           );
         },
       );
     } else {
       final rawPlain = _result!.plain ?? '';
-      final displayPlain = rawPlain;
+      final tr = _activeTr;
+      final trMode = LyricsTranslatePrefs.modeNotifier.value;
+      final srcPlain = rawPlain.split('\n');
+      final canPair = tr != null && tr.lines.length == srcPlain.length;
+      final displayPlain = (canPair && trMode == TranslationDisplay.translationOnly)
+          ? [
+              for (var i = 0; i < srcPlain.length; i++)
+                (tr!.lines[i].trim().isEmpty ? srcPlain[i] : tr.lines[i])
+            ].join('\n')
+          : rawPlain;
+      final pairPlain = canPair && trMode == TranslationDisplay.both;
       content = ValueListenableBuilder<LyricsStyle>(
         key: const ValueKey('plain-lyrics'),
         valueListenable: AudioPrefs.lyricsStyleNotifier,
@@ -3802,17 +3960,53 @@ class _LyricsPageState extends State<AurumLyricsPage> {
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(24, 24, 24, 48),
-              child: Text(
-                displayPlain,
-                textAlign: style.position == 'Left' ? TextAlign.left : TextAlign.center,
-                style: TextStyle(
-                  color: lyricsColor,
-                  fontSize: style.textSize,
-                  height: style.lineSpacing,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.2,
-                ),
-              ),
+              child: pairPlain
+                  ? Text.rich(
+                      TextSpan(children: [
+                        for (var i = 0; i < srcPlain.length; i++) ...[
+                          TextSpan(text: srcPlain[i] + '\n'),
+                          if (srcPlain[i].trim().isNotEmpty &&
+                              tr!.lines[i].trim().isNotEmpty &&
+                              tr.lines[i].trim().toLowerCase() !=
+                                  srcPlain[i].trim().toLowerCase()) ...[
+                            TextSpan(
+                              text: tr.lines[i] + '\n',
+                              style: TextStyle(
+                                color: lyricsColor.withAlpha(150),
+                                fontSize: style.textSize * 0.62,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0,
+                              ),
+                            ),
+                            const TextSpan(
+                                text: '\n', style: TextStyle(fontSize: 8)),
+                          ],
+                        ],
+                      ]),
+                      textAlign: style.position == 'Left'
+                          ? TextAlign.left
+                          : TextAlign.center,
+                      style: TextStyle(
+                        color: lyricsColor,
+                        fontSize: style.textSize,
+                        height: style.lineSpacing,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.2,
+                      ),
+                    )
+                  : Text(
+                      displayPlain,
+                      textAlign: style.position == 'Left'
+                          ? TextAlign.left
+                          : TextAlign.center,
+                      style: TextStyle(
+                        color: lyricsColor,
+                        fontSize: style.textSize,
+                        height: style.lineSpacing,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
             ),
           );
         },
@@ -3841,7 +4035,286 @@ class _LyricsPageState extends State<AurumLyricsPage> {
         Positioned.fill(
           child: _PositionListenerBridge(onPositionChanged: _onPositionChanged),
         ),
+        if (!_loading && !_notFound && _result != null)
+          Positioned(
+            top: 4,
+            right: 14,
+            child: ValueListenableBuilder<String?>(
+              valueListenable: LyricsTranslatePrefs.targetNotifier,
+              builder: (context, target, _) => _TranslateButton(
+                isLight: isLight,
+                accent: lyricsAccent,
+                targetCode: target,
+                loading: _trLoading,
+                failed: _trFailed,
+                onTap: _openTranslateSheet,
+              ),
+            ),
+          ),
       ],
+    );
+  }
+}
+
+class _TranslateButton extends StatelessWidget {
+  final bool isLight;
+  final Color accent;
+  final String? targetCode;
+  final bool loading;
+  final bool failed;
+  final VoidCallback onTap;
+
+  const _TranslateButton({
+    required this.isLight,
+    required this.accent,
+    required this.targetCode,
+    required this.loading,
+    required this.failed,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final active = targetCode != null;
+    final fg = isLight ? AurumTheme.lightTextPrimary : Colors.white;
+    final bg = active
+        ? accent.withAlpha(isLight ? 60 : 70)
+        : (isLight ? Colors.black.withAlpha(14) : Colors.white.withAlpha(22));
+    final border = active
+        ? accent.withAlpha(140)
+        : (isLight ? Colors.black.withAlpha(20) : Colors.white.withAlpha(30));
+    final label = active ? targetCode!.split('-').first.toUpperCase() : null;
+
+    return Semantics(
+      button: true,
+      label: 'Translate lyrics',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          height: 38,
+          constraints: const BoxConstraints(minWidth: 38),
+          padding: EdgeInsets.symmetric(horizontal: active ? 12 : 0),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(19),
+            border: Border.all(color: border, width: 0.8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (loading)
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(fg),
+                  ),
+                )
+              else
+                Icon(
+                  failed ? Icons.refresh_rounded : Icons.translate_rounded,
+                  size: 18,
+                  color: fg,
+                ),
+              if (label != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TranslateSheet extends StatefulWidget {
+  final String? info;
+  const _TranslateSheet({this.info});
+
+  @override
+  State<_TranslateSheet> createState() => _TranslateSheetState();
+}
+
+class _TranslateSheetState extends State<_TranslateSheet> {
+  @override
+  Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final bg = isLight ? Colors.white : const Color(0xFF16141F);
+    final fg = isLight ? AurumTheme.lightTextPrimary : Colors.white;
+    final muted = isLight ? AurumTheme.lightTextMuted : Colors.white.withAlpha(120);
+    final line = isLight ? Colors.black.withAlpha(14) : Colors.white.withAlpha(18);
+    final accent = context.read<ThemeProvider>().accentColor;
+    final langs = kTranslationLanguages;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.42,
+      minChildSize: 0.3,
+      maxChildSize: 0.94,
+      expand: false,
+      builder: (context, scroll) {
+        return Container(
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+          ),
+          child: ValueListenableBuilder<String?>(
+            valueListenable: LyricsTranslatePrefs.targetNotifier,
+            builder: (context, target, _) {
+              return Column(
+                children: [
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: muted.withAlpha(90),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(22, 18, 22, 4),
+                    child: Row(
+                      children: [
+                        Icon(Icons.translate_rounded, color: accent, size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Translate lyrics',
+                            style: TextStyle(
+                              color: fg,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (target != null)
+                          TextButton(
+                            onPressed: () {
+                              LyricsTranslatePrefs.setTarget(null);
+                              Navigator.of(context).pop();
+                            },
+                            child: const Text('Turn off'),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (widget.info != null && target != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 0, 22, 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          widget.info!,
+                          style: TextStyle(color: muted, fontSize: 12.5),
+                        ),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
+                    child: ValueListenableBuilder<TranslationDisplay>(
+                      valueListenable: LyricsTranslatePrefs.modeNotifier,
+                      builder: (context, mode, _) {
+                        Widget seg(String label, TranslationDisplay m) {
+                          final sel = mode == m;
+                          return Expanded(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () {
+                                AurumHaptics.selection();
+                                LyricsTranslatePrefs.setMode(m);
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                height: 38,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: sel ? accent.withAlpha(60) : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(11),
+                                ),
+                                child: Text(
+                                  label,
+                                  style: TextStyle(
+                                    color: sel ? fg : muted,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+
+                        return Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: BoxDecoration(
+                            color: isLight
+                                ? Colors.black.withAlpha(10)
+                                : Colors.white.withAlpha(12),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Row(children: [
+                            seg('Lyrics + Translation', TranslationDisplay.both),
+                            seg('Translation only', TranslationDisplay.translationOnly),
+                          ]),
+                        );
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.separated(
+                      controller: scroll,
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 28),
+                      itemCount: langs.length,
+                      separatorBuilder: (_, __) =>
+                          Divider(height: 1, indent: 16, endIndent: 16, color: line),
+                      itemBuilder: (context, i) {
+                        final l = langs[i];
+                        final sel = l.code == target;
+                        return ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                          title: Text(
+                            l.native,
+                            style: TextStyle(
+                              color: fg,
+                              fontSize: 15.5,
+                              fontWeight: sel ? FontWeight.w800 : FontWeight.w600,
+                            ),
+                          ),
+                          subtitle: l.native == l.name
+                              ? null
+                              : Text(l.name, style: TextStyle(color: muted, fontSize: 12.5)),
+                          trailing: sel
+                              ? Icon(Icons.check_circle_rounded, color: accent)
+                              : null,
+                          onTap: () {
+                            AurumHaptics.selection();
+                            LyricsTranslatePrefs.setTarget(l.code);
+                            Navigator.of(context).pop();
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -3867,8 +4340,10 @@ class _SyncedLyricsView extends StatefulWidget {
   final void Function(Duration) onPositionChanged;
 
   final bool isLight;
+  final List<String>? subLines;
   const _SyncedLyricsView({
     super.key,
+    this.subLines,
     required this.lines,
     required this.activeIndex,
     required this.scrollController,
@@ -3933,17 +4408,47 @@ class _SyncedLyricsViewState extends State<_SyncedLyricsView> {
                     tween: ColorTween(end: target),
                     duration: const Duration(milliseconds: 260),
                     curve: Curves.easeOut,
-                    builder: (context, color, _) => Text(
-                      line.text,
-                      textAlign: align,
-                      style: TextStyle(
-                        color: color ?? target,
-                        fontSize: style.textSize,
-                        height: style.lineSpacing,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.2,
-                      ),
-                    ),
+                    builder: (context, color, _) {
+                      final c = color ?? target;
+                      final sub = (widget.subLines != null &&
+                              index < widget.subLines!.length)
+                          ? widget.subLines![index].trim()
+                          : '';
+                      final mainText = Text(
+                        line.text,
+                        textAlign: align,
+                        style: TextStyle(
+                          color: c,
+                          fontSize: style.textSize,
+                          height: style.lineSpacing,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        ),
+                      );
+                      if (sub.isEmpty ||
+                          sub.toLowerCase() == line.text.trim().toLowerCase()) {
+                        return mainText;
+                      }
+                      return Column(
+                        crossAxisAlignment: isLeft
+                            ? CrossAxisAlignment.start
+                            : CrossAxisAlignment.center,
+                        children: [
+                          mainText,
+                          const SizedBox(height: 3),
+                          Text(
+                            sub,
+                            textAlign: align,
+                            style: TextStyle(
+                              color: Color.lerp(c, null, 0.18),
+                              fontSize: style.textSize * 0.62,
+                              height: 1.3,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
               ),
