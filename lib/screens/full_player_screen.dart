@@ -1904,6 +1904,9 @@ class _InlineLyricsStripState extends State<_InlineLyricsStrip> {
     if (watchedSong != null && watchedSong.id != _loadedForId) {
       _loadedForId = watchedSong.id;
       _loadedForSong = watchedSong;
+      // Drop the previous song's lyrics right now (no stale line while the
+      // new ones load).
+      _result = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _tr.update(song: watchedSong, result: null);
@@ -1920,7 +1923,7 @@ class _InlineLyricsStripState extends State<_InlineLyricsStrip> {
 
     final result = _result;
     Widget content;
-    if (result == null || !result.hasAny) {
+    if (result == null || !result.hasAny || _tr.pending) {
       content = const SizedBox.shrink();
     } else if (!result.hasSynced) {
       final plainLines = result.plain!.split('\n');
@@ -1957,9 +1960,14 @@ class _InlineLyricsStripState extends State<_InlineLyricsStrip> {
   Future<void> _fetch() async {
     final myGeneration = ++_fetchGeneration;
     final requestedForId = _loadedForId;
-    final result = await context
-        .read<PlayerProvider>()
-        .fetchSyncedLyrics(forSong: _loadedForSong);
+    LyricsResult result;
+    try {
+      result = await context
+          .read<PlayerProvider>()
+          .fetchSyncedLyrics(forSong: _loadedForSong);
+    } catch (_) {
+      result = const LyricsResult();
+    }
     if (!mounted) return;
     if (myGeneration != _fetchGeneration || requestedForId != _loadedForId) return;
     setState(() => _result = result);
@@ -3688,9 +3696,14 @@ class _LyricsPageState extends State<AurumLyricsPage> {
       _activeIndex = -1;
     });
     _tr.update(song: _loadedFor, result: null);
-    final result = await context
-        .read<PlayerProvider>()
-        .fetchSyncedLyrics(forSong: _loadedFor);
+    LyricsResult result;
+    try {
+      result = await context
+          .read<PlayerProvider>()
+          .fetchSyncedLyrics(forSong: _loadedFor);
+    } catch (_) {
+      result = const LyricsResult();
+    }
     if (!mounted) return;
     if (myGeneration != _fetchGeneration || requestedForId != _loadedFor?.id) {
       return;
@@ -3761,8 +3774,8 @@ class _LyricsPageState extends State<AurumLyricsPage> {
 
     _scrollController.animateTo(
       targetOffset,
-      duration: const Duration(milliseconds: 420),
-      curve: Curves.easeOutCubic,
+      duration: const Duration(milliseconds: 560),
+      curve: Curves.easeOutQuart,
     );
   }
 
@@ -3771,6 +3784,11 @@ class _LyricsPageState extends State<AurumLyricsPage> {
     final song = context.select<PlayerProvider, Song?>((p) => p.currentSong);
     if (song != null && song.id != _loadedFor?.id) {
       _loadedFor = song;
+      // Hide the previous song's lyrics immediately (this very frame).
+      _result = null;
+      _loading = true;
+      _notFound = false;
+      _activeIndex = -1;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _fetchLyrics();
       });
@@ -3789,7 +3807,7 @@ class _LyricsPageState extends State<AurumLyricsPage> {
         isLight ? AurumTheme.lightTextMuted : Colors.white.withAlpha(70);
 
     Widget content;
-    if (_loading) {
+    if (_loading || _tr.pending) {
       content = const Center(
         key: ValueKey('loading'),
         child: Padding(
@@ -3828,7 +3846,6 @@ class _LyricsPageState extends State<AurumLyricsPage> {
       final displayLines = trOnly ? conv! : rawLines;
       final subLines = (conv != null && !trOnly) ? _tr.active!.lines : null;
       final constellationLines = trOnly ? conv! : rawLines;
-      final constellationCaptions = subLines;
       content = ValueListenableBuilder<LyricsViewMode>(
         key: const ValueKey('synced-lyrics'),
         valueListenable: AudioPrefs.lyricsViewModeNotifier,
@@ -3836,7 +3853,6 @@ class _LyricsPageState extends State<AurumLyricsPage> {
           if (widget.onDarkBackdrop && mode == LyricsViewMode.fullscreen) {
             return ConstellationLyrics(
               lines: constellationLines,
-              captions: constellationCaptions,
               accent: lyricsAccent,
               isLight: isLight,
             );
@@ -4023,11 +4039,7 @@ class _SyncedLyricsViewState extends State<_SyncedLyricsView> {
         final pastColor = isLight
             ? AurumTheme.lightTextMuted.withAlpha(100)
             : Colors.white.withAlpha(95);
-        final upcomingColor = isLight
-            ? AurumTheme.lightTextMuted.withAlpha(170)
-            : Colors.white.withAlpha(150);
         final isLeft = style.position == 'Left';
-        final align = isLeft ? TextAlign.left : TextAlign.center;
 
         final list = ListView.builder(
           key: listKey,
@@ -4037,79 +4049,38 @@ class _SyncedLyricsViewState extends State<_SyncedLyricsView> {
           itemCount: lines.length,
           itemBuilder: (context, index) {
             final line = lines[index];
-            if (line.text.isEmpty) {
-              return SizedBox(key: lineKeyFor(index), height: 20);
+            final isActive = index == activeIndex;
+            // Colour eases with distance from the active line: the lines about
+            // to be sung stay readable, the far ones recede.
+            Color target;
+            if (isActive) {
+              target = activeColor;
+            } else if (index < activeIndex) {
+              target = pastColor;
+            } else {
+              final ahead = activeIndex < 0 ? index + 1 : index - activeIndex;
+              final fade = math.min(52, (ahead - 1) * 14);
+              target = isLight
+                  ? AurumTheme.lightTextMuted.withAlpha(170 - fade)
+                  : Colors.white.withAlpha(150 - fade);
             }
-            final target = index == activeIndex
-                ? activeColor
-                : (index < activeIndex ? pastColor : upcomingColor);
-            return Padding(
+            final sub = (widget.subLines != null && index < widget.subLines!.length)
+                ? widget.subLines![index].trim()
+                : '';
+            return _LyricLineTile(
               key: lineKeyFor(index),
-              padding: const EdgeInsets.symmetric(vertical: 7),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => context.read<PlayerProvider>().seekTo(line.time),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: TweenAnimationBuilder<Color?>(
-                    tween: ColorTween(end: target),
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeOut,
-                    builder: (context, color, _) {
-                      final c = color ?? target;
-                      final sub = (widget.subLines != null &&
-                              index < widget.subLines!.length)
-                          ? widget.subLines![index].trim()
-                          : '';
-                      final hasSub = sub.isNotEmpty &&
-                          sub.toLowerCase() != line.text.trim().toLowerCase();
-                      final mainText = Text(
-                        line.text,
-                        key: ValueKey(line.text),
-                        textAlign: align,
-                        style: TextStyle(
-                          color: c,
-                          fontSize: style.textSize,
-                          height: style.lineSpacing,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.2,
-                        ),
-                      );
-                      final cross = isLeft
-                          ? CrossAxisAlignment.start
-                          : CrossAxisAlignment.center;
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: cross,
-                        children: [
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 320),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeIn,
-                            child: mainText,
-                          ),
-                          AnimatedSize(
-                            duration: const Duration(milliseconds: 420),
-                            curve: Curves.easeOutCubic,
-                            alignment:
-                                isLeft ? Alignment.topLeft : Alignment.topCenter,
-                            child: hasSub
-                                ? _ConvertedLine(
-                                    key: ValueKey(sub),
-                                    text: sub,
-                                    align: align,
-                                    color: Color.lerp(c, null, 0.16),
-                                    size: style.textSize * 0.62,
-                                    active: index == activeIndex,
-                                  )
-                                : const SizedBox(width: double.infinity),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ),
+              line: line,
+              isActive: isActive,
+              isLastLine: index == lines.length - 1,
+              color: target,
+              isLeft: isLeft,
+              textSize: style.textSize,
+              lineSpacing: style.lineSpacing,
+              sub: sub,
+              onTap: () {
+                AurumHaptics.selection();
+                context.read<PlayerProvider>().seekTo(line.time);
+              },
             );
           },
         );
@@ -4132,6 +4103,210 @@ class _SyncedLyricsViewState extends State<_SyncedLyricsView> {
           child: list,
         );
       },
+    );
+  }
+}
+
+/// One lyric line. Spotify-style motion: the active line sits at full size and
+/// brightness, the others settle slightly smaller and dimmer. Size changes use
+/// a transform (not font size), so line wrapping and the scroll anchor never
+/// shift while the animation plays.
+class _LyricLineTile extends StatefulWidget {
+  final LyricLine line;
+  final bool isActive;
+  final bool isLastLine;
+  final Color color;
+  final bool isLeft;
+  final double textSize;
+  final double lineSpacing;
+  final String sub;
+  final VoidCallback onTap;
+  const _LyricLineTile({
+    super.key,
+    required this.line,
+    required this.isActive,
+    required this.isLastLine,
+    required this.color,
+    required this.isLeft,
+    required this.textSize,
+    required this.lineSpacing,
+    required this.sub,
+    required this.onTap,
+  });
+
+  @override
+  State<_LyricLineTile> createState() => _LyricLineTileState();
+}
+
+class _LyricLineTileState extends State<_LyricLineTile> {
+  bool _pressed = false;
+
+  void _setPressed(bool v) {
+    if (_pressed != v && mounted) setState(() => _pressed = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final w = widget;
+    final align = w.isLeft ? TextAlign.left : TextAlign.center;
+    final scaleAlign = w.isLeft ? Alignment.centerLeft : Alignment.center;
+
+    // Instrumental gap: breathing dots while it is the current "line".
+    if (w.line.text.isEmpty) {
+      final showDots = w.isActive && !w.isLastLine;
+      return AnimatedSize(
+        duration: const Duration(milliseconds: 360),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child: SizedBox(
+          width: double.infinity,
+          height: showDots ? 46 : 20,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 260),
+            child: showDots
+                ? _InstrumentalDots(
+                    key: const ValueKey('dots'),
+                    color: w.color,
+                    isLeft: w.isLeft,
+                  )
+                : const SizedBox.shrink(key: ValueKey('none')),
+          ),
+        ),
+      );
+    }
+
+    final hasSub = w.sub.isNotEmpty &&
+        w.sub.toLowerCase() != w.line.text.trim().toLowerCase();
+    final cross =
+        w.isLeft ? CrossAxisAlignment.start : CrossAxisAlignment.center;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => _setPressed(true),
+        onTapUp: (_) => _setPressed(false),
+        onTapCancel: () => _setPressed(false),
+        onTap: w.onTap,
+        child: AnimatedScale(
+          scale: (w.isActive ? 1.0 : 0.95) * (_pressed ? 0.98 : 1.0),
+          alignment: scaleAlign,
+          duration: Duration(milliseconds: _pressed ? 90 : 440),
+          curve: Curves.easeOutCubic,
+          child: SizedBox(
+            width: double.infinity,
+            child: TweenAnimationBuilder<Color?>(
+              tween: ColorTween(end: w.color),
+              duration: const Duration(milliseconds: 380),
+              curve: Curves.easeOutCubic,
+              builder: (context, color, _) {
+                final c = color ?? w.color;
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: cross,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 320),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeIn,
+                      child: Text(
+                        w.line.text,
+                        key: ValueKey(w.line.text),
+                        textAlign: align,
+                        style: TextStyle(
+                          color: c,
+                          fontSize: w.textSize,
+                          height: w.lineSpacing,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                    ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 420),
+                      curve: Curves.easeOutCubic,
+                      alignment:
+                          w.isLeft ? Alignment.topLeft : Alignment.topCenter,
+                      child: hasSub
+                          ? _ConvertedLine(
+                              key: ValueKey(w.sub),
+                              text: w.sub,
+                              align: align,
+                              color: Color.lerp(c, null, 0.16),
+                              size: w.textSize * 0.62,
+                              active: w.isActive,
+                            )
+                          : const SizedBox(width: double.infinity),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InstrumentalDots extends StatefulWidget {
+  final Color color;
+  final bool isLeft;
+  const _InstrumentalDots({super.key, required this.color, required this.isLeft});
+
+  @override
+  State<_InstrumentalDots> createState() => _InstrumentalDotsState();
+}
+
+class _InstrumentalDotsState extends State<_InstrumentalDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1500),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: widget.isLeft ? Alignment.centerLeft : Alignment.center,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < 3; i++)
+                Builder(builder: (context) {
+                  final t = (_c.value - i * 0.18) % 1.0;
+                  final wave = 0.5 - 0.5 * math.cos(2 * math.pi * t);
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 9),
+                    child: Opacity(
+                      opacity: 0.35 + 0.65 * wave,
+                      child: Transform.scale(
+                        scale: 0.72 + 0.28 * wave,
+                        child: Container(
+                          width: 9,
+                          height: 9,
+                          decoration: BoxDecoration(
+                            color: widget.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -4171,9 +4346,9 @@ class _ConvertedLine extends StatelessWidget {
             textAlign: align,
             style: TextStyle(
               color: color,
-              fontSize: active ? size * 1.06 : size,
+              fontSize: size,
               height: 1.3,
-              fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+              fontWeight: FontWeight.w600,
             ),
             child: Text(text, textAlign: align),
           ),

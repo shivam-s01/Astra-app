@@ -5,6 +5,8 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/lyrics.dart';
@@ -34,7 +36,13 @@ class LyricsTranslationHandle extends ChangeNotifier {
   bool _failed = false;
   int _gen = 0;
   bool _disposed = false;
+  bool _timedOut = false;
+  Timer? _holdTimer;
   List<LyricLine>? _convertedSynced;
+
+  /// How long a surface may hold its lyrics back while the conversion is
+  /// still being fetched, so the original script never flashes first.
+  static const Duration _holdMax = Duration(seconds: 5);
 
   /// The conversion to show, or null when off / not ready / already in the
   /// chosen script.
@@ -42,6 +50,13 @@ class LyricsTranslationHandle extends ChangeNotifier {
       (_tr != null && !_tr!.sameLanguage) ? _tr : null;
 
   bool get loading => _loading;
+
+  /// True while a conversion is wanted but not decided yet. Surfaces keep
+  /// the lyrics hidden (spinner) during this window instead of showing the
+  /// original and swapping a moment later. Never longer than [_holdMax].
+  bool get pending =>
+      target != null && _result != null && _tr == null && !_failed && !_timedOut;
+
   bool get failed => _failed;
   String? get target => LyricsTranslatePrefs.targetNotifier.value;
   TranslationDisplay get mode => LyricsTranslatePrefs.modeNotifier.value;
@@ -73,6 +88,7 @@ class LyricsTranslationHandle extends ChangeNotifier {
 
   /// Call whenever the song or its fetched lyrics change.
   void update({required Song? song, required LyricsResult? result}) {
+    if (_disposed) return;
     if (identical(result, _result) && song?.id == _song?.id) return;
     final sameSong = song?.id == _song?.id;
     _song = song;
@@ -85,7 +101,9 @@ class LyricsTranslationHandle extends ChangeNotifier {
     _run();
   }
 
-  void retry() => _run();
+  void retry() {
+    if (!_disposed) _run();
+  }
 
   void _onPrefs() {
     if (!_disposed) _run();
@@ -108,6 +126,8 @@ class LyricsTranslationHandle extends ChangeNotifier {
     final tgt = target;
     final result = _result;
     final song = _song;
+    _holdTimer?.cancel();
+    _timedOut = false;
 
     if (tgt == null || result == null || song == null || !result.hasAny) {
       if (_tr != null || _loading || _failed) {
@@ -122,6 +142,16 @@ class LyricsTranslationHandle extends ChangeNotifier {
 
     final src = sourceLines(result);
     final key = cacheKeyFor(song, result);
+
+    // English-letter lyrics + Hinglish: nothing to convert, decide instantly.
+    if (tgt == 'en' && LyricsTranslationService.isAlreadyRoman(src)) {
+      _tr = LyricsTranslation(target: tgt, lines: src, sameLanguage: true);
+      _loading = false;
+      _failed = false;
+      _convertedSynced = null;
+      notifyListeners();
+      return;
+    }
     final cached = LyricsTranslationService.peek(key, tgt);
     if (cached != null && cached.lines.length == src.length) {
       _tr = cached;
@@ -132,10 +162,19 @@ class LyricsTranslationHandle extends ChangeNotifier {
       return;
     }
 
-    // Keep showing the previous conversion (same song) while the new one
-    // loads, so changing the script never flashes the original lyrics.
+    // A conversion in another script must not linger: surfaces hold their
+    // lyrics (pending) until the chosen script is ready.
+    if (_tr != null && _tr!.target != tgt) {
+      _tr = null;
+      _convertedSynced = null;
+    }
     _loading = true;
     _failed = false;
+    _holdTimer = Timer(_holdMax, () {
+      if (_disposed || gen != _gen || !_loading) return;
+      _timedOut = true;
+      notifyListeners();
+    });
     notifyListeners();
 
     final r = await LyricsTranslationService.translate(
@@ -145,6 +184,7 @@ class LyricsTranslationHandle extends ChangeNotifier {
       songLanguageHint: song.language,
     );
     if (_disposed || gen != _gen) return;
+    _holdTimer?.cancel();
     _loading = false;
     _tr = r;
     _failed = r == null;
@@ -155,6 +195,7 @@ class LyricsTranslationHandle extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _holdTimer?.cancel();
     LyricsTranslatePrefs.targetNotifier.removeListener(_onPrefs);
     LyricsTranslatePrefs.modeNotifier.removeListener(_onMode);
     super.dispose();
@@ -202,12 +243,32 @@ class LyricsTranslationPrefetcher {
     final target = LyricsTranslatePrefs.targetNotifier.value;
     final gen = ++_gen;
     if (song == null || target == null) return;
+    await _warmSong(song, target, gen);
+    // Then the next song in the queue, so skipping is instant too.
+    final next = _nextSong(song);
+    if (next != null && gen == _gen) await _warmSong(next, target, gen);
+  }
+
+  static Song? _nextSong(Song current) {
+    final p = _player;
+    if (p == null) return null;
+    final q = p.queue;
+    final i = p.currentIndex;
+    if (i < 0 || i + 1 >= q.length || q[i].id != current.id) return null;
+    return q[i + 1];
+  }
+
+  static Future<void> _warmSong(Song song, String target, int gen) async {
     try {
       final result = await ApiService.fetchSyncedLyrics(song);
       if (gen != _gen || !result.hasAny) return;
+      final lines = LyricsTranslationHandle.sourceLines(result);
+      if (target == 'en' && LyricsTranslationService.isAlreadyRoman(lines)) {
+        return;
+      }
       await LyricsTranslationService.translate(
         cacheKey: LyricsTranslationHandle.cacheKeyFor(song, result),
-        lines: LyricsTranslationHandle.sourceLines(result),
+        lines: lines,
         target: target,
         songLanguageHint: song.language,
       );

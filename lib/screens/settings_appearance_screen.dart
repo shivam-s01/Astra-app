@@ -274,37 +274,31 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
               AudioPrefs.setLyricsViewMode(mode);
             },
           ),
-          _dropdownTile(context,
-            title: 'Lyrics script',
-            subtitle: 'Hindi ↔ Hinglish. Words stay the same: pyaar stays pyaar',
-            value: LyricsTranslatePrefs.targetNotifier.value ?? 'off',
-            options: const ['off', 'en', 'hi'],
-            labels: const {'off': 'Off', 'en': 'Hinglish', 'hi': 'हिन्दी'},
-            onChanged: (v) {
-              LyricsTranslatePrefs.setTarget(v == 'off' ? null : v);
-              setState(() {});
-            },
+          ValueListenableBuilder<String?>(
+            valueListenable: LyricsTranslatePrefs.targetNotifier,
+            builder: (context, target, _) => Column(children: [
+              _lyricsLanguageTile(context, target),
+              if (target != null)
+                ValueListenableBuilder<TranslationDisplay>(
+                  valueListenable: LyricsTranslatePrefs.modeNotifier,
+                  builder: (context, mode, _) => _dropdownTile(context,
+                    title: 'Lyrics display',
+                    subtitle: 'Applies to the lyrics screen, player card and full-screen view',
+                    value: mode == TranslationDisplay.both ? 'both' : 'only',
+                    options: const ['both', 'only'],
+                    labels: const {
+                      'both': 'Original + converted',
+                      'only': 'Converted only',
+                    },
+                    onChanged: (v) => LyricsTranslatePrefs.setMode(
+                      v == 'only'
+                          ? TranslationDisplay.translationOnly
+                          : TranslationDisplay.both,
+                    ),
+                  ),
+                ),
+            ]),
           ),
-          if (LyricsTranslatePrefs.targetNotifier.value != null)
-            _dropdownTile(context,
-              title: 'Show converted lyrics',
-              subtitle: 'Lyrics screen, front card and impressive view',
-              value: LyricsTranslatePrefs.modeNotifier.value ==
-                      TranslationDisplay.both
-                  ? 'both'
-                  : 'only',
-              options: const ['both', 'only'],
-              labels: const {
-                'both': 'Original + converted',
-                'only': 'Converted only',
-              },
-              onChanged: (v) {
-                LyricsTranslatePrefs.setMode(v == 'only'
-                    ? TranslationDisplay.translationOnly
-                    : TranslationDisplay.both);
-                setState(() {});
-              },
-            ),
           _dropdownTile(context,
             title: l10n.saLyricsTextPosition,
             subtitle: l10n.saLyricsTextPositionSubtitle,
@@ -1316,6 +1310,149 @@ class _MiniWavePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _MiniWavePainter old) =>
       old.progress != progress || old.scrollX != scrollX;
+}
+
+String _lyricsLangLabel(String? code) {
+  switch (code) {
+    case 'en':
+      return 'English (Hinglish)';
+    case 'hi':
+      return 'हिन्दी';
+    default:
+      return 'Off';
+  }
+}
+
+Widget _lyricsLanguageTile(BuildContext context, String? target) {
+  return Container(
+    margin: const EdgeInsets.only(bottom: 8),
+    decoration: BoxDecoration(
+      color: AurumTheme.bgCardOf(context),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: AurumTheme.dividerOf(context), width: 0.5),
+    ),
+    child: Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          AurumHaptics.selection();
+          showAurumModalBottomSheet<void>(
+            context: context,
+            backgroundColor: Colors.transparent,
+            isScrollControlled: true,
+            builder: (_) => const _LyricsLanguageSheet(),
+          );
+        },
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          title: Text('Lyrics language', style: TextStyle(color: AurumTheme.textPrimaryOf(context), fontSize: 14, fontWeight: FontWeight.w500)),
+          subtitle: Text('Read Hindi lyrics in English letters or हिन्दी. English songs stay as they are', style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 12)),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(_lyricsLangLabel(target), style: TextStyle(color: AurumTheme.accentOf(context), fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 2),
+            Icon(Icons.keyboard_arrow_down_rounded, color: AurumTheme.accentOf(context), size: 18),
+          ]),
+        ),
+      ),
+    ),
+  );
+}
+
+class _LyricsLanguageSheet extends StatelessWidget {
+  const _LyricsLanguageSheet();
+
+  static const _options = <(String?, String, String)>[
+    (null, 'Off', 'Lyrics exactly as they come'),
+    ('en', 'English (Hinglish)', 'Hindi lyrics in English letters: pyaar, tum, dil'),
+    ('hi', 'हिन्दी', 'Lyrics in Devanagari: प्यार, तुम, दिल'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
+    final accent = AurumTheme.accentOf(context);
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(10, 0, 10, 0),
+        padding: EdgeInsets.fromLTRB(16, 10, 16, 12 + bottomInset),
+        decoration: BoxDecoration(
+          color: AurumTheme.bgCardOf(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border.all(color: AurumTheme.dividerOf(context), width: 0.5),
+        ),
+        child: ValueListenableBuilder<String?>(
+          valueListenable: LyricsTranslatePrefs.targetNotifier,
+          builder: (context, target, _) => Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 34, height: 3.5,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: AurumTheme.textMutedOf(context).withAlpha(60),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Lyrics language',
+                style: TextStyle(color: AurumTheme.textPrimaryOf(context), fontSize: 18, fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(height: 3),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Changes apply to the playing song right away',
+                style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 12.5)),
+            ),
+            const SizedBox(height: 12),
+            for (final o in _options)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Material(
+                  color: target == o.$1 ? accent.withAlpha(28) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(14),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () {
+                      if (target == o.$1) {
+                        Navigator.of(context).pop();
+                        return;
+                      }
+                      AurumHaptics.selection();
+                      LyricsTranslatePrefs.setTarget(o.$1);
+                      Future.delayed(const Duration(milliseconds: 130), () {
+                        if (context.mounted) Navigator.of(context).pop();
+                      });
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: target == o.$1 ? accent.withAlpha(140) : AurumTheme.dividerOf(context),
+                          width: target == o.$1 ? 1.2 : 0.5,
+                        ),
+                      ),
+                      child: Row(children: [
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(o.$2, style: TextStyle(color: AurumTheme.textPrimaryOf(context), fontSize: 15, fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 2),
+                            Text(o.$3, style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 12.5)),
+                          ]),
+                        ),
+                        if (target == o.$1) Icon(Icons.check_circle_rounded, color: accent, size: 22),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
+          ]),
+        ),
+      ),
+    );
+  }
 }
 
 Widget _dropdownTile(

@@ -962,6 +962,9 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
     final result = _result;
     final hasLyrics = result?.hasAny ?? false;
     final hasSynced = result?.hasSynced ?? false;
+    // Keep the card in its loading state until the chosen script is ready, so
+    // Hindi never flashes before the converted text.
+    final busy = _loading || _tr.pending;
 
     return Container(
       height: _peekHeight,
@@ -979,7 +982,7 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
-          onTap: (_loading || !hasLyrics) ? null : widget.onOpenFullScreen,
+          onTap: (busy || !hasLyrics) ? null : widget.onOpenFullScreen,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 14, 16, 10),
             child: Column(
@@ -996,7 +999,7 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
                       ),
                     ),
                     const Spacer(),
-                    if (_loading)
+                    if (busy)
                       const SizedBox(
                         width: 14,
                         height: 14,
@@ -1018,7 +1021,7 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
                 ),
                 const SizedBox(height: 4),
                 Expanded(
-                  child: _loading
+                  child: busy
                       ? const SizedBox.shrink()
                       : !hasLyrics
                           ? const Center(

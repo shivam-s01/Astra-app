@@ -203,6 +203,14 @@ class LyricsTranslationService {
   static LyricsTranslation? peek(String cacheKey, String target) =>
       _mem['$cacheKey|$target|$_cacheVersion'];
 
+  /// Synchronous shortcut: Hinglish ('en') never changes lyrics that are
+  /// already in English letters, so those can be shown instantly with no
+  /// network and no waiting.
+  static bool isAlreadyRoman(List<String> lines) {
+    final text = lines.map((l) => l.trim()).where((l) => l.isNotEmpty).join(' ');
+    return text.isNotEmpty && _latinRatio(text) > 0.85;
+  }
+
   /// Translates [lines] (empty lines allowed and preserved). Returns null on
   /// failure. Never throws.
   static Future<LyricsTranslation?> translate({
