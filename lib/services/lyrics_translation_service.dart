@@ -19,9 +19,12 @@ class TranslationLang {
   const TranslationLang(this.code, this.name, this.native);
 }
 
+// NOTE: these are *scripts*, not meaning-translations.
+//  'en' → Hinglish (Hindi written in English letters: pyaar stays pyaar)
+//  'hi' → Hindi in Devanagari
 const List<TranslationLang> kTranslationLanguages = [
-  TranslationLang('en', 'English', 'English'),
-  TranslationLang('hi', 'Hindi', 'हिन्दी'),
+  TranslationLang('en', 'English letters · pyaar, tum', 'Hinglish'),
+  TranslationLang('hi', 'Hindi script · प्यार, तुम', 'हिन्दी'),
 ];
 
 TranslationLang? translationLangFor(String? code) {
@@ -138,7 +141,7 @@ class LyricsTranslatePrefs {
 class LyricsTranslationService {
   LyricsTranslationService._();
 
-  static const _cacheVersion = 'v2';
+  static const _cacheVersion = 'v3';
   static const _kDiskCache = 'lyr_tr_cache_v2';
   static const _kDiskOrder = 'lyr_tr_cache_order_v2';
   static const int _diskMax = 40;
@@ -250,71 +253,124 @@ class LyricsTranslationService {
     }
     if (src.isEmpty) return null;
 
-    // 1) Romanised Indic (Hinglish / Punjabi-in-Latin …) → native script.
-    String? indic = _romanIndicLang(src, hint);
-    var work = src;
-    var transliterated = false;
-    if (indic != null) {
-      final t = await _transliterate(src, indic);
-      if (t != null) {
-        work = t;
-        transliterated = true;
-      } else {
-        indic = null;
-      }
-    }
+    final isLatin = _latinRatio(src.join(' ')) > 0.85;
+    final same = LyricsTranslation(
+      target: target,
+      lines: List<String>.of(lines),
+      sameLanguage: true,
+    );
 
-    // 2) Translate with full-song context.
-    var res = await _translateAll(work, target, transliterated ? indic : null);
-    if (res == null) return null;
+    List<String>? converted;
+    var transliterated = true;
+    String? sourceLang;
 
-    // 3) Safety net: Google says Indic but text is still Latin → redo
-    //    through transliteration.
-    if (!transliterated &&
-        _latinRatio(src.join(' ')) > 0.8 &&
-        res.detected != null &&
-        _indicCodes.contains(res.detected!.split('-').first) &&
-        res.detected != target) {
-      final code = res.detected!.split('-').first;
-      final t = await _transliterate(src, code);
-      if (t != null) {
-        final again = await _translateAll(t, target, code);
-        if (again != null) {
-          res = again;
-          work = t;
-          transliterated = true;
-          indic = code;
+    if (target == 'en') {
+      // Hinglish: only change the SCRIPT, never the meaning.
+      if (isLatin) return same;
+      converted = await _romanise(src);
+      sourceLang = 'hi';
+    } else {
+      if (isLatin) {
+        final indic = _romanIndicLang(src, hint);
+        if (indic != null) {
+          // Hinglish → Devanagari, word meaning untouched.
+          converted = await _transliterate(src, 'hi');
+          sourceLang = indic;
+        } else {
+          // Genuine English lyrics → Hindi meaning.
+          final res = await _translateAll(src, 'hi', null);
+          converted = res?.lines;
+          transliterated = false;
+          sourceLang = res?.detected ?? 'en';
         }
+      } else {
+        final dev = _devanagariRatio(src.join(' '));
+        if (dev > 0.7) return same;
+        final res = await _translateAll(src, 'hi', null);
+        converted = res?.lines;
+        transliterated = false;
+        sourceLang = res?.detected;
       }
     }
+    if (converted == null) return null;
 
-    final detected = transliterated ? indic : res.detected;
-    final same = _sameLang(detected, target) && !transliterated;
-
-    // 4) Consistency: identical source lines (chorus) share one translation.
+    // Identical source lines (chorus) share one result.
     final firstFor = <String, String>{};
     final out = List<String>.filled(lines.length, '');
     for (var k = 0; k < idx.length; k++) {
-      final norm = work[k].toLowerCase().replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), ' ').trim();
-      var tr = res.lines[k].trim();
-      if (norm.isNotEmpty) {
-        tr = firstFor.putIfAbsent(norm, () => tr);
-      }
+      final norm = src[k]
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), ' ')
+          .trim();
+      var tr = converted[k].trim();
+      if (norm.isNotEmpty) tr = firstFor.putIfAbsent(norm, () => tr);
       out[idx[k]] = tr;
     }
 
     return LyricsTranslation(
       target: target,
       lines: out,
-      sourceLang: detected,
+      sourceLang: sourceLang,
       transliterated: transliterated,
-      sameLanguage: same,
     );
   }
 
-  static bool _sameLang(String? a, String b) {
-    if (a == null) return false;
-    return a.split('-').first.toLowerCase() == b.split('-').first.toLowerCase();
+  static double _devanagariRatio(String s) {
+    var dev = 0, letters = 0;
+    for (final r in s.runes) {
+      if (r >= 0x0900 && r <= 0x097F) {
+        dev++;
+        letters++;
+      } else if ((r >= 0x41 && r <= 0x5A) || (r >= 0x61 && r <= 0x7A) || r > 0x2FF) {
+        letters++;
+      }
+    }
+    return letters == 0 ? 0 : dev / letters;
+  }
+
+  /// Devanagari / other Indic script → English letters, line by line, using
+  /// Google's own source-transliteration (so "प्यार" → "pyaar", not "love").
+  static Future<List<String>?> _romanise(List<String> lines) async {
+    final out = await _pool<String?>(lines.length, 6, (i) async {
+      final l = lines[i];
+      if (_latinRatio(l) > 0.85) return l;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          final uri = Uri.parse(
+              'https://translate.googleapis.com/translate_a/single'
+              '?client=gtx&sl=auto&tl=en&dt=t&dt=rm');
+          final r = await http
+              .post(uri, body: {'q': l})
+              .timeout(const Duration(seconds: 10));
+          if (r.statusCode != 200) {
+            await Future.delayed(const Duration(milliseconds: 300));
+            continue;
+          }
+          final j = jsonDecode(utf8.decode(r.bodyBytes));
+          final parts = <String>[];
+          for (final seg in (j[0] as List)) {
+            if (seg is List && seg.length >= 4 && seg[3] is String) {
+              final t = (seg[3] as String).trim();
+              if (t.isNotEmpty) parts.add(t);
+            }
+          }
+          if (parts.isEmpty) continue;
+          return _tidyRoman(parts.join(' '));
+        } catch (_) {
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+      }
+      return null;
+    });
+    final ok = out.where((e) => e != null).length;
+    if (ok < (lines.length * 0.7)) return null;
+    return [for (var i = 0; i < lines.length; i++) out[i] ?? lines[i]];
+  }
+
+  static String _tidyRoman(String s) {
+    final t = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (t.isEmpty) return t;
+    return t[0].toUpperCase() + t.substring(1);
   }
 
   // ───────────────────── romanised-Indic detection ─────────────────────
@@ -368,6 +424,7 @@ class LyricsTranslationService {
   static Future<List<String>?> _transliterate(
       List<String> lines, String lang) async {
     final out = await _pool<String?>(lines.length, 6, (i) async {
+      if (_latinRatio(lines[i]) < 0.5) return lines[i];
       for (var attempt = 0; attempt < 2; attempt++) {
         try {
           final uri = Uri.https('inputtools.google.com', '/request', {

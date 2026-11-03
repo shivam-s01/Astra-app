@@ -3716,20 +3716,18 @@ class _LyricsPageState extends State<AurumLyricsPage> {
         onAction: _maybeTranslate,
       );
     } else if (r.sameLanguage) {
-      final n = translationLangFor(target)?.name ?? target;
+      final n = translationLangFor(target)?.native ?? target;
       AurumSnack.show(context, 'Lyrics are already in $n');
     }
   }
 
   String? _translateInfo() {
     final tr = _tr;
-    if (tr == null) return null;
-    final tName = translationLangFor(tr.target)?.name ?? tr.target;
-    if (tr.sameLanguage) return 'Already in $tName';
-    final code = tr.sourceLang?.split('-').first;
-    final sName = translationLangFor(code)?.name ?? code;
-    if (sName == null) return null;
-    return tr.transliterated ? '$sName (romanised) → $tName' : '$sName → $tName';
+    if (tr == null || tr.sameLanguage) return null;
+    if (tr.target == 'en') return 'Hindi → English letters (Hinglish)';
+    return tr.transliterated
+        ? 'English letters → Hindi script'
+        : 'Translated to Hindi';
   }
 
   void _openTranslateSheet() {
@@ -4192,7 +4190,7 @@ class _TranslateSheetState extends State<_TranslateSheet> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            'Translate lyrics',
+                            'Lyrics script',
                             style: TextStyle(
                               color: fg,
                               fontSize: 19,
@@ -4266,8 +4264,8 @@ class _TranslateSheetState extends State<_TranslateSheet> {
                             borderRadius: BorderRadius.circular(14),
                           ),
                           child: Row(children: [
-                            seg('Lyrics + Translation', TranslationDisplay.both),
-                            seg('Translation only', TranslationDisplay.translationOnly),
+                            seg('Original + Converted', TranslationDisplay.both),
+                            seg('Converted only', TranslationDisplay.translationOnly),
                           ]),
                         );
                       },
