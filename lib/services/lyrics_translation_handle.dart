@@ -185,6 +185,13 @@ class LyricsTranslationHandle extends ChangeNotifier {
     );
     if (_disposed || gen != _gen) return;
     _holdTimer?.cancel();
+    if (_timedOut) {
+      // The surface already settled on the original lyrics; swapping it for
+      // the converted text now would look like a glitch. The result is cached
+      // and shows instantly next time.
+      _loading = false;
+      return;
+    }
     _loading = false;
     _tr = r;
     _failed = r == null;
@@ -243,10 +250,13 @@ class LyricsTranslationPrefetcher {
     final target = LyricsTranslatePrefs.targetNotifier.value;
     final gen = ++_gen;
     if (song == null || target == null) return;
+    if (LyricsTranslationService.coolingDown) return;
     await _warmSong(song, target, gen);
     // Then the next song in the queue, so skipping is instant too.
     final next = _nextSong(song);
-    if (next != null && gen == _gen) await _warmSong(next, target, gen);
+    if (next != null && gen == _gen && !LyricsTranslationService.coolingDown) {
+      await _warmSong(next, target, gen);
+    }
   }
 
   static Song? _nextSong(Song current) {

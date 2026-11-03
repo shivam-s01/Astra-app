@@ -283,7 +283,7 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
                   valueListenable: LyricsTranslatePrefs.modeNotifier,
                   builder: (context, mode, _) => _dropdownTile(context,
                     title: 'Lyrics display',
-                    subtitle: 'Applies to the lyrics screen, player card and full-screen view',
+                    subtitle: '',
                     value: mode == TranslationDisplay.both ? 'both' : 'only',
                     options: const ['both', 'only'],
                     labels: const {
@@ -1315,7 +1315,7 @@ class _MiniWavePainter extends CustomPainter {
 String _lyricsLangLabel(String? code) {
   switch (code) {
     case 'en':
-      return 'English (Hinglish)';
+      return 'English';
     case 'hi':
       return 'हिन्दी';
     default:
@@ -1348,7 +1348,6 @@ Widget _lyricsLanguageTile(BuildContext context, String? target) {
         child: ListTile(
           contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
           title: Text('Lyrics language', style: TextStyle(color: AurumTheme.textPrimaryOf(context), fontSize: 14, fontWeight: FontWeight.w500)),
-          subtitle: Text('Read Hindi lyrics in English letters or हिन्दी. English songs stay as they are', style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 12)),
           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
             Text(_lyricsLangLabel(target), style: TextStyle(color: AurumTheme.accentOf(context), fontSize: 13, fontWeight: FontWeight.w600)),
             const SizedBox(width: 2),
@@ -1363,10 +1362,10 @@ Widget _lyricsLanguageTile(BuildContext context, String? target) {
 class _LyricsLanguageSheet extends StatelessWidget {
   const _LyricsLanguageSheet();
 
-  static const _options = <(String?, String, String)>[
-    (null, 'Off', 'Lyrics exactly as they come'),
-    ('en', 'English (Hinglish)', 'Hindi lyrics in English letters: pyaar, tum, dil'),
-    ('hi', 'हिन्दी', 'Lyrics in Devanagari: प्यार, तुम, दिल'),
+  static const _options = <(String?, String)>[
+    (null, 'Off'),
+    ('en', 'English'),
+    ('hi', 'हिन्दी'),
   ];
 
   @override
@@ -1399,13 +1398,7 @@ class _LyricsLanguageSheet extends StatelessWidget {
               child: Text('Lyrics language',
                 style: TextStyle(color: AurumTheme.textPrimaryOf(context), fontSize: 18, fontWeight: FontWeight.w700)),
             ),
-            const SizedBox(height: 3),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Changes apply to the playing song right away',
-                style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 12.5)),
-            ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             for (final o in _options)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -1426,7 +1419,7 @@ class _LyricsLanguageSheet extends StatelessWidget {
                       });
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
@@ -1436,11 +1429,7 @@ class _LyricsLanguageSheet extends StatelessWidget {
                       ),
                       child: Row(children: [
                         Expanded(
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(o.$2, style: TextStyle(color: AurumTheme.textPrimaryOf(context), fontSize: 15, fontWeight: FontWeight.w700)),
-                            const SizedBox(height: 2),
-                            Text(o.$3, style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 12.5)),
-                          ]),
+                          child: Text(o.$2, style: TextStyle(color: AurumTheme.textPrimaryOf(context), fontSize: 15.5, fontWeight: FontWeight.w700)),
                         ),
                         if (target == o.$1) Icon(Icons.check_circle_rounded, color: accent, size: 22),
                       ]),
@@ -1474,7 +1463,7 @@ Widget _dropdownTile(
     child: ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
       title: Text(title, style: TextStyle(color: AurumTheme.textPrimaryOf(context), fontSize: 14, fontWeight: FontWeight.w500)),
-      subtitle: Text(subtitle, style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 12)),
+      subtitle: subtitle.isEmpty ? null : Text(subtitle, style: TextStyle(color: AurumTheme.textMutedOf(context), fontSize: 12)),
       trailing: DropdownButton<String>(
         value: value,
         underline: const SizedBox(),

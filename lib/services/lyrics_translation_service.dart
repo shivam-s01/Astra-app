@@ -150,6 +150,21 @@ class LyricsTranslationService {
   static final Map<String, LyricsTranslation> _mem = {};
   static final Map<String, Future<LyricsTranslation?>> _inflight = {};
 
+  // Failure memory (this app session only). A song that could not be
+  // converted is never retried, and after two failures in a row the network
+  // is left alone for a while, so a bad connection costs nothing.
+  static final Set<String> _failedKeys = {};
+  static int _failStreak = 0;
+  static DateTime? _cooldownUntil;
+  static const Duration _cooldown = Duration(minutes: 3);
+
+  static bool get coolingDown =>
+      _cooldownUntil != null && DateTime.now().isBefore(_cooldownUntil!);
+
+  /// Lyrics count as "already in English letters" only when practically no
+  /// other script is left (a few Devanagari lines still get converted).
+  static const double _romanSame = 0.985;
+
   static const Map<String, String> _hintToIndic = {
     'hindi': 'hi',
     'punjabi': 'pa',
@@ -208,7 +223,7 @@ class LyricsTranslationService {
   /// network and no waiting.
   static bool isAlreadyRoman(List<String> lines) {
     final text = lines.map((l) => l.trim()).where((l) => l.isNotEmpty).join(' ');
-    return text.isNotEmpty && _latinRatio(text) > 0.85;
+    return text.isNotEmpty && _latinRatio(text) > _romanSame;
   }
 
   /// Translates [lines] (empty lines allowed and preserved). Returns null on
@@ -231,10 +246,17 @@ class LyricsTranslationService {
           _remember(key, disk);
           return disk;
         }
+        if (_failedKeys.contains(key) || coolingDown) return null;
         final r = await _run(lines, target, songLanguageHint);
         if (r != null) {
+          _failStreak = 0;
           _remember(key, r);
           unawaited(_writeDisk(key, r));
+        } else {
+          _failedKeys.add(key);
+          if (++_failStreak >= 2) {
+            _cooldownUntil = DateTime.now().add(_cooldown);
+          }
         }
         return r;
       } catch (e) {
@@ -274,7 +296,7 @@ class LyricsTranslationService {
 
     if (target == 'en') {
       // Hinglish: only change the SCRIPT, never the meaning.
-      if (isLatin) return same;
+      if (_latinRatio(src.join(' ')) > _romanSame) return same;
       converted = await _romanise(src);
       sourceLang = 'hi';
     } else {
@@ -339,9 +361,12 @@ class LyricsTranslationService {
   /// Devanagari / other Indic script → English letters, line by line, using
   /// Google's own source-transliteration (so "प्यार" → "pyaar", not "love").
   static Future<List<String>?> _romanise(List<String> lines) async {
+    var okCount = 0, badCount = 0;
     final out = await _pool<String?>(lines.length, 6, (i) async {
       final l = lines[i];
       if (_latinRatio(l) > 0.85) return l;
+      // Nothing has worked after several tries: stop hammering the network.
+      if (badCount >= 4 && okCount == 0) return null;
       for (var attempt = 0; attempt < 2; attempt++) {
         try {
           final uri = Uri.parse(
@@ -363,11 +388,13 @@ class LyricsTranslationService {
             }
           }
           if (parts.isEmpty) continue;
+          okCount++;
           return _tidyRoman(parts.join(' '));
         } catch (_) {
           await Future.delayed(const Duration(milliseconds: 300));
         }
       }
+      badCount++;
       return null;
     });
     final ok = out.where((e) => e != null).length;
