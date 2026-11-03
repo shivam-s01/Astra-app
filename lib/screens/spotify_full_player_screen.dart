@@ -24,6 +24,7 @@ import '../utils/aurum_haptics.dart';
 import '../widgets/jam_entry.dart';
 import '../services/jam_service.dart';
 import '../services/api_service.dart';
+import '../services/lyrics_translation_handle.dart';
 import '../utils/aurum_transitions.dart' show AurumDepthRoute;
 import 'artist_screen.dart';
 import 'queue_screen.dart';
@@ -892,17 +893,31 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
   bool _loading = true;
   LyricsResult? _result;
   String? _loadedForSongId;
+  final LyricsTranslationHandle _tr = LyricsTranslationHandle();
 
   @override
   void initState() {
     super.initState();
+    _tr.addListener(_onTr);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _tr.removeListener(_onTr);
+    _tr.dispose();
+    super.dispose();
+  }
+
+  void _onTr() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
     final song = widget.player.currentSong;
     if (song == null) return;
     _loadedForSongId = song.id;
+    _tr.update(song: song, result: null);
     try {
       final result = await widget.player.fetchSyncedLyrics();
       if (!mounted || _loadedForSongId != song.id) return;
@@ -910,6 +925,7 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
         _result = result;
         _loading = false;
       });
+      _tr.update(song: song, result: result.hasAny ? result : null);
     } catch (_) {
       if (!mounted || _loadedForSongId != song.id) return;
       setState(() {
@@ -917,6 +933,16 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
         _loading = false;
       });
     }
+  }
+
+  String _plainPeek(LyricsResult r) {
+    final src = r.plain!.split('\n');
+    final out = <String>[];
+    for (var i = 0; i < src.length && out.length < 5; i++) {
+      if (src[i].trim().isEmpty) continue;
+      out.add(_tr.lineAt(i) ?? src[i].trim());
+    }
+    return out.join('\n');
   }
 
   @override
@@ -1005,15 +1031,11 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
                               ),
                             )
                           : hasSynced
-                              ? _LivePeekLines(result: result!)
+                              ? _LivePeekLines(result: result!, handle: _tr)
                               : Align(
                                   alignment: Alignment.topLeft,
                                   child: Text(
-                                    result!.plain!
-                                        .split('\n')
-                                        .where((l) => l.trim().isNotEmpty)
-                                        .take(5)
-                                        .join('\n'),
+                                    _plainPeek(result!),
                                     maxLines: 5,
                                     overflow: TextOverflow.fade,
                                     style: const TextStyle(
@@ -1036,17 +1058,25 @@ class _LyricsPreviewCardState extends State<_LyricsPreviewCard> {
 
 class _LivePeekLines extends StatefulWidget {
   final LyricsResult result;
-  const _LivePeekLines({required this.result});
+  final LyricsTranslationHandle handle;
+  const _LivePeekLines({required this.result, required this.handle});
 
   @override
   State<_LivePeekLines> createState() => _LivePeekLinesState();
 }
 
 class _LivePeekLinesState extends State<_LivePeekLines> {
-  static const double _lineExtent = 34.0;
+  static const double _plainExtent = 34.0;
+  static const double _pairExtent = 56.0;
+
+  double get _lineExtent =>
+      (widget.handle.active != null && !widget.handle.onlyConverted)
+          ? _pairExtent
+          : _plainExtent;
 
   final ScrollController _ctrl = ScrollController();
   int _lastActive = -2;
+  double _lastExt = 0;
 
   @override
   void dispose() {
@@ -1072,6 +1102,10 @@ class _LivePeekLinesState extends State<_LivePeekLines> {
     final active = context.select<PlayerProvider, int>(
         (p) => widget.result.activeIndexFor(p.position));
 
+    if (_lastExt != _lineExtent) {
+      _lastExt = _lineExtent;
+      _lastActive = -2;
+    }
     if (active != _lastActive) {
       _lastActive = active;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1096,25 +1130,70 @@ class _LivePeekLinesState extends State<_LivePeekLines> {
         itemBuilder: (context, i) {
           final isActive = i == active;
           final isPast = active >= 0 && i < active;
-          final text = lines[i].text.trim();
+          final raw = lines[i].text.trim();
+          final conv = raw.isEmpty ? null : widget.handle.lineAt(i);
+          final only = widget.handle.onlyConverted;
+          final mainText = raw.isEmpty ? '♪' : ((only && conv != null) ? conv : raw);
+          final sub = (!only && conv != null && conv.toLowerCase() != raw.toLowerCase())
+              ? conv
+              : null;
+          final mainColor = isActive
+              ? Colors.white
+              : Colors.white.withOpacity(isPast ? 0.38 : 0.6);
           return Align(
             alignment: Alignment.centerLeft,
-            child: AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOut,
-              style: TextStyle(
-                color: isActive
-                    ? Colors.white
-                    : Colors.white.withOpacity(isPast ? 0.38 : 0.6),
-                fontSize: isActive ? 17 : 15.5,
-                fontWeight: isActive ? FontWeight.w800 : FontWeight.w600,
-                height: 1.2,
-              ),
-              child: Text(
-                text.isEmpty ? '♪' : text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child: AnimatedDefaultTextStyle(
+                    key: ValueKey(mainText),
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOut,
+                    style: TextStyle(
+                      color: mainColor,
+                      fontSize: isActive ? 17 : 15.5,
+                      fontWeight: isActive ? FontWeight.w800 : FontWeight.w600,
+                      height: 1.2,
+                    ),
+                    child: Text(
+                      mainText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                if (sub != null)
+                  TweenAnimationBuilder<double>(
+                    key: ValueKey(sub),
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    duration: const Duration(milliseconds: 420),
+                    curve: Curves.easeOutCubic,
+                    builder: (_, v, child) => Opacity(
+                      opacity: v,
+                      child: Transform.translate(
+                          offset: Offset(0, (1 - v) * 8), child: child),
+                    ),
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 260),
+                      curve: Curves.easeOut,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(
+                            isActive ? 0.78 : (isPast ? 0.26 : 0.42)),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        height: 1.25,
+                      ),
+                      child: Text(
+                        sub,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           );
         },

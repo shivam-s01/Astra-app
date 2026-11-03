@@ -21,11 +21,16 @@ class ConstellationLyrics extends StatefulWidget {
 
   final bool isLight;
 
+  /// Optional converted text per line (aligned with [lines]); shown as an
+  /// animated caption under the constellation.
+  final List<String>? captions;
+
   const ConstellationLyrics({
     super.key,
     required this.lines,
     required this.accent,
     this.isLight = false,
+    this.captions,
   });
 
   @override
@@ -149,18 +154,115 @@ class _ConstellationLyricsState extends State<ConstellationLyrics>
     return LayoutBuilder(
       builder: (context, c) {
         _size = Size(c.maxWidth, c.maxHeight);
-        return RepaintBoundary(
-          child: CustomPaint(
-            size: Size.infinite,
-            painter: _ConstellationPainter(
-              sim: _sim,
-              accent: widget.accent,
-              isLight: widget.isLight,
-              repaint: _frame,
+        final caps = widget.captions;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            RepaintBoundary(
+              child: CustomPaint(
+                size: Size.infinite,
+                painter: _ConstellationPainter(
+                  sim: _sim,
+                  accent: widget.accent,
+                  isLight: widget.isLight,
+                  repaint: _frame,
+                ),
+              ),
             ),
-          ),
+            if (caps != null)
+              Positioned(
+                left: 28,
+                right: 28,
+                bottom: 26,
+                child: _ConstellationCaption(
+                  lines: widget.lines,
+                  captions: caps,
+                  accent: widget.accent,
+                  isLight: widget.isLight,
+                ),
+              ),
+          ],
         );
       },
+    );
+  }
+}
+
+class _ConstellationCaption extends StatelessWidget {
+  final List<LyricLine> lines;
+  final List<String> captions;
+  final Color accent;
+  final bool isLight;
+  const _ConstellationCaption({
+    required this.lines,
+    required this.captions,
+    required this.accent,
+    required this.isLight,
+  });
+
+  int _active(Duration pos) {
+    final p = pos + LyricsResult.kHighlightLead;
+    var lo = 0, hi = lines.length - 1, ans = -1;
+    while (lo <= hi) {
+      final mid = (lo + hi) >> 1;
+      if (lines[mid].time <= p) {
+        ans = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return ans;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final idx = context.select<PlayerProvider, int>((p) => _active(p.position));
+    final text =
+        (idx >= 0 && idx < captions.length) ? captions[idx].trim() : '';
+    final base = isLight
+        ? const Color(0xFF1A1610)
+        : (Color.lerp(Colors.white, accent, 0.14) ?? Colors.white);
+    return IgnorePointer(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 420),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeIn,
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity: anim,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.4),
+              end: Offset.zero,
+            ).animate(anim),
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.96, end: 1).animate(anim),
+              child: child,
+            ),
+          ),
+        ),
+        child: text.isEmpty
+            ? const SizedBox(key: ValueKey('cap-none'), height: 0)
+            : Text(
+                text,
+                key: ValueKey('$idx|$text'),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: base.withAlpha(isLight ? 220 : 225),
+                  fontSize: 17,
+                  height: 1.3,
+                  fontWeight: FontWeight.w600,
+                  shadows: [
+                    Shadow(
+                      color: accent.withAlpha(isLight ? 0 : 110),
+                      blurRadius: 14,
+                    ),
+                  ],
+                ),
+              ),
+      ),
     );
   }
 }

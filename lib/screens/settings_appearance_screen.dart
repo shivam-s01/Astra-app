@@ -20,6 +20,8 @@ import '../widgets/premium_gate.dart';
 import '../widgets/aurum_pressable.dart';
 import '../widgets/aurum_loader.dart';
 import '../services/audio_prefs.dart';
+import '../services/lyrics_translation_service.dart'
+    show LyricsTranslatePrefs, TranslationDisplay;
 import '../l10n/generated/app_localizations.dart';
 import '../utils/aurum_haptics.dart';
 import '../utils/aurum_sheet.dart';
@@ -76,6 +78,7 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
 
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
+    await LyricsTranslatePrefs.ensureLoaded();
     if (!mounted) return;
     setState(() {
       _highRefreshRate = p.getBool('high_refresh_rate') ?? false;
@@ -271,6 +274,37 @@ class _SettingsAppearanceScreenState extends State<SettingsAppearanceScreen> {
               AudioPrefs.setLyricsViewMode(mode);
             },
           ),
+          _dropdownTile(context,
+            title: 'Lyrics script',
+            subtitle: 'Hindi ↔ Hinglish. Words stay the same: pyaar stays pyaar',
+            value: LyricsTranslatePrefs.targetNotifier.value ?? 'off',
+            options: const ['off', 'en', 'hi'],
+            labels: const {'off': 'Off', 'en': 'Hinglish', 'hi': 'हिन्दी'},
+            onChanged: (v) {
+              LyricsTranslatePrefs.setTarget(v == 'off' ? null : v);
+              setState(() {});
+            },
+          ),
+          if (LyricsTranslatePrefs.targetNotifier.value != null)
+            _dropdownTile(context,
+              title: 'Show converted lyrics',
+              subtitle: 'Lyrics screen, front card and impressive view',
+              value: LyricsTranslatePrefs.modeNotifier.value ==
+                      TranslationDisplay.both
+                  ? 'both'
+                  : 'only',
+              options: const ['both', 'only'],
+              labels: const {
+                'both': 'Original + converted',
+                'only': 'Converted only',
+              },
+              onChanged: (v) {
+                LyricsTranslatePrefs.setMode(v == 'only'
+                    ? TranslationDisplay.translationOnly
+                    : TranslationDisplay.both);
+                setState(() {});
+              },
+            ),
           _dropdownTile(context,
             title: l10n.saLyricsTextPosition,
             subtitle: l10n.saLyricsTextPositionSubtitle,

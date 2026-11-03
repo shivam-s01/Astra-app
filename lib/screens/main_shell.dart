@@ -34,6 +34,7 @@ import '../providers/player_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/update_service.dart';
 import '../services/audio_prefs.dart';
+import '../services/lyrics_translation_handle.dart';
 import '../services/sync_service.dart';
 import '../providers/auth_provider.dart';
 import '../providers/premium_provider.dart';
@@ -172,6 +173,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _startFeedbackTracking();
       _startPlaybackErrorTracking();
+      // Warm the lyrics-conversion cache so Hinglish/Hindi is already ready
+      // before any lyrics surface opens.
+      LyricsTranslationPrefetcher.attach(context.read<PlayerProvider>());
 
       final prefs = await SharedPreferences.getInstance();
 
@@ -219,6 +223,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     AudioPrefs.shakeToSkipNotifier.removeListener(_startShakeListener);
     _accelSub?.cancel();
+    LyricsTranslationPrefetcher.detach();
     if (_feedbackListener != null) {
       _trackedPlayer?.removeListener(_feedbackListener!);
     }
