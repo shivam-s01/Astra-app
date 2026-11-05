@@ -24,6 +24,7 @@ import 'services/notification_service.dart';
 import 'services/update_push_service.dart';
 import 'services/update_service.dart';
 import 'services/api_service.dart';
+import 'services/share_card_service.dart';
 import 'services/home_feed_cache.dart';
 import 'services/recommendation_engine.dart';
 import 'services/auth_service.dart';
@@ -232,6 +233,22 @@ void _handleJamLink(Uri uri) {
       );
       return;
     }
+    String? songSrc, songId;
+    if (uri.scheme == 'astra' && uri.host == 'song' && uri.pathSegments.length >= 2) {
+      songSrc = uri.pathSegments[0];
+      songId = uri.pathSegments[1];
+    } else if (uri.host == 'astra.mmusic.workers.dev' &&
+        uri.pathSegments.length >= 3 &&
+        uri.pathSegments.first == 's') {
+      songSrc = uri.pathSegments[1];
+      songId = uri.pathSegments[2];
+    }
+    if (songSrc != null && songId != null) {
+      final d = uri.queryParameters['d'];
+      final meta = d == null ? null : ShareCardService.decodeMeta(d);
+      _playSharedSong(songSrc, songId, meta?.title ?? '', meta?.artist ?? '');
+      return;
+    }
     String? raw;
     if (uri.scheme == 'astra' && uri.host == 'jam' && uri.pathSegments.isNotEmpty) {
       raw = uri.pathSegments.first;
@@ -245,6 +262,28 @@ void _handleJamLink(Uri uri) {
     navigatorKey.currentState?.push(
       AurumPageRoute(builder: (_) => JamScreen(initialCode: code)),
     );
+  } catch (_) {}
+}
+
+Future<void> _playSharedSong(String src, String id, String title, String artist) async {
+  try {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+    final player = Provider.of<PlayerProvider>(ctx, listen: false);
+    final q = ('$title $artist').trim();
+    if (q.isEmpty) return;
+    final results = src == 'yt'
+        ? await ApiService.searchYtRaw(q, limit: 10)
+        : await ApiService.searchSaavnRaw(q, limit: 10);
+    if (results.isEmpty) return;
+    final song = results.firstWhere(
+      (s) => s.id == id,
+      orElse: () => results.firstWhere(
+        (s) => s.title.toLowerCase() == title.toLowerCase(),
+        orElse: () => results.first,
+      ),
+    );
+    await player.playSong(song, queue: [song], index: 0);
   } catch (_) {}
 }
 

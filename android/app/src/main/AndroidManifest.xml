@@ -108,6 +108,19 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="https" android:host="astra.mmusic.workers.dev" android:pathPrefix="/jam/"/>
             </intent-filter>
+            <!-- Song share: astra://song/<sv|yt>/<id>  and  https://astra.mmusic.workers.dev/s/<sv|yt>/<id> -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="astra" android:host="song"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="astra.mmusic.workers.dev" android:pathPrefix="/s/"/>
+            </intent-filter>
             <!-- Link TV: astra://tv/CODE and https://astra.mmusic.workers.dev/tv/CODE -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>

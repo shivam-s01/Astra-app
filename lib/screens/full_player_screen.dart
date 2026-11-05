@@ -25,7 +25,6 @@ import '../utils/route_drag_dismiss.dart';
 import '../utils/artwork_palette_cache.dart';
 import '../utils/aurum_transitions.dart';
 import 'package:just_audio/just_audio.dart' show LoopMode;
-import 'package:share_plus/share_plus.dart';
 import '../providers/player_provider.dart';
 import '../providers/favorites_provider.dart';
 import '../providers/premium_provider.dart';
@@ -44,6 +43,7 @@ import '../widgets/aurum_play_pause_icon.dart';
 import '../widgets/constellation_lyrics.dart';
 import '../widgets/premium_gate.dart';
 import '../widgets/audio_output_sheet.dart';
+import '../widgets/share_song_sheet.dart';
 import '../widgets/cast_button.dart';
 import 'settings_player_screen.dart' show SleepTimerService, SleepTimerSheet;
 import '../utils/aurum_haptics.dart';
@@ -2438,9 +2438,7 @@ class _QualityPill extends StatelessWidget {
 }
 
 void shareSong(BuildContext context, Song song) {
-  final l10n = AppLocalizations.of(context)!;
-  final text = l10n.fpShareText(song.artist, song.title);
-  Share.share(text, subject: song.title);
+  showShareSongSheet(context, song);
 }
 
 void showAurumFullPlayerOptionsSheet(
