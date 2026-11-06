@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../utils/artwork_palette_cache.dart';
 
-/// Fixed 360x640 canvas, captured at 3x = 1080x1920.
+/// Fixed 360x450 (4:5) canvas, captured at 3x = 1080x1350. 4:5 is the tallest
+/// shape chat apps show without cropping.
 const double kShareCardW = 360;
-const double kShareCardH = 640;
+const double kShareCardH = 450;
 const String _font = 'Roboto';
 
 enum ShareCardStyle { solid, dark, lyrics }
@@ -201,7 +202,7 @@ class _SolidBg extends StatelessWidget {
               ),
             ),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(32, 34, 32, 34),
+              padding: const EdgeInsets.fromLTRB(28, 28, 28, 28),
               child: child,
             ),
           ),
@@ -209,7 +210,7 @@ class _SolidBg extends StatelessWidget {
       );
 }
 
-// 1. Solid: artwork colour, left-aligned type, Astra code at the bottom.
+// 1. Solid: artwork colour, centred, Astra code at the bottom.
 class _SolidCard extends StatelessWidget {
   final ShareCardData d;
   const _SolidCard(this.d);
@@ -220,38 +221,55 @@ class _SolidCard extends StatelessWidget {
     final on = onColorFor(bg);
     return _SolidBg(
       bg,
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _Wordmark(on),
-          const SizedBox(height: 26),
-          Center(
-            child: DecoratedBox(
-              decoration: const BoxDecoration(
-                boxShadow: [
-                  BoxShadow(color: Color(0x70000000), blurRadius: 40, spreadRadius: -12, offset: Offset(0, 24)),
-                ],
-              ),
-              child: _Art(d, 296, 8),
-            ),
-          ),
-          const SizedBox(height: 34),
-          Text(d.song.title,
-              maxLines: 2, overflow: TextOverflow.ellipsis, style: _title(on, 30)),
-          const SizedBox(height: 8),
-          Text(d.song.artist,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: _sub(on.withAlpha(189), 17)),
-          const Spacer(),
-          _Code(d.song.id + d.song.title, on, bg),
-        ],
-      ),
+      _SongColumn(d, on, _Code(d.song.id + d.song.title, on, bg), shadow: true),
     );
   }
 }
 
-// 2. Dark: flat near-black, left-aligned, artwork colour only in the Astra code.
+/// Shared layout for the Solid and Dark cards.
+class _SongColumn extends StatelessWidget {
+  final ShareCardData d;
+  final Color on;
+  final Widget code;
+  final bool shadow;
+  const _SongColumn(this.d, this.on, this.code, {this.shadow = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Align(alignment: Alignment.centerLeft, child: _Wordmark(on)),
+        const SizedBox(height: 16),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            boxShadow: shadow
+                ? const [
+                    BoxShadow(color: Color(0x66000000), blurRadius: 30, spreadRadius: -8, offset: Offset(0, 16)),
+                  ]
+                : const [],
+          ),
+          child: _Art(d, 188, 8),
+        ),
+        const SizedBox(height: 20),
+        Text(d.song.title,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: _title(on, 24)),
+        const SizedBox(height: 6),
+        Text(d.song.artist,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: _sub(on.withAlpha(189), 15)),
+        const Spacer(),
+        code,
+      ],
+    );
+  }
+}
+
+// 2. Dark: flat near-black, artwork colour only in the Astra code.
 class _DarkCard extends StatelessWidget {
   final ShareCardData d;
   const _DarkCard(this.d);
@@ -259,42 +277,22 @@ class _DarkCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const bg = Color(0xFF121212);
-    final accent = solidColorFor(d.palette);
-    final bar = Color.lerp(accent, Colors.white, 0.35)!;
+    final bar = Color.lerp(solidColorFor(d.palette), Colors.white, 0.35)!;
     return SizedBox(
       width: kShareCardW,
       height: kShareCardH,
       child: ColoredBox(
         color: bg,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(32, 34, 32, 34),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _Wordmark(Colors.white),
-              const SizedBox(height: 26),
-              Center(child: _Art(d, 296, 8)),
-              const SizedBox(height: 34),
-              Text(d.song.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: _title(Colors.white, 30)),
-              const SizedBox(height: 8),
-              Text(d.song.artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: _sub(Colors.white.withAlpha(166), 17)),
-              const Spacer(),
-              _Code(d.song.id + d.song.title, bar, bg),
-            ],
-          ),
+          padding: const EdgeInsets.fromLTRB(28, 28, 28, 28),
+          child: _SongColumn(d, Colors.white, _Code(d.song.id + d.song.title, bar, bg)),
         ),
       ),
     );
   }
 }
 
-// 3. Lyrics: the lines you picked, big.
+// 3. Lyrics: header like Spotify's lyric card, the lines you picked, logo below.
 class _LyricsCard extends StatelessWidget {
   final ShareCardData d;
   const _LyricsCard(this.d);
@@ -308,27 +306,10 @@ class _LyricsCard extends StatelessWidget {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _Wordmark(on),
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: SizedBox(
-                  width: 296,
-                  child: Text(
-                    d.lyricLines.join('\n'),
-                    style: _title(on, 31).copyWith(height: 1.22, letterSpacing: -0.8),
-                  ),
-                ),
-              ),
-            ),
-          ),
           Row(
             children: [
-              _Art(d, 54, 7),
-              const SizedBox(width: 13),
+              _Art(d, 50, 6),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -342,12 +323,29 @@ class _LyricsCard extends StatelessWidget {
                     Text(d.song.artist,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: _sub(on.withAlpha(184), 13)),
+                        style: _sub(on.withAlpha(189), 13)),
                   ],
                 ),
               ),
             ],
           ),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: SizedBox(
+                  width: 304,
+                  child: Text(
+                    d.lyricLines.join('\n'),
+                    style: _title(on, 27).copyWith(height: 1.2, letterSpacing: -0.6),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          _Wordmark(on),
         ],
       ),
     );

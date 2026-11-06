@@ -19,7 +19,9 @@ class ShareMeta {
   final String title;
   final String artist;
   final String art;
-  const ShareMeta(this.title, this.artist, this.art);
+  final String src;
+  final String id;
+  const ShareMeta(this.title, this.artist, this.art, {this.src = '', this.id = ''});
 }
 
 class ShareCardService {
@@ -53,15 +55,75 @@ class ShareCardService {
     }
   }
 
-  static String? songLink(Song s) {
+  static final Map<String, String> _linkCache = {};
+
+  static String _srcOf(Song s) => s.source == SongSource.youtube ? 'yt' : 'sv';
+
+  /// Short link like https://astra.mmusic.workers.dev/s/Ab3dE9xK. The site keeps
+  /// the song details; if it cannot be reached we fall back to a longer
+  /// self-contained link so sharing never fails.
+  static Future<String?> songLink(Song s) async {
     if (s.isLocal || s.id.isEmpty || s.source == SongSource.local) return null;
-    final src = s.source == SongSource.youtube ? 'yt' : 'sv';
-    return Uri(
-      scheme: 'https',
-      host: host,
-      pathSegments: ['s', src, s.id],
-      queryParameters: {'d': _encodeMeta(s)},
-    ).toString();
+    final key = '${_srcOf(s)}:${s.id}';
+    final cached = _linkCache[key];
+    if (cached != null) return cached;
+    final short = await _createShort(s);
+    if (short != null) {
+      _linkCache[key] = short;
+      return short;
+    }
+    return _longLink(s);
+  }
+
+  static String _longLink(Song s) => Uri(
+        scheme: 'https',
+        host: host,
+        pathSegments: ['s', _srcOf(s), s.id],
+        queryParameters: {'d': _encodeMeta(s)},
+      ).toString();
+
+  static Future<Map<String, dynamic>?> _json(String method, Uri uri,
+      [Map<String, dynamic>? body]) async {
+    final c = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+    try {
+      final req = method == 'POST' ? await c.postUrl(uri) : await c.getUrl(uri);
+      req.headers.contentType = ContentType.json;
+      if (body != null) req.write(jsonEncode(body));
+      final res = await req.close().timeout(const Duration(seconds: 4));
+      if (res.statusCode != 200) return null;
+      final j = jsonDecode(await res.transform(utf8.decoder).join());
+      return j is Map<String, dynamic> ? j : null;
+    } catch (_) {
+      return null;
+    } finally {
+      c.close(force: true);
+    }
+  }
+
+  static Future<String?> _createShort(Song s) async {
+    final art = s.artworkUrl.startsWith('http')
+        ? AurumArtwork.upgradeForFullPlayer(s.artworkUrl)
+        : '';
+    final j = await _json('POST', Uri.https(host, '/api/public/share'), {
+      'src': _srcOf(s),
+      'id': s.id,
+      't': _clip(s.title, 150),
+      'a': _clip(s.artist, 150),
+      'i': art,
+    });
+    final code = j?['code'];
+    if (code is! String || !RegExp(r'^[A-Za-z0-9]{6,12}$').hasMatch(code)) return null;
+    return 'https://$host/s/$code';
+  }
+
+  /// Opens a short link: asks the site which song it points to.
+  static Future<ShareMeta?> resolveCode(String code) async {
+    if (!RegExp(r'^[A-Za-z0-9]{6,12}$').hasMatch(code)) return null;
+    final j = await _json('GET', Uri.https(host, '/api/public/share', {'code': code}));
+    if (j == null) return null;
+    final src = j['src'], id = j['id'];
+    if (src is! String || id is! String) return null;
+    return ShareMeta('${j['t'] ?? ''}', '${j['a'] ?? ''}', '${j['i'] ?? ''}', src: src, id: id);
   }
 
   static Future<ImageProvider?> resolveArt(String url) async {
@@ -105,26 +167,39 @@ class ShareCardService {
     return out;
   }
 
-  /// Picks 4 lines starting at the most repeated line (usually the chorus).
+  static String _lineKey(String s) =>
+      s.toLowerCase().replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
+
+  /// Picks up to 4 different lines starting at the most repeated line
+  /// (usually the chorus). Lines that repeat are skipped, so the card never
+  /// shows the same sentence twice.
   static List<int> defaultPick(List<String> lines) {
     if (lines.isEmpty) return const [];
     final count = <String, int>{};
-    String key(String s) => s.toLowerCase().replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
     for (final l in lines) {
-      count[key(l)] = (count[key(l)] ?? 0) + 1;
+      final k = _lineKey(l);
+      count[k] = (count[k] ?? 0) + 1;
     }
     var start = (lines.length * 0.3).floor();
     var best = 1;
     for (var i = 0; i < lines.length; i++) {
-      final c = count[key(lines[i])] ?? 1;
+      final c = count[_lineKey(lines[i])] ?? 1;
       if (c > best && lines[i].length > 12) {
         best = c;
         start = i;
       }
     }
-    final end = (start + 4).clamp(0, lines.length);
-    final from = (end - 4).clamp(0, lines.length);
-    return [for (var i = from; i < end; i++) i];
+    final seen = <String>{};
+    final out = <int>[];
+    for (var i = start; i < lines.length && out.length < 4; i++) {
+      if (seen.add(_lineKey(lines[i]))) out.add(i);
+    }
+    // not enough lines after `start`: fill from the beginning
+    for (var i = 0; i < start && out.length < 4; i++) {
+      if (seen.add(_lineKey(lines[i]))) out.add(i);
+    }
+    out.sort();
+    return out;
   }
 
   // ── capture & share ───────────────────────────────────────────────

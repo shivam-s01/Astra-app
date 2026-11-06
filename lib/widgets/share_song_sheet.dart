@@ -45,6 +45,7 @@ class _ShareSongSheetState extends State<ShareSongSheet> {
   bool _busy = false;
   bool _copied = false;
   bool _disposed = false;
+  Future<String?>? _link;
 
   List<ShareCardStyle> get _styles => [
         ShareCardStyle.solid,
@@ -58,6 +59,7 @@ class _ShareSongSheetState extends State<ShareSongSheet> {
   @override
   void initState() {
     super.initState();
+    _link = ShareCardService.songLink(widget.song);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _load();
       _loadLyrics();
@@ -124,10 +126,10 @@ class _ShareSongSheetState extends State<ShareSongSheet> {
         lyricLines: [for (final i in _picked) _lyrics[i]],
       );
 
-  String _caption() {
+  Future<String> _caption() async {
     final l10n = AppLocalizations.of(context)!;
     final text = l10n.fpShareText(widget.song.artist, widget.song.title);
-    final link = ShareCardService.songLink(widget.song);
+    final link = await (_link ??= ShareCardService.songLink(widget.song));
     return link == null ? text : '$text\n$link';
   }
 
@@ -135,8 +137,9 @@ class _ShareSongSheetState extends State<ShareSongSheet> {
     if (_busy || !_ready) return;
     setState(() => _busy = true);
     AurumHaptics.light();
-    final caption = _caption();
+    String caption = '';
     try {
+      caption = await _caption();
       await WidgetsBinding.instance.endOfFrame;
       final file = await ShareCardService.capture(_keys[_current]!);
       await ShareCardService.shareCard(file, caption, widget.song.title);
@@ -152,12 +155,12 @@ class _ShareSongSheetState extends State<ShareSongSheet> {
   Future<void> _shareLink() async {
     AurumHaptics.light();
     try {
-      await ShareCardService.shareText(_caption(), widget.song.title);
+      await ShareCardService.shareText(await _caption(), widget.song.title);
     } catch (_) {}
   }
 
   Future<void> _copy() async {
-    final link = ShareCardService.songLink(widget.song) ?? _caption();
+    final link = await (_link ??= ShareCardService.songLink(widget.song)) ?? await _caption();
     await Clipboard.setData(ClipboardData(text: link));
     AurumHaptics.selection();
     if (!mounted) return;
@@ -259,9 +262,10 @@ class _ShareSongSheetState extends State<ShareSongSheet> {
     final accent = Theme.of(context).colorScheme.primary;
     final size = MediaQuery.sizeOf(context);
 
-    final double cardH =
-        math.min(size.height * 0.54, size.height - 360).clamp(240.0, 480.0).toDouble();
-    final cardW = cardH * kShareCardW / kShareCardH;
+    final double maxH =
+        math.min(size.height * 0.5, size.height - 360).clamp(220.0, 460.0).toDouble();
+    final double cardW = math.min(maxH * kShareCardW / kShareCardH, size.width * 0.74);
+    final double cardH = cardW * kShareCardH / kShareCardW;
     _pc ??= PageController(viewportFraction: (cardW + 20) / size.width);
     final styles = _styles;
 

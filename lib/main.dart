@@ -243,6 +243,12 @@ void _handleJamLink(Uri uri) {
       songSrc = uri.pathSegments[1];
       songId = uri.pathSegments[2];
     }
+    if (uri.host == 'astra.mmusic.workers.dev' &&
+        uri.pathSegments.length == 2 &&
+        uri.pathSegments.first == 's') {
+      _playSharedCode(uri.pathSegments[1]);
+      return;
+    }
     if (songSrc != null && songId != null) {
       final d = uri.queryParameters['d'];
       final meta = d == null ? null : ShareCardService.decodeMeta(d);
@@ -263,6 +269,12 @@ void _handleJamLink(Uri uri) {
       AurumPageRoute(builder: (_) => JamScreen(initialCode: code)),
     );
   } catch (_) {}
+}
+
+Future<void> _playSharedCode(String code) async {
+  final meta = await ShareCardService.resolveCode(code);
+  if (meta == null) return;
+  await _playSharedSong(meta.src, meta.id, meta.title, meta.artist);
 }
 
 Future<void> _playSharedSong(String src, String id, String title, String artist) async {
