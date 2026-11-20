@@ -5,6 +5,7 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
+import '../widgets/user_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -282,7 +283,7 @@ class _AccountCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            _Avatar(url: auth.avatarUrl, name: name, signedIn: signedIn),
+            _Avatar(url: auth.displayAvatar, name: name, signedIn: signedIn),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -382,14 +383,7 @@ class _Avatar extends StatelessWidget {
       ),
       child: ClipOval(
         child: hasPhoto
-            ? CachedNetworkImage(
-                cacheManager: AurumImageCache(),
-                imageUrl: url!,
-                memCacheWidth: 200,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => fallback(),
-                errorWidget: (_, __, ___) => fallback(),
-              )
+            ? UserAvatar(url: url, memCache: 200, fallback: fallback())
             : fallback(),
       ),
     );

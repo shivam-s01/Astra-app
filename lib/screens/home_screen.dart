@@ -5,6 +5,7 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
+import '../widgets/user_avatar.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
@@ -1298,7 +1299,7 @@ class _ProfileAvatarButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarUrl = context.watch<AuthProvider>().avatarUrl;
+    final avatarUrl = context.watch<AuthProvider>().displayAvatar;
 
     return Padding(
       padding: const EdgeInsets.only(right: 12, left: 4),
@@ -1331,17 +1332,11 @@ class _ProfileAvatarButton extends StatelessWidget {
           ),
           padding: const EdgeInsets.all(1.5),
           child: ClipOval(
-            child: avatarUrl != null
-                ? CachedNetworkImage(
-                    imageUrl: avatarUrl,
-                    cacheManager: AurumImageCache(),
-                    fit: BoxFit.cover,
-                    memCacheWidth: 96,
-                    memCacheHeight: 96,
-                    placeholder: (_, __) => _defaultIcon(context),
-                    errorWidget: (_, __, ___) => _defaultIcon(context),
-                  )
-                : _defaultIcon(context),
+            child: UserAvatar(
+              url: avatarUrl,
+              memCache: 96,
+              fallback: _defaultIcon(context),
+            ),
           ),
         ),
       ),

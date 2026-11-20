@@ -5,10 +5,15 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:aurum_music/widgets/aurum_loader.dart';
 import 'package:aurum_music/widgets/aurum_morph_loader.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:palette_generator/palette_generator.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/analytics_service.dart';
@@ -30,6 +35,9 @@ import '../utils/aurum_motion.dart';
 import '../utils/aurum_transitions.dart';
 import '../widgets/aurum_artwork.dart';
 import '../widgets/aurum_pressable.dart';
+import '../widgets/aurum_snack.dart';
+import '../widgets/user_avatar.dart';
+import 'profile_photo_crop_screen.dart';
 import 'liked_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -48,6 +56,10 @@ class _ProfileScreenState extends State<ProfileScreen>
   final ValueNotifier<double> _barT = ValueNotifier<double>(0);
 
   bool _syncing = false;
+  bool _savingPhoto = false;
+
+  String _t(String en, String hi) =>
+      Localizations.localeOf(context).languageCode == 'hi' ? hi : en;
 
   String? _tintUrl;
   Color? _tint;
@@ -90,6 +102,20 @@ class _ProfileScreenState extends State<ProfileScreen>
     _tintUrl = url;
     if (url == null || url.isEmpty) {
       _tint = null;
+      return;
+    }
+    if (UserAvatar.isLocal(url)) {
+      _tint = null;
+      PaletteGenerator.fromImageProvider(
+        ResizeImage(FileImage(File(url)), width: 120, height: 120),
+        maximumColorCount: 12,
+      ).then((p) {
+        if (!mounted || _tintUrl != url) return;
+        setState(() => _tint = (p.vibrantColor ??
+                p.dominantColor ??
+                p.mutedColor)
+            ?.color);
+      }).catchError((_) {});
       return;
     }
     final cached = ArtworkPaletteCache.peek(url);
@@ -138,6 +164,83 @@ class _ProfileScreenState extends State<ProfileScreen>
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 3),
       ));
+    }
+  }
+
+  Future<void> _changePhoto(AuthProvider auth) async {
+    if (_savingPhoto || !auth.isSignedIn) return;
+    AurumHaptics.light();
+    final action = await showModalBottomSheet<_PhotoAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      barrierColor: Colors.black54,
+      builder: (ctx) => _PhotoSheet(
+        photo: auth.displayAvatar,
+        hasCustom: auth.hasCustomAvatar,
+        t: _t,
+      ),
+    );
+    if (action == null || !mounted) return;
+
+    if (action == _PhotoAction.remove) {
+      await auth.removeCustomAvatar();
+      if (!mounted) return;
+      AurumHaptics.selection();
+      AurumSnack.show(context, _t('Photo removed', 'फ़ोटो हटा दी गई'));
+      return;
+    }
+
+    XFile? picked;
+    try {
+      picked = await ImagePicker().pickImage(
+        source: action == _PhotoAction.camera
+            ? ImageSource.camera
+            : ImageSource.gallery,
+        maxWidth: 2048,
+        maxHeight: 2048,
+        imageQuality: 95,
+        preferredCameraDevice: CameraDevice.front,
+      );
+    } catch (_) {
+      if (mounted) {
+        AurumSnack.show(
+            context, _t('Could not open photos', 'फ़ोटो नहीं खुल सकीं'));
+      }
+      return;
+    }
+    if (picked == null || !mounted) return;
+
+    final bytes = await Navigator.of(context).push<Uint8List>(
+      PageRouteBuilder<Uint8List>(
+        fullscreenDialog: true,
+        transitionDuration: const Duration(milliseconds: 320),
+        reverseTransitionDuration: const Duration(milliseconds: 240),
+        pageBuilder: (_, __, ___) => ProfilePhotoCropScreen(path: picked!.path),
+        transitionsBuilder: (_, a, __, child) => FadeTransition(
+          opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.06),
+              end: Offset.zero,
+            ).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+            child: child,
+          ),
+        ),
+      ),
+    );
+    if (bytes == null || !mounted) return;
+
+    setState(() => _savingPhoto = true);
+    final ok = await auth.setCustomAvatar(bytes);
+    if (!mounted) return;
+    setState(() => _savingPhoto = false);
+    if (ok) {
+      AurumHaptics.medium();
+      AurumSnack.show(context, _t('Profile photo updated', 'प्रोफ़ाइल फ़ोटो अपडेट हो गई'));
+    } else {
+      AurumSnack.show(
+          context, _t('Could not save photo', 'फ़ोटो सेव नहीं हो सकी'));
     }
   }
 
@@ -242,7 +345,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget build(BuildContext context) {
     final bg = AurumTheme.bgOf(context);
     final auth = context.watch<AuthProvider>();
-    _ensureTint(auth.avatarUrl);
+    _ensureTint(auth.displayAvatar);
 
     return Scaffold(
       backgroundColor: bg,
@@ -257,6 +360,8 @@ class _ProfileScreenState extends State<ProfileScreen>
                   _ProfileHero(
                     tint: _tint,
                     syncing: _syncing,
+                    savingPhoto: _savingPhoto,
+                    onChangePhoto: () => _changePhoto(auth),
                     onSync: _handleManualSync,
                     onSignOut: () => _handleSignOut(auth),
                     onSignIn: () => _handleSignIn(auth),
@@ -287,7 +392,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               const SliverToBoxAdapter(child: SizedBox(height: 56)),
             ],
           ),
-          _TopBar(progress: _barT),
+          _TopBar(progress: _barT, name: auth.isSignedIn ? auth.displayName : null, avatar: auth.displayAvatar),
         ],
       ),
     );
@@ -296,7 +401,9 @@ class _ProfileScreenState extends State<ProfileScreen>
 
 class _TopBar extends StatelessWidget {
   final ValueNotifier<double> progress;
-  const _TopBar({required this.progress});
+  final String? name;
+  final String? avatar;
+  const _TopBar({required this.progress, this.name, this.avatar});
 
   @override
   Widget build(BuildContext context) {
@@ -344,7 +451,9 @@ class _TopBar extends StatelessWidget {
                 child: Opacity(
                   opacity: t,
                   child: Text(
-                    l10n.prProfile,
+                    (name != null && name!.trim().isNotEmpty)
+                        ? name!
+                        : l10n.prProfile,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -367,6 +476,8 @@ class _TopBar extends StatelessWidget {
 class _ProfileHero extends StatelessWidget {
   final Color? tint;
   final bool syncing;
+  final bool savingPhoto;
+  final VoidCallback onChangePhoto;
   final VoidCallback onSync;
   final VoidCallback onSignOut;
   final VoidCallback onSignIn;
@@ -374,6 +485,8 @@ class _ProfileHero extends StatelessWidget {
   const _ProfileHero({
     required this.tint,
     required this.syncing,
+    required this.savingPhoto,
+    required this.onChangePhoto,
     required this.onSync,
     required this.onSignOut,
     required this.onSignIn,
@@ -413,7 +526,13 @@ class _ProfileHero extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _Avatar(url: auth.avatarUrl, glow: base),
+          _Avatar(
+            url: auth.displayAvatar,
+            glow: base,
+            editable: auth.isSignedIn,
+            saving: savingPhoto,
+            onTap: onChangePhoto,
+          ),
           const SizedBox(height: 18),
           Text(
             name,
@@ -461,18 +580,27 @@ class _ProfileHero extends StatelessWidget {
           ],
           const SizedBox(height: 22),
           if (auth.isSignedIn)
-            Row(
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
+                _OutlinePill(
+                  icon: Icons.photo_camera_rounded,
+                  label: Localizations.localeOf(context).languageCode == 'hi'
+                      ? 'फ़ोटो बदलें'
+                      : 'Edit photo',
+                  onTap: (syncing || savingPhoto) ? null : onChangePhoto,
+                ),
                 _SyncButton(syncing: syncing, onTap: onSync),
-                const SizedBox(width: 12),
                 _OutlinePill(
                   icon: Icons.logout_rounded,
                   label: l10n.prSignOut,
                   onTap: syncing ? null : onSignOut,
                 ),
                 if (syncing) ...[
-                  const SizedBox(width: 14),
-                  Flexible(
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 220),
                     child: Text(
                       l10n.prSyncingLibrary,
                       maxLines: 1,
@@ -501,7 +629,16 @@ class _ProfileHero extends StatelessWidget {
 class _Avatar extends StatelessWidget {
   final String? url;
   final Color glow;
-  const _Avatar({required this.url, required this.glow});
+  final bool editable;
+  final bool saving;
+  final VoidCallback onTap;
+  const _Avatar({
+    required this.url,
+    required this.glow,
+    required this.editable,
+    required this.saving,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -509,22 +646,22 @@ class _Avatar extends StatelessWidget {
     final card = AurumTheme.bgCardOf(context);
     final placeholder = Container(
       color: card,
-      child: Icon(Icons.person_rounded, color: accent, size: 52),
+      child: Icon(Icons.person_rounded, color: accent, size: 56),
     );
 
-    return Container(
-      width: 120,
-      height: 120,
+    final avatar = Container(
+      width: 132,
+      height: 132,
       padding: const EdgeInsets.all(3.5),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: AurumTheme.accentGradientOf(context),
         boxShadow: [
           BoxShadow(
-            color: glow.withOpacity(0.38),
-            blurRadius: 32,
+            color: glow.withOpacity(0.42),
+            blurRadius: 36,
             spreadRadius: 1,
-            offset: const Offset(0, 10),
+            offset: const Offset(0, 12),
           ),
         ],
       ),
@@ -534,17 +671,212 @@ class _Avatar extends StatelessWidget {
           border: Border.all(color: AurumTheme.bgOf(context), width: 3),
         ),
         child: ClipOval(
-          child: (url != null && url!.isNotEmpty)
-              ? CachedNetworkImage(
-                  imageUrl: url!,
-                  cacheManager: AurumImageCache(),
-                  fit: BoxFit.cover,
-                  memCacheWidth: 260,
-                  memCacheHeight: 260,
-                  placeholder: (_, __) => placeholder,
-                  errorWidget: (_, __, ___) => placeholder,
-                )
-              : placeholder,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 350),
+                switchInCurve: Curves.easeOut,
+                child: SizedBox.expand(
+                  key: ValueKey(url ?? 'none'),
+                  child: UserAvatar(
+                    url: url,
+                    memCache: 300,
+                    fallback: placeholder,
+                  ),
+                ),
+              ),
+              if (saving)
+                Container(
+                  color: Colors.black.withOpacity(0.55),
+                  alignment: Alignment.center,
+                  child: const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.6,
+                      valueColor: AlwaysStoppedAnimation(Colors.white),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!editable) return avatar;
+
+    return AurumPressable(
+      onTap: saving ? null : onTap,
+      haptic: false,
+      scaleAmount: 0.96,
+      child: SizedBox(
+        width: 132,
+        height: 132,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            avatar,
+            Positioned(
+              right: 0,
+              bottom: 2,
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: AurumTheme.accentGradientOf(context),
+                  border: Border.all(color: AurumTheme.bgOf(context), width: 3),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.35),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.photo_camera_rounded,
+                    color: Colors.black, size: 18),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _PhotoAction { gallery, camera, remove }
+
+class _PhotoSheet extends StatelessWidget {
+  final String? photo;
+  final bool hasCustom;
+  final String Function(String en, String hi) t;
+  const _PhotoSheet(
+      {required this.photo, required this.hasCustom, required this.t});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AurumTheme.accentOf(context);
+    final fg = AurumTheme.textPrimaryOf(context);
+
+    Widget tile(IconData icon, String label, _PhotoAction a,
+        {Color? color, String? sub}) {
+      final c = color ?? fg;
+      return AurumPressable(
+        onTap: () => Navigator.pop(context, a),
+        scaleAmount: 0.98,
+        haptic: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: (color ?? accent).withOpacity(0.14),
+                ),
+                child: Icon(icon, color: color ?? accent, size: 22),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: c,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (sub != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        sub,
+                        style: TextStyle(
+                          color: AurumTheme.textSecondaryOf(context),
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AurumTheme.bgElevatedOf(context),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AurumTheme.dividerOf(context),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: 84,
+              height: 84,
+              padding: const EdgeInsets.all(2.5),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: AurumTheme.accentGradientOf(context),
+              ),
+              child: ClipOval(
+                child: UserAvatar(
+                  url: photo,
+                  memCache: 200,
+                  fallback: Container(
+                    color: AurumTheme.bgCardOf(context),
+                    child: Icon(Icons.person_rounded, color: accent, size: 38),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              t('Profile photo', 'प्रोफ़ाइल फ़ोटो'),
+              style: TextStyle(
+                color: fg,
+                fontSize: 19,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.4,
+              ),
+            ),
+            const SizedBox(height: 12),
+            tile(Icons.photo_library_rounded,
+                t('Choose from gallery', 'गैलरी से चुनें'), _PhotoAction.gallery,
+                sub: t('Pick any photo you like', 'अपनी पसंद की कोई भी फ़ोटो')),
+            tile(Icons.photo_camera_rounded, t('Take a photo', 'फ़ोटो खींचें'),
+                _PhotoAction.camera,
+                sub: t('Use your camera', 'कैमरा इस्तेमाल करें')),
+            if (hasCustom)
+              tile(Icons.delete_outline_rounded,
+                  t('Remove photo', 'फ़ोटो हटाएँ'), _PhotoAction.remove,
+                  color: Colors.redAccent,
+                  sub: t('Go back to your Google photo',
+                      'अपनी Google फ़ोटो पर वापस जाएँ')),
+            const SizedBox(height: 14),
+          ],
         ),
       ),
     );
@@ -566,8 +898,8 @@ class _SyncButton extends StatelessWidget {
         haptic: false,
         scaleAmount: 0.92,
         child: Container(
-          width: 52,
-          height: 52,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: AurumTheme.accentGradientOf(context),
