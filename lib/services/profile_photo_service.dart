@@ -12,10 +12,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Stores the user's custom profile photo on-device (one per account).
-///
-/// Every save writes a NEW file name, so Flutter's image cache can never show
-/// a stale picture after the user changes their photo.
 class ProfilePhotoService {
   ProfilePhotoService._();
   static final ProfilePhotoService instance = ProfilePhotoService._();
@@ -31,7 +27,6 @@ class ProfilePhotoService {
     return d;
   }
 
-  /// Returns the saved photo path for [uid], or null if none / file missing.
   Future<String?> load(String uid) async {
     try {
       final sp = await SharedPreferences.getInstance();
@@ -48,7 +43,6 @@ class ProfilePhotoService {
     }
   }
 
-  /// Saves [bytes] (PNG) as the new photo for [uid]. Returns the new path.
   Future<String?> save(String uid, Uint8List bytes) async {
     try {
       final dir = await _dir();
@@ -73,7 +67,6 @@ class ProfilePhotoService {
     }
   }
 
-  /// Removes the custom photo for [uid] (falls back to the Google photo).
   Future<void> clear(String uid) async {
     try {
       final sp = await SharedPreferences.getInstance();

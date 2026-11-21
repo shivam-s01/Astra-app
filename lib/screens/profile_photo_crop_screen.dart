@@ -16,8 +16,15 @@ import '../theme/aurum_theme.dart';
 import '../utils/aurum_haptics.dart';
 import '../widgets/aurum_pressable.dart';
 
-/// Full-screen "Move and scale" circular crop, Spotify style.
-/// Pops with the cropped square PNG bytes (512x512) or null if cancelled.
+class _CropState {
+  final double zoom;
+  final Offset offset;
+  final bool dragging;
+  const _CropState(this.zoom, this.offset, this.dragging);
+
+  bool get isDefault => zoom == 1.0 && offset == Offset.zero;
+}
+
 class ProfilePhotoCropScreen extends StatefulWidget {
   final String path;
   const ProfilePhotoCropScreen({super.key, required this.path});
@@ -30,19 +37,17 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
   static const double _maxZoom = 6.0;
   static const int _outSize = 512;
 
+  final ValueNotifier<_CropState> _state =
+      ValueNotifier<_CropState>(const _CropState(1.0, Offset.zero, false));
+
   ui.Image? _img;
   bool _failed = false;
   bool _exporting = false;
-
-  double _zoom = 1.0;
-  Offset _offset = Offset.zero;
+  double _cropD = 0;
 
   double _startZoom = 1.0;
   Offset _startOffset = Offset.zero;
   Offset _startFocal = Offset.zero;
-
-  double _cropD = 0; // diameter of the crop circle (logical px)
-  bool _dragging = false;
 
   bool get _hi => Localizations.localeOf(context).languageCode == 'hi';
   String _t(String en, String hi) => _hi ? hi : en;
@@ -55,6 +60,7 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
 
   @override
   void dispose() {
+    _state.dispose();
     _img?.dispose();
     super.dispose();
   }
@@ -64,6 +70,7 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
       final bytes = await File(widget.path).readAsBytes();
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
+      codec.dispose();
       if (!mounted) {
         frame.image.dispose();
         return;
@@ -74,7 +81,6 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
     }
   }
 
-  // Size of the image when zoom == 1 (it exactly covers the crop circle).
   Size _baseSize() {
     final img = _img!;
     final base = _cropD / math.min(img.width, img.height);
@@ -92,31 +98,28 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
   }
 
   void _onScaleStart(ScaleStartDetails d) {
-    _startZoom = _zoom;
-    _startOffset = _offset;
+    final s = _state.value;
+    _startZoom = s.zoom;
+    _startOffset = s.offset;
     _startFocal = d.localFocalPoint;
-    setState(() => _dragging = true);
+    _state.value = _CropState(s.zoom, s.offset, true);
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
     if (_img == null || _cropD <= 0) return;
     final z = (_startZoom * d.scale).clamp(1.0, _maxZoom).toDouble();
-    final ratio = z / _startZoom;
-    final o = _startOffset * ratio + (d.localFocalPoint - _startFocal);
-    setState(() {
-      _zoom = z;
-      _offset = _clamp(o, z);
-    });
+    final o = _startOffset * (z / _startZoom) + (d.localFocalPoint - _startFocal);
+    _state.value = _CropState(z, _clamp(o, z), true);
   }
 
-  void _onScaleEnd(ScaleEndDetails d) => setState(() => _dragging = false);
+  void _onScaleEnd(ScaleEndDetails d) {
+    final s = _state.value;
+    _state.value = _CropState(s.zoom, s.offset, false);
+  }
 
   void _reset() {
     AurumHaptics.selection();
-    setState(() {
-      _zoom = 1.0;
-      _offset = Offset.zero;
-    });
+    _state.value = const _CropState(1.0, Offset.zero, false);
   }
 
   Future<void> _confirm() async {
@@ -125,15 +128,14 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
     setState(() => _exporting = true);
     try {
       final img = _img!;
+      final s = _state.value;
       final b = _baseSize();
-      final dispW = b.width * _zoom;
-      final dispH = b.height * _zoom;
       final k = _outSize / _cropD;
 
       final dest = Rect.fromCenter(
-        center: Offset(_cropD / 2 + _offset.dx, _cropD / 2 + _offset.dy) * k,
-        width: dispW * k,
-        height: dispH * k,
+        center: Offset(_cropD / 2 + s.offset.dx, _cropD / 2 + s.offset.dy) * k,
+        width: b.width * s.zoom * k,
+        height: b.height * s.zoom * k,
       );
 
       final recorder = ui.PictureRecorder();
@@ -149,7 +151,9 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
           ..filterQuality = FilterQuality.high
           ..isAntiAlias = true,
       );
-      final out = await recorder.endRecording().toImage(_outSize, _outSize);
+      final picture = recorder.endRecording();
+      final out = await picture.toImage(_outSize, _outSize);
+      picture.dispose();
       final data = await out.toByteData(format: ui.ImageByteFormat.png);
       out.dispose();
       if (!mounted) return;
@@ -161,6 +165,75 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
     } catch (_) {
       if (mounted) setState(() => _exporting = false);
     }
+  }
+
+  Widget _canvas(double d) {
+    if (_failed) {
+      return Center(
+        child: Text(
+          _t('Could not open this photo', 'यह फ़ोटो नहीं खुल सकी'),
+          style: const TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+    if (_img == null) {
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(
+              strokeWidth: 2.6, color: Colors.white70),
+        ),
+      );
+    }
+
+    final b = _baseSize();
+    final accent = AurumTheme.accentOf(context);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onScaleStart: _onScaleStart,
+      onScaleUpdate: _onScaleUpdate,
+      onScaleEnd: _onScaleEnd,
+      child: ClipRect(
+        child: ValueListenableBuilder<_CropState>(
+          valueListenable: _state,
+          builder: (context, s, _) => Stack(
+            fit: StackFit.expand,
+            children: [
+              Center(
+                child: Transform.translate(
+                  offset: s.offset,
+                  child: Transform.scale(
+                    scale: s.zoom,
+                    child: SizedBox(
+                      width: b.width,
+                      height: b.height,
+                      child: RawImage(
+                        image: _img,
+                        fit: BoxFit.fill,
+                        filterQuality: s.dragging
+                            ? FilterQuality.low
+                            : FilterQuality.medium,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              IgnorePointer(
+                child: CustomPaint(
+                  painter: _CropOverlayPainter(
+                    diameter: d,
+                    ringColor: accent,
+                    showGrid: s.dragging,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -197,18 +270,20 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
                       ),
                     ),
                   ),
-                  IconButton(
-                    tooltip: _t('Reset', 'रीसेट'),
-                    onPressed: (_exporting || (_zoom == 1.0 && _offset == Offset.zero))
-                        ? null
-                        : _reset,
-                    icon: Icon(
-                      Icons.restart_alt_rounded,
-                      color: (_zoom == 1.0 && _offset == Offset.zero)
-                          ? Colors.white24
-                          : Colors.white,
-                      size: 24,
-                    ),
+                  ValueListenableBuilder<_CropState>(
+                    valueListenable: _state,
+                    builder: (context, s, _) {
+                      final enabled = !_exporting && !s.isDefault;
+                      return IconButton(
+                        tooltip: _t('Reset', 'रीसेट'),
+                        onPressed: enabled ? _reset : null,
+                        icon: Icon(
+                          Icons.restart_alt_rounded,
+                          color: enabled ? Colors.white : Colors.white24,
+                          size: 24,
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -221,68 +296,13 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
                     120.0, math.min(c.maxWidth - 48, c.maxHeight - 24));
                 if ((d - _cropD).abs() > 0.5) {
                   _cropD = d;
-                  if (_img != null) _offset = _clamp(_offset, _zoom);
+                  if (_img != null) {
+                    final s = _state.value;
+                    _state.value =
+                        _CropState(s.zoom, _clamp(s.offset, s.zoom), s.dragging);
+                  }
                 }
-
-                if (_failed) {
-                  return Center(
-                    child: Text(
-                      _t('Could not open this photo', 'यह फ़ोटो नहीं खुल सकी'),
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                  );
-                }
-                if (_img == null) {
-                  return const Center(
-                    child: SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2.6, color: Colors.white70),
-                    ),
-                  );
-                }
-
-                final b = _baseSize();
-                return GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onScaleStart: _onScaleStart,
-                  onScaleUpdate: _onScaleUpdate,
-                  onScaleEnd: _onScaleEnd,
-                  child: ClipRect(
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Center(
-                          child: Transform.translate(
-                            offset: _offset,
-                            child: Transform.scale(
-                              scale: _zoom,
-                              child: SizedBox(
-                                width: b.width,
-                                height: b.height,
-                                child: RawImage(
-                                  image: _img,
-                                  fit: BoxFit.fill,
-                                  filterQuality: FilterQuality.high,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        IgnorePointer(
-                          child: CustomPaint(
-                            painter: _CropOverlayPainter(
-                              diameter: d,
-                              ringColor: accent,
-                              showGrid: _dragging,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
+                return _canvas(d);
               },
             ),
           ),
@@ -315,7 +335,8 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(28),
-                            border: Border.all(color: Colors.white38, width: 1.2),
+                            border:
+                                Border.all(color: Colors.white38, width: 1.2),
                           ),
                           child: Text(
                             _t('Cancel', 'रद्द करें'),
@@ -345,9 +366,9 @@ class _ProfilePhotoCropScreenState extends State<ProfilePhotoCropScreen> {
                               gradient: AurumTheme.accentGradientOf(context),
                               boxShadow: [
                                 BoxShadow(
-                                  color: accent.withValues(alpha: 0.35),
-                                  blurRadius: 18,
-                                  offset: const Offset(0, 6),
+                                  color: accent.withValues(alpha: 0.3),
+                                  blurRadius: 14,
+                                  offset: const Offset(0, 5),
                                 ),
                               ],
                             ),
@@ -389,7 +410,7 @@ class _CropOverlayPainter extends CustomPainter {
   final Color ringColor;
   final bool showGrid;
 
-  _CropOverlayPainter({
+  const _CropOverlayPainter({
     required this.diameter,
     required this.ringColor,
     required this.showGrid,
@@ -399,11 +420,12 @@ class _CropOverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final r = diameter / 2;
+    final circle = Rect.fromCircle(center: center, radius: r);
 
     final dim = Path()
       ..fillType = PathFillType.evenOdd
       ..addRect(Offset.zero & size)
-      ..addOval(Rect.fromCircle(center: center, radius: r));
+      ..addOval(circle);
     canvas.drawPath(dim, Paint()..color = Colors.black.withValues(alpha: 0.68));
 
     canvas.drawCircle(
@@ -420,14 +442,12 @@ class _CropOverlayPainter extends CustomPainter {
         ..strokeWidth = 0.8
         ..color = Colors.white.withValues(alpha: 0.28);
       canvas.save();
-      canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: r)));
-      final left = center.dx - r;
-      final topY = center.dy - r;
+      canvas.clipPath(Path()..addOval(circle));
       for (var i = 1; i < 3; i++) {
-        final x = left + diameter * i / 3;
-        final y = topY + diameter * i / 3;
-        canvas.drawLine(Offset(x, topY), Offset(x, topY + diameter), g);
-        canvas.drawLine(Offset(left, y), Offset(left + diameter, y), g);
+        final x = circle.left + diameter * i / 3;
+        final y = circle.top + diameter * i / 3;
+        canvas.drawLine(Offset(x, circle.top), Offset(x, circle.bottom), g);
+        canvas.drawLine(Offset(circle.left, y), Offset(circle.right, y), g);
       }
       canvas.restore();
     }

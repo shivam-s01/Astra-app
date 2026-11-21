@@ -31,10 +31,6 @@ class AuthProvider extends ChangeNotifier {
 
   String? _customAvatarPath;
   String? _customAvatarUid;
-
-  /// Photo to show in the UI: the user's own picked photo if set, otherwise
-  /// the Google account photo. May be a local file path (starts with '/') or
-  /// a network URL. Use [avatarUrl] when a shareable URL is needed (e.g. Jam).
   String? get displayAvatar {
     if (isSignedIn && _customAvatarUid == userId && _customAvatarPath != null) {
       return _customAvatarPath;
@@ -55,7 +51,7 @@ class AuthProvider extends ChangeNotifier {
       }
       return;
     }
-    if (_customAvatarUid == uid && _customAvatarPath != null) return;
+    if (_customAvatarUid == uid) return;
     final path = await ProfilePhotoService.instance.load(uid);
     if (userId != uid) return;
     _customAvatarUid = uid;
@@ -65,7 +61,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Saves a cropped PNG as the user's profile photo.
   Future<bool> setCustomAvatar(Uint8List pngBytes) async {
     final uid = userId;
     if (uid == null) return false;
@@ -77,7 +72,6 @@ class AuthProvider extends ChangeNotifier {
     return true;
   }
 
-  /// Removes the custom photo and falls back to the Google photo.
   Future<void> removeCustomAvatar() async {
     final uid = userId;
     if (uid == null) return;

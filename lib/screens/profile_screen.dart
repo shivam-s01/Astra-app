@@ -10,14 +10,12 @@ import 'dart:typed_data';
 
 import 'package:aurum_music/widgets/aurum_loader.dart';
 import 'package:aurum_music/widgets/aurum_morph_loader.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:palette_generator/palette_generator.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/analytics_service.dart';
-import '../services/aurum_image_cache.dart';
 import '../theme/aurum_theme.dart';
 import '../providers/auth_provider.dart';
 import '../providers/player_provider.dart';
@@ -107,8 +105,8 @@ class _ProfileScreenState extends State<ProfileScreen>
     if (UserAvatar.isLocal(url)) {
       _tint = null;
       PaletteGenerator.fromImageProvider(
-        ResizeImage(FileImage(File(url)), width: 120, height: 120),
-        maximumColorCount: 12,
+        ResizeImage(FileImage(File(url)), width: 80, height: 80),
+        maximumColorCount: 8,
       ).then((p) {
         if (!mounted || _tintUrl != url) return;
         setState(() => _tint = (p.vibrantColor ??
@@ -197,9 +195,9 @@ class _ProfileScreenState extends State<ProfileScreen>
         source: action == _PhotoAction.camera
             ? ImageSource.camera
             : ImageSource.gallery,
-        maxWidth: 2048,
-        maxHeight: 2048,
-        imageQuality: 95,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 92,
         preferredCameraDevice: CameraDevice.front,
       );
     } catch (_) {
@@ -585,13 +583,6 @@ class _ProfileHero extends StatelessWidget {
               runSpacing: 10,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _OutlinePill(
-                  icon: Icons.photo_camera_rounded,
-                  label: Localizations.localeOf(context).languageCode == 'hi'
-                      ? 'फ़ोटो बदलें'
-                      : 'Edit photo',
-                  onTap: (syncing || savingPhoto) ? null : onChangePhoto,
-                ),
                 _SyncButton(syncing: syncing, onTap: onSync),
                 _OutlinePill(
                   icon: Icons.logout_rounded,
@@ -658,10 +649,9 @@ class _Avatar extends StatelessWidget {
         gradient: AurumTheme.accentGradientOf(context),
         boxShadow: [
           BoxShadow(
-            color: glow.withOpacity(0.42),
-            blurRadius: 36,
-            spreadRadius: 1,
-            offset: const Offset(0, 12),
+            color: glow.withOpacity(0.38),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
           ),
         ],
       ),

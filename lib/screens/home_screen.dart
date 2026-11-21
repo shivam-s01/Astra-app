@@ -5,7 +5,6 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-import '../widgets/user_avatar.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
@@ -50,6 +49,7 @@ import '../widgets/aurum_promo_screen.dart' show AurumPromoData;
 import '../widgets/mini_player.dart';
 import '../widgets/aurum_equalizer_bars.dart';
 import '../widgets/aurum_stacked_artwork.dart';
+import '../widgets/user_avatar.dart';
 import '../l10n/generated/app_localizations.dart';
 import '../utils/aurum_transitions.dart';
 import 'package:shimmer/shimmer.dart';

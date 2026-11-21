@@ -12,8 +12,6 @@ import 'package:flutter/material.dart';
 
 import '../services/aurum_image_cache.dart';
 
-/// Renders a profile picture from either a network URL (Google photo) or an
-/// absolute local file path (custom photo). Caller is responsible for clipping.
 class UserAvatar extends StatelessWidget {
   final String? url;
   final Widget fallback;

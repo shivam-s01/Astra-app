@@ -5,10 +5,8 @@
 // file, via any medium, is strictly prohibited. See LICENSE.
 // ─────────────────────────────────────────────────────────────────
 
-import '../widgets/user_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../theme/aurum_theme.dart';
 import '../utils/build_flavor.dart';
@@ -30,7 +28,7 @@ import '../l10n/generated/app_localizations.dart';
 import '../utils/aurum_haptics.dart';
 import '../widgets/aurum_pressable.dart';
 import '../widgets/aurum_settings_tile.dart' show AurumStaggerItem;
-import '../services/aurum_image_cache.dart';
+import '../widgets/user_avatar.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
